@@ -1,0 +1,16 @@
+build/
+*.pt
+*.pdb
+*.exe
+*.dll
+*.lib
+*.obj
+*.log
+*.tlog
+*.recipe
+*.vcxproj.user
+.vs/
+.vscode/
+Debug/
+Release/
+x64/
