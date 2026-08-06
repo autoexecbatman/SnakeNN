@@ -1,5 +1,6 @@
 #include "az_network.h"
 #include "vector_env.h"
+#include "hamiltonian_cycle.h"
 #include <torch/torch.h>
 #include <chrono>
 #include <iostream>
@@ -96,6 +97,51 @@ void measureNetwork(torch::Device device, int board_size, int channels, int bloc
               << (long long)(evaluations / seconds) << " evals/s" << std::endl;
 }
 
+// The search replays each descent from a copy of the root rather than storing a
+// snapshot per node. That trade is only right if copying a game is cheap next
+// to evaluating one, so the copy gets measured rather than assumed.
+void measureCloning(int board_size, int clones) {
+    SnakeEnv source(board_size, board_size, 8);
+    // Grow the snake with the cycle follower rather than a greedy walker. A
+    // greedy walker dies early and leaves a short body, which measures the
+    // wrong thing: the copy that matters is a late-game one, where the body is
+    // most of the board. Three quarters full.
+    HamiltonianCycle cycle(board_size, board_size);
+    if (!cycle.generateCycle()) {
+        std::cout << "  cycle generation failed for " << board_size << std::endl;
+        return;
+    }
+
+    const int target_length = source.cellCount() * 3 / 4;
+    int guard = 0;
+    while ((int)source.body().size() < target_length && guard++ < 4000000 && !source.done()) {
+        Position wanted = cycle.getNext(source.body()[0]);
+        bool moved = false;
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT && !moved; action++) {
+            if (source.headAfter(static_cast<SnakeEnv::Action>(action)) == wanted) {
+                source.step(static_cast<SnakeEnv::Action>(action));
+                moved = true;
+            }
+        }
+        if (!moved) {
+            // Not yet aligned with the cycle; one turn fixes that.
+            source.step(SnakeEnv::Action::LEFT);
+        }
+    }
+
+    auto start = std::chrono::high_resolution_clock::now();
+    long long checksum = 0;
+    for (int index = 0; index < clones; index++) {
+        SnakeEnv copy = source;
+        checksum += copy.body().size();
+    }
+    double seconds = secondsSince(start);
+
+    std::cout << "  " << board_size << "x" << board_size << ", snake of "
+              << source.body().size() << ": " << (long long)(clones / seconds)
+              << " clones/s  (checksum " << (checksum > 0 ? 1 : 0) << ")" << std::endl;
+}
+
 }  // namespace
 
 int main() {
@@ -104,6 +150,10 @@ int main() {
     std::cout << "Simulator (single thread)" << std::endl;
     measureEnvironment(6, 1024, 2000);
     measureEnvironment(20, 1024, 2000);
+
+    std::cout << std::endl << "Game cloning (one per search descent)" << std::endl;
+    measureCloning(6, 2000000);
+    measureCloning(20, 2000000);
 
     std::cout << std::endl << "Network" << std::endl;
     bool cuda = torch::cuda::is_available();

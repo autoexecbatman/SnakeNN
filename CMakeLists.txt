@@ -589,6 +589,17 @@ add_executable(VectorEnvTest
 set_property(TARGET VectorEnvTest PROPERTY CXX_STANDARD 20)
 add_test(NAME vector_env_properties COMMAND VectorEnvTest)
 
+# Search correctness, checked against hand-written evaluators rather than a
+# network, so a failure here is the search's and not the model's. No LibTorch.
+add_executable(SearchTest
+    src/mcts_test.cpp
+    src/mcts.cpp
+    src/snake_env.cpp
+)
+
+set_property(TARGET SearchTest PROPERTY CXX_STANDARD 20)
+add_test(NAME search_properties COMMAND SearchTest)
+
 # Network properties, including that its weights are board-size independent,
 # which is what makes the curriculum possible. Needs LibTorch.
 add_executable(NetworkTest
@@ -615,6 +626,7 @@ add_executable(ThroughputBenchmark
     src/az_network.cpp
     src/vector_env.cpp
     src/snake_env.cpp
+    src/hamiltonian_cycle.cpp
 )
 
 target_include_directories(ThroughputBenchmark PRIVATE ${TORCH_INCLUDE_DIRS})
