@@ -579,6 +579,56 @@ add_executable(EnvTest
 set_property(TARGET EnvTest PROPERTY CXX_STANDARD 20)
 add_test(NAME snake_env_properties COMMAND EnvTest)
 
+# Batched environment - the layer everything the learner concludes rests on.
+add_executable(VectorEnvTest
+    src/vector_env_test.cpp
+    src/vector_env.cpp
+    src/snake_env.cpp
+)
+
+set_property(TARGET VectorEnvTest PROPERTY CXX_STANDARD 20)
+add_test(NAME vector_env_properties COMMAND VectorEnvTest)
+
+# Network properties, including that its weights are board-size independent,
+# which is what makes the curriculum possible. Needs LibTorch.
+add_executable(NetworkTest
+    src/az_network_test.cpp
+    src/az_network.cpp
+    src/snake_env.cpp
+)
+
+target_include_directories(NetworkTest PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(NetworkTest ${TORCH_LIBRARIES})
+set_property(TARGET NetworkTest PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(NetworkTest)
+
+if(WIN32)
+    target_link_options(NetworkTest PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+add_test(NAME network_properties COMMAND NetworkTest)
+
+# Throughput measurement - simulator steps and network evaluations per second.
+# The only target in this group that needs LibTorch.
+add_executable(ThroughputBenchmark
+    src/throughput_benchmark.cpp
+    src/az_network.cpp
+    src/vector_env.cpp
+    src/snake_env.cpp
+)
+
+target_include_directories(ThroughputBenchmark PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(ThroughputBenchmark ${TORCH_LIBRARIES})
+set_property(TARGET ThroughputBenchmark PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(ThroughputBenchmark)
+
+target_compile_definitions(ThroughputBenchmark PRIVATE USE_CUDA=1)
+target_compile_definitions(ThroughputBenchmark PRIVATE TORCH_CUDA=1)
+
+if(WIN32)
+    target_link_options(ThroughputBenchmark PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
 # Headless benchmark - win rate over seeded games. No LibTorch, no raylib, so
 # it compiles snake_logic.cpp directly rather than linking SnakeGameLib.
 add_executable(Benchmark
