@@ -293,3 +293,263 @@ target_compile_definitions(ComprehensiveEvaluator PRIVATE TORCH_CUDA=1)
 if(WIN32)
     target_link_options(ComprehensiveEvaluator PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
 endif()
+
+# Extended Optimized trainer for longer training sessions (20K+ episodes)
+add_executable(ExtendedOptimizedTrainer
+    src/extended_optimized_trainer.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(ExtendedOptimizedTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(ExtendedOptimizedTrainer SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET ExtendedOptimizedTrainer PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(ExtendedOptimizedTrainer)
+
+# Define CUDA support for extended trainer
+target_compile_definitions(ExtendedOptimizedTrainer PRIVATE USE_CUDA=1)
+target_compile_definitions(ExtendedOptimizedTrainer PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for extended trainer
+if(WIN32)
+    target_link_options(ExtendedOptimizedTrainer PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Quality trainer - optimizes for game length and score quality
+add_executable(QualityTrainer
+    src/quality_trainer.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(QualityTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(QualityTrainer SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET QualityTrainer PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(QualityTrainer)
+
+# Define CUDA support for quality trainer
+target_compile_definitions(QualityTrainer PRIVATE USE_CUDA=1)
+target_compile_definitions(QualityTrainer PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for quality trainer
+if(WIN32)
+    target_link_options(QualityTrainer PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Resume trainer - continues training from existing model
+add_executable(ResumeTrainer
+    src/resume_trainer.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(ResumeTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(ResumeTrainer SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET ResumeTrainer PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(ResumeTrainer)
+
+# Define CUDA support for resume trainer
+target_compile_definitions(ResumeTrainer PRIVATE USE_CUDA=1)
+target_compile_definitions(ResumeTrainer PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for resume trainer
+if(WIN32)
+    target_link_options(ResumeTrainer PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Research-optimized trainer with academic parameters
+add_executable(ResearchOptimizedTrainer
+    src/research_optimized_trainer.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(ResearchOptimizedTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(ResearchOptimizedTrainer SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET ResearchOptimizedTrainer PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(ResearchOptimizedTrainer)
+
+# Define CUDA support for research trainer
+target_compile_definitions(ResearchOptimizedTrainer PRIVATE USE_CUDA=1)
+target_compile_definitions(ResearchOptimizedTrainer PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for research trainer
+if(WIN32)
+    target_link_options(ResearchOptimizedTrainer PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Winning trainer - optimizes for high scores (15+ foods)
+add_executable(WinningTrainer
+    src/winning_trainer.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(WinningTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(WinningTrainer SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET WinningTrainer PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(WinningTrainer)
+
+# Define CUDA support for winning trainer
+target_compile_definitions(WinningTrainer PRIVATE USE_CUDA=1)
+target_compile_definitions(WinningTrainer PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for winning trainer
+if(WIN32)
+    target_link_options(WinningTrainer PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Simplified winning trainer - proven 8 features with score rewards
+add_executable(SimplifiedWinningTrainer
+    src/simplified_winning_trainer.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(SimplifiedWinningTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(SimplifiedWinningTrainer SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET SimplifiedWinningTrainer PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(SimplifiedWinningTrainer)
+
+# Define CUDA support for simplified winning trainer
+target_compile_definitions(SimplifiedWinningTrainer PRIVATE USE_CUDA=1)
+target_compile_definitions(SimplifiedWinningTrainer PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for simplified winning trainer
+if(WIN32)
+    target_link_options(SimplifiedWinningTrainer PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Model evaluator - comprehensive testing of trained models
+add_executable(ModelEvaluator
+    src/model_evaluator.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(ModelEvaluator PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(ModelEvaluator SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET ModelEvaluator PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(ModelEvaluator)
+
+# Define CUDA support for model evaluator
+target_compile_definitions(ModelEvaluator PRIVATE USE_CUDA=1)
+target_compile_definitions(ModelEvaluator PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for model evaluator
+if(WIN32)
+    target_link_options(ModelEvaluator PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Hybrid AI - Neural network + pathfinding + space management
+add_executable(HybridAI
+    src/hybrid_ai.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(HybridAI PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(HybridAI SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET HybridAI PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(HybridAI)
+
+# Define CUDA support for hybrid AI
+target_compile_definitions(HybridAI PRIVATE USE_CUDA=1)
+target_compile_definitions(HybridAI PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for hybrid AI
+if(WIN32)
+    target_link_options(HybridAI PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Visual hybrid demo - watch AI play in real-time
+add_executable(VisualHybridDemo
+    src/visual_hybrid_demo.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(VisualHybridDemo PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(VisualHybridDemo SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET VisualHybridDemo PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(VisualHybridDemo)
+
+# Define CUDA support for visual demo
+target_compile_definitions(VisualHybridDemo PRIVATE USE_CUDA=1)
+target_compile_definitions(VisualHybridDemo PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for visual demo
+if(WIN32)
+    target_link_options(VisualHybridDemo PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Safe Snake AI - guaranteed collision avoidance
+add_executable(SafeSnakeAI
+    src/safe_snake_ai.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(SafeSnakeAI PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(SafeSnakeAI SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET SafeSnakeAI PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(SafeSnakeAI)
+
+# Define CUDA support for safe AI
+target_compile_definitions(SafeSnakeAI PRIVATE USE_CUDA=1)
+target_compile_definitions(SafeSnakeAI PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for safe AI
+if(WIN32)
+    target_link_options(SafeSnakeAI PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Universal Safe AI - loads any compatible model architecture
+add_executable(UniversalSafeAI
+    src/universal_safe_ai.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(UniversalSafeAI PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(UniversalSafeAI SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET UniversalSafeAI PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(UniversalSafeAI)
+
+# Define CUDA support for universal AI
+target_compile_definitions(UniversalSafeAI PRIVATE USE_CUDA=1)
+target_compile_definitions(UniversalSafeAI PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for universal AI
+if(WIN32)
+    target_link_options(UniversalSafeAI PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Smart Safe AI - trap avoidance with flood fill
+add_executable(SmartSafeAI
+    src/smart_safe_ai.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(SmartSafeAI PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(SmartSafeAI SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET SmartSafeAI PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(SmartSafeAI)
+
+# Define CUDA support for smart AI
+target_compile_definitions(SmartSafeAI PRIVATE USE_CUDA=1)
+target_compile_definitions(SmartSafeAI PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for smart AI
+if(WIN32)
+    target_link_options(SmartSafeAI PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Simple Snake AI with Fixed Collision Detection
+add_executable(SimpleSnakeAIFixed
+    src/simple_snake_ai_fixed.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(SimpleSnakeAIFixed PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(SimpleSnakeAIFixed SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET SimpleSnakeAIFixed PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(SimpleSnakeAIFixed)
+
+# Define CUDA support for fixed AI
+target_compile_definitions(SimpleSnakeAIFixed PRIVATE USE_CUDA=1)
+target_compile_definitions(SimpleSnakeAIFixed PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for fixed AI
+if(WIN32)
+    target_link_options(SimpleSnakeAIFixed PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
