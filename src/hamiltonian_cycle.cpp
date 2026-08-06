@@ -7,7 +7,7 @@ HamiltonianCycle::HamiltonianCycle(int width, int height)
     : width_(width), height_(height), rng_(std::random_device{}()) {
     
     if (!isValidGrid()) {
-        throw std::invalid_argument("Grid dimensions must result in even total cells for Hamiltonian cycle");
+        throw std::invalid_argument("Grid must be at least 2x2 with an even number of rows for this Hamiltonian cycle construction");
     }
     
     cycle_index_.resize(height_, std::vector<int>(width_, -1));
@@ -19,9 +19,13 @@ HamiltonianCycle::HamiltonianCycle(int width, int height)
 }
 
 bool HamiltonianCycle::isValidGrid() const {
-    // For Hamiltonian cycle to exist, total cells must be even
-    // Or at least one dimension must be even
-    return (width_ * height_) % 2 == 0 || width_ % 2 == 0 || height_ % 2 == 0;
+    // The construction in mstToCycle reserves column 0 as the return path and
+    // serpentines across columns 1..width-1. Its last row must end adjacent to
+    // column 0, which happens only when the row count is even. An even cell
+    // count is necessary for any Hamiltonian cycle on a grid but is not
+    // sufficient here - a 4-wide, 5-high grid has 20 cells and this
+    // construction fails on it, so height parity is what must be checked.
+    return width_ >= 2 && height_ >= 2 && height_ % 2 == 0;
 }
 
 bool HamiltonianCycle::generateCycle() {
@@ -126,27 +130,38 @@ bool HamiltonianCycle::generateMST() {
 }
 
 bool HamiltonianCycle::mstToCycle() {
-    // Create a simple zig-zag pattern that guarantees full coverage
-    // This is mathematically guaranteed to work for rectangular grids
-    
+    // Serpentine across columns 1..width-1, then return up column 0.
+    //
+    // A plain boustrophedon over the whole grid is a Hamiltonian PATH, not a
+    // cycle: on a 20x20 grid it starts at (0,0) and ends at (0,19), which are
+    // nineteen cells apart, so closing it produces one move the snake cannot
+    // make. Reserving column 0 as a dedicated return path closes the loop.
+    //
+    // Rows are traversed alternately rightward and leftward over columns
+    // 1..width-1. With an even row count the final row is traversed leftward
+    // and so ends at column 1, one step from column 0; the walk then runs up
+    // column 0 to (0,0), which is adjacent to the start cell (1,0).
+
     cycle_path_.clear();
     next_in_cycle_.clear();
-    
-    // Simple zig-zag pattern
-    for (int y = 0; y < height_; y++) {
-        if (y % 2 == 0) {
-            // Even rows: left to right
-            for (int x = 0; x < width_; x++) {
-                cycle_path_.push_back({x, y});
+
+    for (int row = 0; row < height_; row++) {
+        if (row % 2 == 0) {
+            for (int col = 1; col < width_; col++) {
+                cycle_path_.push_back({col, row});
             }
         } else {
-            // Odd rows: right to left
-            for (int x = width_ - 1; x >= 0; x--) {
-                cycle_path_.push_back({x, y});
+            for (int col = width_ - 1; col >= 1; col--) {
+                cycle_path_.push_back({col, row});
             }
         }
     }
-    
+
+    // Return path: up the reserved column, from the last row back to row 0.
+    for (int row = height_ - 1; row >= 0; row--) {
+        cycle_path_.push_back({0, row});
+    }
+
     // Build the cycle index mapping and next position mapping
     for (size_t i = 0; i < cycle_path_.size(); i++) {
         Position pos = cycle_path_[i];
@@ -157,7 +172,7 @@ bool HamiltonianCycle::mstToCycle() {
         next_in_cycle_[pos] = next_pos;
     }
     
-    std::cout << "Created zig-zag Hamiltonian cycle with " << cycle_path_.size() << " positions" << std::endl;
+    std::cout << "Created serpentine Hamiltonian cycle with " << cycle_path_.size() << " positions" << std::endl;
     std::cout << "Start: (" << cycle_path_[0].x << "," << cycle_path_[0].y << ")" << std::endl;
     std::cout << "End: (" << cycle_path_.back().x << "," << cycle_path_.back().y << ")" << std::endl;
     std::cout << "End connects to start: (" << next_in_cycle_[cycle_path_.back()].x << "," << next_in_cycle_[cycle_path_.back()].y << ")" << std::endl;

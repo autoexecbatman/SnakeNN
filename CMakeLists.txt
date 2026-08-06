@@ -554,9 +554,29 @@ if(WIN32)
     target_link_options(SimpleSnakeAIFixed PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
 endif()
 
+# Cycle validity test - no LibTorch, no raylib, runs anywhere
+add_executable(CycleTest
+    src/cycle_test.cpp
+    src/hamiltonian_cycle.cpp
+)
+
+set_property(TARGET CycleTest PROPERTY CXX_STANDARD 20)
+
+# Headless benchmark - win rate over seeded games. No LibTorch, no raylib, so
+# it compiles snake_logic.cpp directly rather than linking SnakeGameLib.
+add_executable(Benchmark
+    src/benchmark.cpp
+    src/cycle_agent.cpp
+    src/hamiltonian_cycle.cpp
+    src/snake_logic.cpp
+)
+
+set_property(TARGET Benchmark PROPERTY CXX_STANDARD 20)
+
 # Perfect Snake AI - complete game winner with Hamiltonian Cycle
 add_executable(PerfectSnakeAI
     src/perfect_snake_ai.cpp
+    src/cycle_agent.cpp
     src/hamiltonian_cycle.cpp
     src/network_nn.cpp
 )

@@ -6,12 +6,18 @@ SnakeGame::SnakeGame() : rng(std::random_device{}()) {
     reset();
 }
 
+// Seeded games are reproducible, which is what makes two agents comparable.
+SnakeGame::SnakeGame(unsigned int seed) : rng(seed) {
+    reset();
+}
+
 void SnakeGame::reset() {
     snake.clear();
     snake.push_back(Position(GRID_WIDTH / 2, GRID_HEIGHT / 2));
     direction = Direction::RIGHT;
     pendingDirection = Direction::RIGHT;
     gameOver = false;
+    won = false;
     score = 0;
     spawnFood();
 }
@@ -33,22 +39,29 @@ bool SnakeGame::update() {
     }
     
     // Check self collision
-    if (checkCollision(nextHead)) {
+    if (blocksMove(nextHead)) {
         gameOver = true;
         return false;
     }
-    
+
     // Move snake
     snake.insert(snake.begin(), nextHead);
-    
+
     // Check food collision
     if (nextHead == food) {
         score++;
+        if (static_cast<int>(snake.size()) == CELL_COUNT) {
+            // Grid full - there is nowhere left to place food and nothing left
+            // to do. This is the win, and it is terminal.
+            won = true;
+            gameOver = true;
+            return false;
+        }
         spawnFood();
     } else {
         snake.pop_back();
     }
-    
+
     return true;
 }
 
@@ -100,7 +113,7 @@ std::vector<float> SnakeGame::getGameState() const {
         
         bool danger = (testPos.x < 0 || testPos.x >= GRID_WIDTH ||
                       testPos.y < 0 || testPos.y >= GRID_HEIGHT ||
-                      checkCollision(testPos));
+                      blocksMove(testPos));
         state.push_back(danger ? 1.0f : 0.0f);
     }
     
@@ -144,6 +157,10 @@ bool SnakeGame::isGameOver() const {
     return gameOver;
 }
 
+bool SnakeGame::isWon() const {
+    return won;
+}
+
 int SnakeGame::getScore() const {
     return score;
 }
@@ -154,7 +171,7 @@ void SnakeGame::spawnFood() {
     for (int x = 0; x < GRID_WIDTH; x++) {
         for (int y = 0; y < GRID_HEIGHT; y++) {
             Position pos(x, y);
-            if (!checkCollision(pos)) {
+            if (!occupiesCell(pos)) {
                 availablePositions.push_back(pos);
             }
         }
@@ -166,15 +183,24 @@ void SnakeGame::spawnFood() {
     }
 }
 
-bool SnakeGame::checkCollision(const Position& pos) const {
-    // Check collision with snake body
-    // Exclude tail only if food will NOT be eaten (tail will move)
-    // Include tail if food WILL be eaten (tail stays in place)
+bool SnakeGame::occupiesCell(const Position& pos) const {
+    for (const auto& segment : snake) {
+        if (segment == pos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SnakeGame::blocksMove(const Position& pos) const {
+    // Entering the tail cell is legal because the tail vacates it on the same
+    // step - unless the snake eats this step, in which case the tail stays put
+    // and the cell is still occupied.
     bool willEatFood = (pos == food);
-    size_t checkLength = willEatFood ? snake.size() : snake.size() - 1;
-    
-    for (size_t i = 0; i < checkLength; i++) {
-        if (snake[i] == pos) {
+    size_t blockingSegments = willEatFood ? snake.size() : snake.size() - 1;
+
+    for (size_t index = 0; index < blockingSegments; index++) {
+        if (snake[index] == pos) {
             return true;
         }
     }
