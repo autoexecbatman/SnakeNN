@@ -25,6 +25,16 @@ public:
     // body, head, food, tail timer, and one plane per heading
     static const int PLANE_COUNT = 8;
 
+    // Reward scale follows Du, Gemp, Wu and Wu 2022 (arXiv:2211.09622), which
+    // trained a winning Snake agent with +1 per apple, -10 for dying and +10 for
+    // filling the board. The asymmetry matters: with +1/-1 a long greedy run
+    // outscores a short safe one, which is the failure the old trainers here
+    // learned. These are floats rather than an env parameter because a reward
+    // scale that varies between runs makes their value heads incomparable.
+    static constexpr float FOOD_REWARD = 1.0f;
+    static constexpr float DEATH_REWARD = -10.0f;
+    static constexpr float WIN_REWARD = 10.0f;
+
     struct StepResult {
         float reward;
         bool done;

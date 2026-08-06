@@ -85,7 +85,7 @@ SnakeEnv::StepResult SnakeEnv::step(Action action) {
 
     if (!insideGrid(next)) {
         done_ = true;
-        return {-1.0f, true, false};
+        return {DEATH_REWARD, true, false};
     }
 
     bool will_eat = (next == food_);
@@ -96,7 +96,7 @@ SnakeEnv::StepResult SnakeEnv::step(Action action) {
 
     if (blocked) {
         done_ = true;
-        return {-1.0f, true, false};
+        return {DEATH_REWARD, true, false};
     }
 
     if (will_eat) {
@@ -110,11 +110,11 @@ SnakeEnv::StepResult SnakeEnv::step(Action action) {
             // to be done. This is the win, and it is terminal.
             won_ = true;
             done_ = true;
-            return {1.0f, true, true};
+            return {WIN_REWARD, true, true};
         }
 
         spawnFood();
-        return {1.0f, false, false};
+        return {FOOD_REWARD, false, false};
     }
 
     // Free the tail before occupying the new head, so a head entering the cell

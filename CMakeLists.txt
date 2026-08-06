@@ -619,6 +619,39 @@ endif()
 
 add_test(NAME network_properties COMMAND NetworkTest)
 
+# Self-play record generation - the value targets no later stage can check.
+add_executable(SelfPlayTest
+    src/selfplay_test.cpp
+    src/selfplay.cpp
+    src/mcts.cpp
+    src/snake_env.cpp
+)
+
+set_property(TARGET SelfPlayTest PROPERTY CXX_STANDARD 20)
+add_test(NAME selfplay_properties COMMAND SelfPlayTest)
+
+# AlphaZero training loop.
+add_executable(AlphaZeroTrainer
+    src/az_trainer.cpp
+    src/selfplay.cpp
+    src/mcts.cpp
+    src/network_evaluator.cpp
+    src/az_network.cpp
+    src/snake_env.cpp
+)
+
+target_include_directories(AlphaZeroTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(AlphaZeroTrainer ${TORCH_LIBRARIES})
+set_property(TARGET AlphaZeroTrainer PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(AlphaZeroTrainer)
+
+target_compile_definitions(AlphaZeroTrainer PRIVATE USE_CUDA=1)
+target_compile_definitions(AlphaZeroTrainer PRIVATE TORCH_CUDA=1)
+
+if(WIN32)
+    target_link_options(AlphaZeroTrainer PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
 # Throughput measurement - simulator steps and network evaluations per second.
 # The only target in this group that needs LibTorch.
 add_executable(ThroughputBenchmark
