@@ -6,6 +6,74 @@
 #include <vector>
 #include <algorithm>
 #include <memory>
+#include <cmath>
+
+// Presentation constants. The board is the only thing whose size is dictated by
+// the game; everything else is laid out around it on a single spacing scale so
+// the panel lines up with the board edges rather than floating near them.
+namespace ui {
+
+constexpr int CELL = 22;
+constexpr int GAP = 16;                 // one unit of spacing
+constexpr int BOARD_WIDTH = CELL * SnakeGame::GRID_WIDTH;
+constexpr int BOARD_HEIGHT = CELL * SnakeGame::GRID_HEIGHT;
+constexpr int MARGIN = GAP + GAP / 2;   // 24, the outer frame
+constexpr int HEADER_HEIGHT = 74;
+constexpr int PANEL_HEIGHT = 168;
+constexpr int BOARD_X = MARGIN;
+constexpr int BOARD_Y = HEADER_HEIGHT;
+constexpr int WINDOW_WIDTH = BOARD_WIDTH + MARGIN * 2;
+constexpr int WINDOW_HEIGHT = HEADER_HEIGHT + BOARD_HEIGHT + PANEL_HEIGHT;
+
+// One accent per meaning: mint is the snake and success, amber is the food and
+// the call to action, slate carries everything structural.
+constexpr Color BACKGROUND = {13, 16, 22, 255};
+constexpr Color SURFACE = {21, 26, 34, 255};
+constexpr Color SURFACE_EDGE = {38, 46, 58, 255};
+constexpr Color GRID_LINE = {29, 35, 45, 255};
+constexpr Color TEXT_PRIMARY = {233, 238, 245, 255};
+constexpr Color TEXT_MUTED = {124, 137, 156, 255};
+constexpr Color MINT = {84, 224, 168, 255};
+constexpr Color MINT_DEEP = {24, 108, 88, 255};
+constexpr Color AMBER = {245, 176, 66, 255};
+constexpr Color CRIMSON = {232, 93, 93, 255};
+
+// raylib's built-in font is a 10-pixel bitmap face that cannot be scaled
+// cleanly, which is most of why the old panel looked improvised. Two system
+// faces instead: a condensed grotesque for display text, and a monospace for
+// every number, so digits keep their column as the counters run rather than
+// shuffling the labels sideways on each frame.
+constexpr const char* DISPLAY_FONT_PATH = "C:/Windows/Fonts/bahnschrift.ttf";
+constexpr const char* MONO_FONT_PATH = "C:/Windows/Fonts/CascadiaMono.ttf";
+// Glyphs are baked at well above display size and filtered down, which is what
+// keeps them sharp at every size drawn here.
+constexpr int FONT_BAKE_SIZE = 64;
+
+Font loadFont(const char* path) {
+    if (!FileExists(path)) {
+        std::cerr << "[UI] Font not found, falling back to the built-in face: " << path << std::endl;
+        return GetFontDefault();
+    }
+    Font font = LoadFontEx(path, FONT_BAKE_SIZE, nullptr, 0);
+    SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
+    return font;
+}
+
+// Small-caps labels carry extra letter spacing, which is most of what separates
+// a label from a value at a glance.
+void drawLabel(const Font& font, const char* text, float x, float y, Color color) {
+    DrawTextEx(font, text, {x, y}, 11.0f, 2.2f, color);
+}
+
+void drawText(const Font& font, const char* text, float x, float y, float size, float spacing, Color color) {
+    DrawTextEx(font, text, {x, y}, size, spacing, color);
+}
+
+float textWidth(const Font& font, const char* text, float size, float spacing) {
+    return MeasureTextEx(font, text, size, spacing).x;
+}
+
+}  // namespace ui
 
 // PERFECT Snake AI - Academic Research Implementation
 // Based on Umans & Lenhart (IEEE 1997) and related academic papers
@@ -45,14 +113,16 @@ public:
     }
     
     void runPerfectDemo() {
-        const int CELL_SIZE = 15;
-        // The status line runs wider than the 300-pixel grid and was being
-        // clipped mid-word at the window edge.
-        const int SCREEN_WIDTH = 440;
-        const int SCREEN_HEIGHT = SnakeGame::GRID_HEIGHT * CELL_SIZE + 200;
-        
-        InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "PERFECT Snake AI - Hamiltonian Cycle");
+        const int CELL_SIZE = ui::CELL;
+
+        SetConfigFlags(FLAG_MSAA_4X_HINT);
+        InitWindow(ui::WINDOW_WIDTH, ui::WINDOW_HEIGHT, "Snake - Hamiltonian Cycle");
         SetTargetFPS(60);
+
+        // Fonts need a live GL context, so they load after InitWindow and are
+        // released before the window closes.
+        font_display = ui::loadFont(ui::DISPLAY_FONT_PATH);
+        font_mono = ui::loadFont(ui::MONO_FONT_PATH);
 
         // A cycle lap costs up to one pass of the grid per food, so a win runs
         // to roughly 40000 moves. At one move per frame that is over half an
@@ -71,6 +141,7 @@ public:
             std::cout << "[SUCCESS] Hamiltonian cycle generated for " << SnakeGame::GRID_WIDTH << "x" << SnakeGame::GRID_HEIGHT << " grid" << std::endl;
         } catch (const std::exception& e) {
             std::cerr << "[ERROR] Creating Hamiltonian cycle: " << e.what() << std::endl;
+            unloadFonts();
             CloseWindow();
             return;
         }
@@ -214,7 +285,7 @@ public:
             }
             
             BeginDrawing();
-            ClearBackground(BLACK);
+            ClearBackground(ui::BACKGROUND);
             
             drawGame(game, CELL_SIZE);
             drawHamiltonianUI(game, total_games, current_score, max_score, avg_score, 
@@ -222,17 +293,30 @@ public:
             
             EndDrawing();
         }
-        
+
+        unloadFonts();
         CloseWindow();
     }
-    
+
 private:
+    // The built-in face is not ours to free, so only unload what was loaded.
+    void unloadFonts() {
+        if (font_display.texture.id != GetFontDefault().texture.id) {
+            UnloadFont(font_display);
+        }
+        if (font_mono.texture.id != GetFontDefault().texture.id) {
+            UnloadFont(font_mono);
+        }
+    }
+
     SnakeNeuralNetwork network_8x64{8, 64, 4};
     SnakeNeuralNetwork network_8x128{8, 128, 4};
     SnakeNeuralNetwork network_11x128{11, 128, 4};
     SnakeNeuralNetwork* active_network = nullptr;
     std::string network_type, loaded_model;
     std::unique_ptr<CycleAgent> cycle_agent;
+    Font font_display{};
+    Font font_mono{};
     
     // Loop detection
     std::vector<Position> position_history;
@@ -406,69 +490,154 @@ private:
         return safe_moves * 10.0f; // Bonus for having escape routes
     }
     
+    Rectangle cellRect(const Position& cell, float inset) const {
+        return {ui::BOARD_X + cell.x * (float)ui::CELL + inset,
+                ui::BOARD_Y + cell.y * (float)ui::CELL + inset,
+                ui::CELL - inset * 2.0f,
+                ui::CELL - inset * 2.0f};
+    }
+
     void drawGame(const SnakeGame& game, int cell_size) {
-        // Draw grid
-        for (int x = 0; x < SnakeGame::GRID_WIDTH; x++) {
-            for (int y = 0; y < SnakeGame::GRID_HEIGHT; y++) {
-                Rectangle cell = {(float)(x * cell_size), (float)(y * cell_size), 
-                                 (float)cell_size, (float)cell_size};
-                DrawRectangleRec(cell, DARKGRAY);
-                DrawRectangleLinesEx(cell, 1, GRAY);
-            }
+        (void)cell_size;  // layout comes from ui::CELL now
+
+        // Board surface, then hairline separators. Lines this close in value to
+        // the surface read as texture rather than as a table.
+        Rectangle board = {ui::BOARD_X - 2.0f, ui::BOARD_Y - 2.0f,
+                           ui::BOARD_WIDTH + 4.0f, ui::BOARD_HEIGHT + 4.0f};
+        DrawRectangleRounded(board, 0.02f, 8, ui::SURFACE);
+        DrawRectangleRoundedLines(board, 0.02f, 8, ui::SURFACE_EDGE);
+
+        for (int column = 1; column < SnakeGame::GRID_WIDTH; column++) {
+            float x = ui::BOARD_X + column * (float)ui::CELL;
+            DrawLineV({x, (float)ui::BOARD_Y}, {x, (float)(ui::BOARD_Y + ui::BOARD_HEIGHT)}, ui::GRID_LINE);
         }
-        
-        // Draw snake with gradient
-        auto snake_body = game.getSnakeBody();
-        for (size_t i = 0; i < snake_body.size(); i++) {
-            Rectangle cell = {(float)(snake_body[i].x * cell_size), 
-                             (float)(snake_body[i].y * cell_size),
-                             (float)cell_size, (float)cell_size};
-            
-            Color snake_color;
-            if (i == 0) {
-                snake_color = GOLD; // Head
-            } else {
-                float intensity = 1.0f - (float)i / snake_body.size();
-                snake_color = {(unsigned char)(50 + intensity * 100), 
-                              (unsigned char)(150 + intensity * 105), 
-                              (unsigned char)(50 + intensity * 100), 255};
-            }
-            DrawRectangleRec(cell, snake_color);
+        for (int row = 1; row < SnakeGame::GRID_HEIGHT; row++) {
+            float y = ui::BOARD_Y + row * (float)ui::CELL;
+            DrawLineV({(float)ui::BOARD_X, y}, {(float)(ui::BOARD_X + ui::BOARD_WIDTH), y}, ui::GRID_LINE);
         }
-        
-        // Draw food
-        auto food = game.getFoodPosition();
-        Rectangle food_cell = {(float)(food.x * cell_size), (float)(food.y * cell_size),
-                              (float)cell_size, (float)cell_size};
-        DrawRectangleRec(food_cell, RED);
+
+        // Food pulses so the eye can find it on a board that is mostly snake.
+        Position food = game.getFoodPosition();
+        Rectangle food_cell = cellRect(food, 0.0f);
+        Vector2 food_centre = {food_cell.x + food_cell.width / 2.0f,
+                               food_cell.y + food_cell.height / 2.0f};
+        float pulse = 0.5f + 0.5f * sinf((float)GetTime() * 4.0f);
+        DrawCircleV(food_centre, ui::CELL * (0.46f + 0.10f * pulse), Fade(ui::AMBER, 0.16f));
+        DrawCircleV(food_centre, ui::CELL * 0.26f, ui::AMBER);
+
+        // Snake, tail to head, so the head always draws on top. The body fades
+        // from mint at the head to deep teal at the tail, which makes the
+        // direction of travel readable in a still frame.
+        const std::vector<Position>& body = game.getSnakeBody();
+        for (size_t index = body.size(); index-- > 0; ) {
+            float along = body.size() > 1 ? (float)index / (float)(body.size() - 1) : 0.0f;
+            Color segment = {
+                (unsigned char)(ui::MINT.r + (ui::MINT_DEEP.r - ui::MINT.r) * along),
+                (unsigned char)(ui::MINT.g + (ui::MINT_DEEP.g - ui::MINT.g) * along),
+                (unsigned char)(ui::MINT.b + (ui::MINT_DEEP.b - ui::MINT.b) * along),
+                255};
+            DrawRectangleRounded(cellRect(body[index], 1.5f), 0.35f, 6, segment);
+        }
+
+        // Head marker: a brighter cap plus two eyes facing the direction of
+        // travel, so it is obvious which end is leading.
+        Rectangle head = cellRect(body[0], 1.0f);
+        DrawRectangleRounded(head, 0.35f, 6, ui::MINT);
+        Vector2 head_centre = {head.x + head.width / 2.0f, head.y + head.height / 2.0f};
+        Vector2 facing = {0.0f, 0.0f};
+        switch (game.getDirection()) {
+            case Direction::UP: facing = {0.0f, -1.0f}; break;
+            case Direction::DOWN: facing = {0.0f, 1.0f}; break;
+            case Direction::LEFT: facing = {-1.0f, 0.0f}; break;
+            case Direction::RIGHT: facing = {1.0f, 0.0f}; break;
+        }
+        Vector2 across = {-facing.y, facing.x};
+        float forward = ui::CELL * 0.18f;
+        float apart = ui::CELL * 0.20f;
+        for (float side : {-1.0f, 1.0f}) {
+            Vector2 eye = {head_centre.x + facing.x * forward + across.x * apart * side,
+                           head_centre.y + facing.y * forward + across.y * apart * side};
+            DrawCircleV(eye, ui::CELL * 0.09f, ui::BACKGROUND);
+        }
     }
     
-    void drawHamiltonianUI(const SnakeGame& game, int total_games, int current_score, 
-                          int max_score, float avg_score, int steps, bool game_over, 
-                          int perfect_wins, int shortcuts_taken) {
-        int ui_y = SnakeGame::GRID_HEIGHT * 15 + 10;
-        
-        DrawText(TextFormat("Score: %d", game.getScore()), 10, ui_y, 18, WHITE);
-        DrawText(TextFormat("Steps: %d", steps), 150, ui_y, 18, WHITE);
-        DrawText(TextFormat("Games: %d", total_games), 320, ui_y, 18, WHITE);
-        
-        int max_possible = SnakeGame::GRID_WIDTH * SnakeGame::GRID_HEIGHT - 1;
-        float completion = (float)game.getScore() / max_possible * 100.0f;
-        DrawText(TextFormat("Grid: %.1f%%", completion), 10, ui_y + 25, 18, YELLOW);
-        
-        DrawText(TextFormat("Shortcuts: %d", shortcuts_taken), 150, ui_y + 25, 18, SKYBLUE);
-        DrawText(TextFormat("Perfect: %d/%d", perfect_wins, total_games), 320, ui_y + 25, 18, GREEN);
-        
-        DrawText("HAMILTONIAN CYCLE AI", 10, ui_y + 50, 20, GOLD);
-        DrawText("Follows a full-grid cycle - cannot trap itself", 10, ui_y + 75, 14, LIGHTGRAY);
-        
+    void drawStatTile(const char* label, const char* value, float x, float y,
+                      float width, Color value_color) {
+        ui::drawLabel(font_display, label, x, y, ui::TEXT_MUTED);
+        float value_width = ui::textWidth(font_mono, value, 21.0f, 0.5f);
+        // Values sit centred under their label so four tiles read as a row of
+        // figures rather than four ragged left edges.
+        ui::drawText(font_mono, value, x + (width - value_width) / 2.0f - 4.0f, y + 17.0f,
+                     21.0f, 0.5f, value_color);
+    }
+
+    void drawStatusPill(const SnakeGame& game, bool game_over) {
+        const char* state = "RUNNING";
+        Color tone = ui::MINT;
         if (game_over) {
-            if (game.isWon()) {
-                DrawText("PERFECT - ENTIRE GRID FILLED", 10, ui_y + 100, 20, GREEN);
-            } else {
-                DrawText("GAME OVER", 10, ui_y + 100, 20, RED);
-            }
-            DrawText("Press SPACE for next game", 10, ui_y + 125, 16, YELLOW);
+            state = game.isWon() ? "PERFECT" : "DEAD";
+            tone = game.isWon() ? ui::MINT : ui::CRIMSON;
+        }
+
+        float text_width = ui::textWidth(font_display, state, 12.0f, 1.8f);
+        float pill_width = text_width + 30.0f;
+        Rectangle pill = {ui::WINDOW_WIDTH - ui::MARGIN - pill_width, 24.0f, pill_width, 24.0f};
+        DrawRectangleRounded(pill, 0.5f, 8, Fade(tone, 0.14f));
+        DrawCircleV({pill.x + 13.0f, pill.y + pill.height / 2.0f}, 3.5f, tone);
+        ui::drawText(font_display, state, pill.x + 22.0f, pill.y + 6.0f, 12.0f, 1.8f, tone);
+    }
+
+    void drawHamiltonianUI(const SnakeGame& game, int total_games, int current_score,
+                          int max_score, float avg_score, int steps, bool game_over,
+                          int perfect_wins, int shortcuts_taken) {
+        (void)current_score;
+        (void)max_score;
+        (void)avg_score;
+
+        // Header
+        ui::drawText(font_display, "HAMILTONIAN CYCLE", (float)ui::MARGIN, 20.0f, 27.0f, 0.5f,
+                     ui::TEXT_PRIMARY);
+        ui::drawText(font_display, "follows a full-grid cycle - cannot trap itself",
+                     (float)ui::MARGIN, 49.0f, 13.0f, 0.4f, ui::TEXT_MUTED);
+        drawStatusPill(game, game_over);
+
+        float panel_y = (float)(ui::BOARD_Y + ui::BOARD_HEIGHT + ui::GAP + 6);
+
+        // Fill meter. The board is the picture; this is the number that decides
+        // whether the run was a win, so it gets the full width.
+        float completion = (float)game.getScore() / SnakeGame::FOODS_TO_WIN;
+        ui::drawLabel(font_display, "GRID FILLED", (float)ui::MARGIN, panel_y, ui::TEXT_MUTED);
+
+        const char* percent = TextFormat("%.1f%%", completion * 100.0f);
+        float percent_width = ui::textWidth(font_mono, percent, 13.0f, 0.5f);
+        ui::drawText(font_mono, percent, ui::WINDOW_WIDTH - ui::MARGIN - percent_width,
+                     panel_y - 2.0f, 13.0f, 0.5f, completion >= 1.0f ? ui::MINT : ui::TEXT_PRIMARY);
+
+        Rectangle track = {(float)ui::MARGIN, panel_y + 18.0f, (float)ui::BOARD_WIDTH, 6.0f};
+        DrawRectangleRounded(track, 1.0f, 6, ui::SURFACE);
+        if (completion > 0.0f) {
+            Rectangle fill = {track.x, track.y, track.width * completion, track.height};
+            DrawRectangleRounded(fill, 1.0f, 6, ui::MINT);
+        }
+
+        // Stat row
+        float tile_y = panel_y + 44.0f;
+        float tile_width = ui::BOARD_WIDTH / 4.0f;
+        drawStatTile("SCORE", TextFormat("%d", game.getScore()),
+                     ui::MARGIN + tile_width * 0.0f, tile_y, tile_width, ui::TEXT_PRIMARY);
+        drawStatTile("STEPS", TextFormat("%d", steps),
+                     ui::MARGIN + tile_width * 1.0f, tile_y, tile_width, ui::TEXT_PRIMARY);
+        drawStatTile("SHORTCUTS", TextFormat("%d", shortcuts_taken),
+                     ui::MARGIN + tile_width * 2.0f, tile_y, tile_width, ui::TEXT_PRIMARY);
+        drawStatTile("PERFECT", TextFormat("%d/%d", perfect_wins, total_games),
+                     ui::MARGIN + tile_width * 3.0f, tile_y, tile_width, ui::MINT);
+
+        // Call to action, only when there is an action to take.
+        if (game_over) {
+            const char* prompt = "PRESS SPACE FOR NEXT GAME";
+            float prompt_width = ui::textWidth(font_display, prompt, 13.0f, 2.0f);
+            ui::drawText(font_display, prompt, (ui::WINDOW_WIDTH - prompt_width) / 2.0f,
+                         tile_y + 54.0f, 13.0f, 2.0f, ui::AMBER);
         }
     }
     
