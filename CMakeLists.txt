@@ -553,3 +553,24 @@ target_compile_definitions(SimpleSnakeAIFixed PRIVATE TORCH_CUDA=1)
 if(WIN32)
     target_link_options(SimpleSnakeAIFixed PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
 endif()
+
+# Perfect Snake AI - complete game winner with Hamiltonian Cycle
+add_executable(PerfectSnakeAI
+    src/perfect_snake_ai.cpp
+    src/hamiltonian_cycle.cpp
+    src/network_nn.cpp
+)
+
+target_include_directories(PerfectSnakeAI PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(PerfectSnakeAI SnakeGameLib ${TORCH_LIBRARIES})
+set_property(TARGET PerfectSnakeAI PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(PerfectSnakeAI)
+
+# Define CUDA support for perfect AI
+target_compile_definitions(PerfectSnakeAI PRIVATE USE_CUDA=1)
+target_compile_definitions(PerfectSnakeAI PRIVATE TORCH_CUDA=1)
+
+# Windows CUDA linker fix for perfect AI
+if(WIN32)
+    target_link_options(PerfectSnakeAI PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()

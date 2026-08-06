@@ -167,8 +167,14 @@ void SnakeGame::spawnFood() {
 }
 
 bool SnakeGame::checkCollision(const Position& pos) const {
-    for (const auto& segment : snake) {
-        if (segment == pos) {
+    // Check collision with snake body
+    // Exclude tail only if food will NOT be eaten (tail will move)
+    // Include tail if food WILL be eaten (tail stays in place)
+    bool willEatFood = (pos == food);
+    size_t checkLength = willEatFood ? snake.size() : snake.size() - 1;
+    
+    for (size_t i = 0; i < checkLength; i++) {
+        if (snake[i] == pos) {
             return true;
         }
     }
