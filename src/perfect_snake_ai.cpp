@@ -46,11 +46,23 @@ public:
     
     void runPerfectDemo() {
         const int CELL_SIZE = 15;
-        const int SCREEN_WIDTH = SnakeGame::GRID_WIDTH * CELL_SIZE;
+        // The status line runs wider than the 300-pixel grid and was being
+        // clipped mid-word at the window edge.
+        const int SCREEN_WIDTH = 440;
         const int SCREEN_HEIGHT = SnakeGame::GRID_HEIGHT * CELL_SIZE + 200;
         
-        InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "PERFECT Snake AI - Academic Hamiltonian Implementation");
-        SetTargetFPS(15); // Slightly faster to see perfect games
+        InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "PERFECT Snake AI - Hamiltonian Cycle");
+        SetTargetFPS(60);
+
+        // A cycle lap costs up to one pass of the grid per food, so a win runs
+        // to roughly 40000 moves. At one move per frame that is over half an
+        // hour of watching, so advance several moves per rendered frame - the
+        // grid still fills visibly, in well under a minute.
+        const int MOVES_PER_FRAME = 25;
+        // Same budget the benchmark uses. It must exceed the honest worst case,
+        // or the run is cut off before it can win - the previous cap of 15000
+        // was a third of what a win needs.
+        const int STEP_BUDGET = 4 * SnakeGame::CELL_COUNT * SnakeGame::FOODS_TO_WIN;
         
         // Initialize the cycle-following policy
         try {
@@ -72,6 +84,7 @@ public:
         int max_score = 0;
         float avg_score = 0.0f;
         bool game_over = false;
+        bool results_recorded = false;
         int steps = 0;
         int shortcuts_taken = 0;
         
@@ -80,52 +93,49 @@ public:
         std::cout << "Goal: Perfect game - fill entire grid (" << (SnakeGame::GRID_WIDTH * SnakeGame::GRID_HEIGHT - 1) << " foods)" << std::endl;
         
         while (!WindowShouldClose()) {
-            if (IsKeyPressed(KEY_SPACE) || game_over) {
-                if (game_over) {
-                    total_games++;
-                    current_score = game.getScore();
-                    if (current_score > max_score) max_score = current_score;
-                    avg_score = (avg_score * (total_games - 1) + current_score) / total_games;
-                    
-                    int max_possible = SnakeGame::GRID_WIDTH * SnakeGame::GRID_HEIGHT - 1;
-                    if (current_score >= max_possible - 5) {
-                        perfect_wins++;
-                        std::cout << "*** PERFECT GAME! Score: " << current_score << " ***" << std::endl;
-                    }
-                    
-                    std::cout << "Game " << total_games << " - Score: " << current_score 
-                             << " | Shortcuts: " << shortcuts_taken << " | Perfect: " << perfect_wins 
-                             << "/" << total_games << std::endl;
-                    
-                    shortcuts_taken = 0;
+            // Record the result when the game ends, not when the next one is
+            // started, so the totals on the end screen describe the game just
+            // finished rather than lagging one behind it.
+            if (game_over && !results_recorded) {
+                total_games++;
+                current_score = game.getScore();
+                if (current_score > max_score) max_score = current_score;
+                avg_score = (avg_score * (total_games - 1) + current_score) / total_games;
+
+                // A win is the full grid and nothing less. The old margin of
+                // five foods counted near misses as perfect games.
+                if (current_score == SnakeGame::FOODS_TO_WIN) {
+                    perfect_wins++;
                 }
-                
+
+                std::cout << "Game " << total_games << " - Score: " << current_score
+                         << " | Shortcuts: " << shortcuts_taken << " | Perfect: " << perfect_wins
+                         << "/" << total_games << std::endl;
+
+                results_recorded = true;
+            }
+
+            // Wait for the keypress the on-screen prompt asks for. Restarting
+            // the moment the game ended meant the finished grid - the whole
+            // point of watching - was on screen for a single frame.
+            if (game_over && IsKeyPressed(KEY_SPACE)) {
+                shortcuts_taken = 0;
+                results_recorded = false;
+
                 game.reset();
                 game_over = false;
                 steps = 0;
             }
             
-                if (!game.isGameOver() && !game_over) {
-                if (steps < 15000) { // Allow very long games
-                    auto head_before = game.getSnakeBody()[0];
-                    Direction perfect_move = getHamiltonianMove(game, shortcuts_taken);
-                    
-                    // Calculate expected next position
-                    Position expected_next = head_before;
-                    switch (perfect_move) {
-                        case Direction::UP: expected_next.y--; break;
-                        case Direction::DOWN: expected_next.y++; break;
-                        case Direction::LEFT: expected_next.x--; break;
-                        case Direction::RIGHT: expected_next.x++; break;
-                    }
-                    
-                    std::cout << "[MOVE] Step " << steps << " Head:(" << head_before.x << "," << head_before.y << ") Direction:" << (int)perfect_move << " -> Expected:(" << expected_next.x << "," << expected_next.y << ")" << std::endl;
-                    
-                    game.setDirection(perfect_move);
+            for (int move = 0; move < MOVES_PER_FRAME && !game.isGameOver() && !game_over; move++) {
+                if (steps < STEP_BUDGET) {
+                    game.setDirection(getHamiltonianMove(game, shortcuts_taken));
                     game.update();
                     steps++;
-                    
-                    if (game.isGameOver()) {
+
+                    // A cycle-following snake does not die, so anything here is
+                    // a real defect and gets the full forensic dump.
+                    if (game.isGameOver() && !game.isWon()) {
                         // DEATH ANALYSIS: Figure out what went wrong
                         auto final_head = game.getSnakeBody()[0];
                         auto snake_body = game.getSnakeBody();
@@ -193,12 +203,10 @@ public:
                         game_over = true;
                     }
                     
-                    // Check for perfect victory
-                    int max_possible = SnakeGame::GRID_WIDTH * SnakeGame::GRID_HEIGHT - 1;
-                    if (game.getScore() >= max_possible) {
-                        std::cout << "*** ACADEMIC PERFECT VICTORY! ENTIRE GRID FILLED! ***" << std::endl;
+                    if (game.isWon()) {
+                        std::cout << "*** PERFECT VICTORY! ENTIRE GRID FILLED in " << steps
+                                  << " steps ***" << std::endl;
                         game_over = true;
-                        perfect_wins++;
                     }
                 } else {
                     game_over = true; // Timeout
@@ -441,21 +449,26 @@ private:
         int ui_y = SnakeGame::GRID_HEIGHT * 15 + 10;
         
         DrawText(TextFormat("Score: %d", game.getScore()), 10, ui_y, 18, WHITE);
-        DrawText(TextFormat("Steps: %d", steps), 120, ui_y, 18, WHITE);
-        DrawText(TextFormat("Games: %d", total_games), 220, ui_y, 18, WHITE);
+        DrawText(TextFormat("Steps: %d", steps), 150, ui_y, 18, WHITE);
+        DrawText(TextFormat("Games: %d", total_games), 320, ui_y, 18, WHITE);
         
         int max_possible = SnakeGame::GRID_WIDTH * SnakeGame::GRID_HEIGHT - 1;
         float completion = (float)game.getScore() / max_possible * 100.0f;
         DrawText(TextFormat("Grid: %.1f%%", completion), 10, ui_y + 25, 18, YELLOW);
         
-        DrawText(TextFormat("Shortcuts: %d", shortcuts_taken), 120, ui_y + 25, 18, SKYBLUE);
-        DrawText(TextFormat("Perfect: %d/%d", perfect_wins, total_games), 220, ui_y + 25, 18, GREEN);
+        DrawText(TextFormat("Shortcuts: %d", shortcuts_taken), 150, ui_y + 25, 18, SKYBLUE);
+        DrawText(TextFormat("Perfect: %d/%d", perfect_wins, total_games), 320, ui_y + 25, 18, GREEN);
         
-        DrawText("SIMPLE WEIGHTED SCORING AI", 10, ui_y + 50, 20, GOLD);
-        DrawText("Space + Food + Safety scoring", 10, ui_y + 75, 14, LIGHTGRAY);
+        DrawText("HAMILTONIAN CYCLE AI", 10, ui_y + 50, 20, GOLD);
+        DrawText("Follows a full-grid cycle - cannot trap itself", 10, ui_y + 75, 14, LIGHTGRAY);
         
         if (game_over) {
-            DrawText("GAME OVER - Press SPACE for next game", 10, ui_y + 100, 18, YELLOW);
+            if (game.isWon()) {
+                DrawText("PERFECT - ENTIRE GRID FILLED", 10, ui_y + 100, 20, GREEN);
+            } else {
+                DrawText("GAME OVER", 10, ui_y + 100, 20, RED);
+            }
+            DrawText("Press SPACE for next game", 10, ui_y + 125, 16, YELLOW);
         }
     }
     
@@ -546,9 +559,9 @@ private:
 };
 
 int main() {
-    std::cout << "=== SIMPLE WEIGHTED SCORING SNAKE AI ===" << std::endl;
-    std::cout << "Implementation: Space + Food + Safety scoring" << std::endl;
-    std::cout << "Goal: Efficient food collection and survival" << std::endl;
+    std::cout << "=== HAMILTONIAN CYCLE SNAKE AI ===" << std::endl;
+    std::cout << "Implementation: follow a full-grid Hamiltonian cycle" << std::endl;
+    std::cout << "Goal: fill the entire grid - " << SnakeGame::FOODS_TO_WIN << " foods" << std::endl;
     std::cout << std::endl;
     
     try {
