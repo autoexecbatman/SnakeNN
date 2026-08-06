@@ -554,6 +554,11 @@ if(WIN32)
     target_link_options(SimpleSnakeAIFixed PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
 endif()
 
+# Tests. None of these link LibTorch or raylib, so they build and run without
+# the CUDA toolchain, and each returns non-zero on failure. Run them with
+# `ctest -C Debug` from the build directory, or build and run a target directly.
+enable_testing()
+
 # Cycle validity test - no LibTorch, no raylib, runs anywhere
 add_executable(CycleTest
     src/cycle_test.cpp
@@ -561,6 +566,18 @@ add_executable(CycleTest
 )
 
 set_property(TARGET CycleTest PROPERTY CXX_STANDARD 20)
+add_test(NAME cycle_is_hamiltonian COMMAND CycleTest)
+
+# Training environment properties - the simulator the learner will be trained
+# against, checked before anything is trained against it.
+add_executable(EnvTest
+    src/snake_env_test.cpp
+    src/snake_env.cpp
+    src/hamiltonian_cycle.cpp
+)
+
+set_property(TARGET EnvTest PROPERTY CXX_STANDARD 20)
+add_test(NAME snake_env_properties COMMAND EnvTest)
 
 # Headless benchmark - win rate over seeded games. No LibTorch, no raylib, so
 # it compiles snake_logic.cpp directly rather than linking SnakeGameLib.
