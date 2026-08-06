@@ -58,6 +58,19 @@ public:
     bool done() const { return done_; }
     bool won() const { return won_; }
 
+    // Starve if the snake goes this long without eating, counted as a death.
+    //
+    // This is part of the task, not a safety valve, and it has to live in the
+    // environment so that search cannot plan around its absence. Without it the
+    // incentives say to stall: doing nothing returns 0 and 0 beats risking -10,
+    // which is exactly what the first training run learned - every game timed
+    // out, average score under one apple.
+    //
+    // Twice the cell count, so a snake following a full-board cycle still fits
+    // comfortably inside it - its worst case between apples is one lap, and the
+    // rule is meant to punish aimlessness rather than thorough play.
+    int hungerLimit() const { return 2 * cellCount(); }
+
     Direction heading() const { return heading_; }
     const std::vector<Position>& body() const { return body_; }
     Position food() const { return food_; }

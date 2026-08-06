@@ -125,6 +125,13 @@ SnakeEnv::StepResult SnakeEnv::step(Action action) {
     occupancy_[cellIndex(next)] = 1;
     steps_since_food_++;
 
+    if (steps_since_food_ >= hungerLimit()) {
+        // Starvation is a death and pays like one, which is what makes stalling
+        // strictly worse than playing.
+        done_ = true;
+        return {DEATH_REWARD, true, false};
+    }
+
     return {0.0f, false, false};
 }
 

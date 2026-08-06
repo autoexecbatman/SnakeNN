@@ -52,10 +52,16 @@ public:
 private:
     struct Node {
         float prior;
-        float reward;      // reward collected on the edge entering this node
+        // Discounted sum of every reward collected on the edge entering this
+        // node. An edge usually spans one tick, but forced moves are simulated
+        // through rather than given their own node, so it can span several.
+        float reward;
         float value_sum;
         int visit_count;
         int first_child;   // arena index of action 0's child, or -1
+        // Ticks the entering edge covers, so backup discounts by the time
+        // actually elapsed. Du et al. 2022 write this as gamma^(t(s')-t(s)).
+        int edge_steps;
         bool expanded;
         bool terminal;
     };

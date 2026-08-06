@@ -137,6 +137,31 @@ void testEatingReward() {
     expect(saw_food, "a snake steered at the food eats within the step budget");
 }
 
+void testStarvation() {
+    // Circle in a corner of a big board, never eating. The snake must die of
+    // hunger rather than be allowed to shuffle indefinitely - stalling has to
+    // cost what dying costs, or the incentives reward doing nothing.
+    SnakeEnv env(12, 12, 21);
+    SnakeEnv::StepResult result{0.0f, false, false};
+    int steps = 0;
+    int limit = env.hungerLimit();
+
+    // A length-one snake turning the same way forever traces a 2x2 loop and
+    // cannot collide with itself, so the only thing that can end this is hunger.
+    while (!result.done && steps < limit * 4) {
+        result = env.step(steps % 2 == 0 ? SnakeEnv::Action::LEFT : SnakeEnv::Action::STRAIGHT);
+        steps++;
+        if (result.reward > 0.0f) {
+            // Stumbled onto food; the loop moved, so this seed is unusable.
+            break;
+        }
+    }
+
+    expect(result.done && !env.won(), "a snake that never eats eventually dies");
+    expect(result.reward == SnakeEnv::DEATH_REWARD, "starving pays what dying pays");
+    expect(env.stepsSinceFood() >= limit, "it survives right up to the hunger limit");
+}
+
 void testEncoding() {
     SnakeEnv env(10, 10, 5);
     std::vector<float> planes(env.encodedSize(), -1.0f);
@@ -224,6 +249,7 @@ int main() {
     testDeterminism();
     testTurning();
     testWallDeath();
+    testStarvation();
     testEatingReward();
     testEncoding();
     testWinnableByCycle();

@@ -36,6 +36,7 @@ struct Settings {
     size_t replay_capacity = 200000;
     unsigned int seed = 1;
     std::string checkpoint;
+    std::string resume;
 };
 
 int parseInt(const char* text) { return std::stoi(text); }
@@ -56,6 +57,7 @@ Settings parseArguments(int argc, char** argv) {
         else if (flag == "--batches") { settings.batches_per_iteration = parseInt(value); }
         else if (flag == "--seed") { settings.seed = (unsigned int)parseInt(value); }
         else if (flag == "--checkpoint") { settings.checkpoint = value; }
+        else if (flag == "--resume") { settings.resume = value; }
         else { std::cerr << "unknown flag: " << flag << std::endl; }
     }
     if (settings.step_limit == 0) {
@@ -86,6 +88,19 @@ int main(int argc, char** argv) {
               << " games" << std::endl << std::endl;
 
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
+
+    // Resuming is how the curriculum moves up a board size: the heads pool to a
+    // fixed grid, so nothing in the network depends on board width, and a run at
+    // 6x6 loads straight into a run at 10x10.
+    if (!settings.resume.empty()) {
+        try {
+            torch::load(network, settings.resume);
+            std::cout << "resumed from " << settings.resume << std::endl;
+        } catch (const std::exception& error) {
+            std::cerr << "could not load " << settings.resume << ": " << error.what() << std::endl;
+            return 1;
+        }
+    }
     network->to(device);
 
     NetworkEvaluator evaluator(network, device);

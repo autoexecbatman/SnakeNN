@@ -652,6 +652,27 @@ if(WIN32)
     target_link_options(AlphaZeroTrainer PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
 endif()
 
+# Scores a saved network on held-out seeds: greedy, no root noise, win rate.
+add_executable(AlphaZeroEvaluate
+    src/az_evaluate.cpp
+    src/mcts.cpp
+    src/network_evaluator.cpp
+    src/az_network.cpp
+    src/snake_env.cpp
+)
+
+target_include_directories(AlphaZeroEvaluate PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(AlphaZeroEvaluate ${TORCH_LIBRARIES})
+set_property(TARGET AlphaZeroEvaluate PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(AlphaZeroEvaluate)
+
+target_compile_definitions(AlphaZeroEvaluate PRIVATE USE_CUDA=1)
+target_compile_definitions(AlphaZeroEvaluate PRIVATE TORCH_CUDA=1)
+
+if(WIN32)
+    target_link_options(AlphaZeroEvaluate PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
 # Throughput measurement - simulator steps and network evaluations per second.
 # The only target in this group that needs LibTorch.
 add_executable(ThroughputBenchmark

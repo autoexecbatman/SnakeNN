@@ -114,15 +114,26 @@ void testAvoidsAnImmediateWall() {
 void testPrefersReachableFood() {
     // Put the search one step from food and check it takes it. The reward is
     // the simulator's; the evaluator stays silent.
-    SnakeEnv env(9, 9, 3);
+    SnakeEnv env(9, 9, 17);
     SilentEvaluator evaluator;
     MonteCarloSearch search(evaluator, testConfig(96));
 
-    // Find a state where exactly one action eats.
+    // Find a state where exactly one action eats, and where eating does not
+    // put the head on the border.
+    //
+    // The border matters, and an earlier version of this test ignored it: with
+    // death at -10 against +1 for food, a search that eats into a wall column
+    // correctly declines - measured 2 percent of visits on the eating move with
+    // the root valued at -0.67. That is the search working, not failing. The
+    // claim being made here is that reward attracts visits, so the position has
+    // to be one where reward is the only thing that differs.
     bool found = false;
     for (int attempt = 0; attempt < 2000 && !found; attempt++) {
         for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++) {
-            if (env.headAfter(static_cast<SnakeEnv::Action>(action)) == env.food()) {
+            Position landing = env.headAfter(static_cast<SnakeEnv::Action>(action));
+            bool interior = landing.x > 0 && landing.x < env.width() - 1 && landing.y > 0 &&
+                            landing.y < env.height() - 1;
+            if (landing == env.food() && interior) {
                 std::vector<const SnakeEnv*> roots{&env};
                 auto results = search.search(roots);
                 // The eating action must be the argmax and must hold most of

@@ -3,6 +3,31 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace {
+
+// The index of the only action that does not immediately kill, or -1 when the
+// position offers a real choice (or none at all). "Survivable" here means one
+// step deep: it does not promise the move is good, only that it is not fatal
+// now, which is exactly the condition under which there is nothing to decide.
+int onlySurvivableAction(const SnakeEnv& state) {
+    int survivor = -1;
+    int count = 0;
+    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++) {
+        SnakeEnv probe = state;
+        SnakeEnv::StepResult outcome = probe.step(static_cast<SnakeEnv::Action>(action));
+        if (!outcome.done || outcome.won) {
+            survivor = action;
+            count++;
+            if (count > 1) {
+                return -1;
+            }
+        }
+    }
+    return count == 1 ? survivor : -1;
+}
+
+}  // namespace
+
 MonteCarloSearch::MonteCarloSearch(Evaluator& evaluator, const Config& config)
     : evaluator_(evaluator), config_(config), rng_(config.seed) {
     if (config.simulations < 1) {
@@ -27,8 +52,8 @@ int MonteCarloSearch::selectChild(const Tree& tree, int node_index) const {
         // nothing but their prior, which is what the exploration term carries.
         float action_value = 0.0f;
         if (child.visit_count > 0) {
-            action_value = child.reward +
-                           config_.discount * (child.value_sum / (float)child.visit_count);
+            float elapsed = std::pow(config_.discount, (float)std::max(1, child.edge_steps));
+            action_value = child.reward + elapsed * (child.value_sum / (float)child.visit_count);
         }
 
         float exploration = config_.exploration * child.prior * parent_weight /
@@ -52,6 +77,7 @@ void MonteCarloSearch::expand(Tree& tree, int node_index, const float* priors) {
         child.value_sum = 0.0f;
         child.visit_count = 0;
         child.first_child = -1;
+        child.edge_steps = 1;
         child.expanded = false;
         child.terminal = false;
         tree.nodes.push_back(child);
@@ -68,8 +94,10 @@ void MonteCarloSearch::backup(Tree& tree, float leaf_value) {
         Node& node = tree.nodes[tree.path[position]];
         node.visit_count++;
         node.value_sum += carried;
-        // Step the return back across the edge that entered this node.
-        carried = node.reward + config_.discount * carried;
+        // Step the return back across the edge that entered this node, over the
+        // number of ticks that edge actually spans.
+        carried = node.reward +
+                  std::pow(config_.discount, (float)std::max(1, node.edge_steps)) * carried;
     }
 }
 
@@ -120,6 +148,7 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         root.value_sum = 0.0f;
         root.visit_count = 0;
         root.first_child = -1;
+        root.edge_steps = 0;
         root.expanded = false;
         root.terminal = false;
         tree.nodes.push_back(root);
@@ -155,7 +184,26 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
                 int child_index = tree.nodes[node_index].first_child + action;
 
                 SnakeEnv::StepResult outcome = state.step(static_cast<SnakeEnv::Action>(action));
-                tree.nodes[child_index].reward = outcome.reward;
+                float edge_reward = outcome.reward;
+                int edge_steps = 1;
+
+                // Where only one move is survivable there is no decision to
+                // make, so simulate through it rather than spending a ply of
+                // tree on it. On a crowded board most of the game is like this,
+                // and giving each forced move its own node buries the real
+                // decisions below a search depth that never reaches them.
+                while (!outcome.done) {
+                    int forced = onlySurvivableAction(state);
+                    if (forced < 0) {
+                        break;
+                    }
+                    outcome = state.step(static_cast<SnakeEnv::Action>(forced));
+                    edge_reward += std::pow(config_.discount, (float)edge_steps) * outcome.reward;
+                    edge_steps++;
+                }
+
+                tree.nodes[child_index].reward = edge_reward;
+                tree.nodes[child_index].edge_steps = edge_steps;
                 tree.nodes[child_index].terminal = outcome.done;
 
                 node_index = child_index;
