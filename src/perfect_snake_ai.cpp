@@ -43,6 +43,9 @@ constexpr Color AMBER = {245, 176, 66, 255};
 // every number, so digits keep their column as the counters run rather than
 // shuffling the labels sideways on each frame.
 constexpr const char* DISPLAY_FONT_PATH = "C:/Windows/Fonts/segoeui.ttf";
+// Small caps at 12px carry no weight in a regular face. raylib has no synthetic
+// emboldening, so the labels get the real bold cut.
+constexpr const char* LABEL_FONT_PATH = "C:/Windows/Fonts/segoeuib.ttf";
 constexpr const char* MONO_FONT_PATH = "C:/Windows/Fonts/CascadiaMono.ttf";
 // Glyphs are baked at well above display size and filtered down, which is what
 // keeps them sharp at every size drawn here.
@@ -121,6 +124,7 @@ public:
         // Fonts need a live GL context, so they load after InitWindow and are
         // released before the window closes.
         font_display = ui::loadFont(ui::DISPLAY_FONT_PATH);
+        font_label = ui::loadFont(ui::LABEL_FONT_PATH);
         font_mono = ui::loadFont(ui::MONO_FONT_PATH);
 
         // A cycle lap costs up to one pass of the grid per food, so a win runs
@@ -303,6 +307,9 @@ private:
         if (font_display.texture.id != GetFontDefault().texture.id) {
             UnloadFont(font_display);
         }
+        if (font_label.texture.id != GetFontDefault().texture.id) {
+            UnloadFont(font_label);
+        }
         if (font_mono.texture.id != GetFontDefault().texture.id) {
             UnloadFont(font_mono);
         }
@@ -315,6 +322,7 @@ private:
     std::string network_type, loaded_model;
     std::unique_ptr<CycleAgent> cycle_agent;
     Font font_display{};
+    Font font_label{};
     Font font_mono{};
     
     // Loop detection
@@ -562,7 +570,7 @@ private:
     
     void drawStatTile(const char* label, const char* value, float x, float y,
                       float width, Color value_color) {
-        ui::drawLabel(font_display, label, x, y, ui::TEXT_MUTED);
+        ui::drawLabel(font_label, label, x, y, ui::TEXT_MUTED);
         float value_width = ui::textWidth(font_mono, value, 21.0f, 0.5f);
         // Values sit centred under their label so four tiles read as a row of
         // figures rather than four ragged left edges.
@@ -588,7 +596,7 @@ private:
         // Fill meter. The board is the picture; this is the number that decides
         // whether the run was a win, so it gets the full width.
         float completion = (float)game.getScore() / SnakeGame::FOODS_TO_WIN;
-        ui::drawLabel(font_display, "GRID FILLED", (float)ui::MARGIN, panel_y, ui::TEXT_MUTED);
+        ui::drawLabel(font_label, "GRID FILLED", (float)ui::MARGIN, panel_y, ui::TEXT_MUTED);
 
         const char* percent = TextFormat("%.1f%%", completion * 100.0f);
         float percent_width = ui::textWidth(font_mono, percent, 13.0f, 0.5f);
@@ -617,8 +625,8 @@ private:
         // Call to action, only when there is an action to take.
         if (game_over) {
             const char* prompt = "PRESS SPACE FOR NEXT GAME";
-            float prompt_width = ui::textWidth(font_display, prompt, 13.0f, 2.0f);
-            ui::drawText(font_display, prompt, (ui::WINDOW_WIDTH - prompt_width) / 2.0f,
+            float prompt_width = ui::textWidth(font_label, prompt, 13.0f, 2.0f);
+            ui::drawText(font_label, prompt, (ui::WINDOW_WIDTH - prompt_width) / 2.0f,
                          tile_y + 54.0f, 13.0f, 2.0f, ui::AMBER);
         }
     }
