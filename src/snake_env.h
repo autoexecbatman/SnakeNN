@@ -86,6 +86,28 @@ public:
     void encode(float* planes_out) const;
     int encodedSize() const { return PLANE_COUNT * cellCount(); }
 
+    // A position, compactly: cell indices rather than planes.
+    //
+    // A replay buffer that stores encoded planes stores 3.2KB per move at
+    // 10x10 and 12.8KB at 20x20, which is how the first long run drove the
+    // machine into swap. A snapshot is one 16-bit index per body segment - a
+    // sixteenth of the size, lossless, and the encoding is regenerated when a
+    // batch is drawn. Encoding measures 50M observations/s, so recomputing it
+    // costs nothing next to keeping it.
+    struct Snapshot {
+        std::vector<unsigned short> body_cells;  // head first
+        unsigned short food_cell;
+        unsigned char heading;
+        bool won;
+    };
+
+    Snapshot snapshot() const;
+
+    // Encodes a snapshot for a board of the given size. Static because the
+    // trainer holds snapshots long after their environment is gone.
+    static void encodeSnapshot(int width, int height, const Snapshot& snapshot,
+                               float* planes_out);
+
 private:
     int width_;
     int height_;

@@ -33,7 +33,7 @@ struct Settings {
     float learning_rate = 0.001f;
     int batch_size = 128;
     int batches_per_iteration = 64;
-    size_t replay_capacity = 200000;
+    size_t replay_bytes = 1024u * 1024u * 1024u;  // 1 GiB, measured not guessed
     unsigned int seed = 1;
     std::string checkpoint;
     std::string resume;
@@ -126,6 +126,7 @@ int main(int argc, char** argv) {
     SelfPlay play(evaluator, search_config, play_config);
 
     std::deque<TrainingRecord> replay;
+    size_t replay_bytes_used = 0;
     const int foods_to_win = settings.board * settings.board - 1;
 
     for (int iteration = 1; iteration <= settings.iterations; iteration++) {
@@ -139,9 +140,14 @@ int main(int argc, char** argv) {
                        settings.seed + (unsigned int)iteration * 100003u, fresh, summaries);
 
         for (TrainingRecord& record : fresh) {
+            replay_bytes_used += record.bytesUsed();
             replay.push_back(std::move(record));
         }
-        while (replay.size() > settings.replay_capacity) {
+        // Capped by bytes, because a record count means a different amount of
+        // memory on every board size, and the first long run of this trainer
+        // took the machine into swap.
+        while (replay_bytes_used > settings.replay_bytes && !replay.empty()) {
+            replay_bytes_used -= replay.front().bytesUsed();
             replay.pop_front();
         }
 
@@ -178,8 +184,9 @@ int main(int argc, char** argv) {
                     size_t pick = (size_t)torch::randint(0, (int64_t)replay.size(), {1})
                                       .item<int64_t>();
                     const TrainingRecord& record = replay[pick];
-                    std::copy(record.planes.begin(), record.planes.end(),
-                              planes.begin() + (size_t)item * record.planes.size());
+                    SnakeEnv::encodeSnapshot(
+                        settings.board, settings.board, record.position,
+                        planes.data() + (size_t)item * SnakeEnv::PLANE_COUNT * cells);
                     for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++) {
                         policies[(size_t)item * SnakeEnv::ACTION_COUNT + action] =
                             record.policy[action];
@@ -231,7 +238,8 @@ int main(int argc, char** argv) {
                   << "  best " << best_score
                   << "  wins " << wins << "/" << summaries.size()
                   << "  timeouts " << limited
-                  << "  buffer " << replay.size();
+                  << "  buffer " << replay.size() << " ("
+                  << (replay_bytes_used / (1024 * 1024)) << "MB)";
         if (batches_run > 0) {
             std::cout << "  loss p " << (policy_loss_total / batches_run)
                       << " v " << (value_loss_total / batches_run);

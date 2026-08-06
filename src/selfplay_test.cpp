@@ -81,10 +81,19 @@ void testProducesOneRecordPerMove() {
         for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++) {
             total += record.policy[action];
         }
-        shapes_right = shapes_right && record.planes.size() == 6 * 6 * SnakeEnv::PLANE_COUNT &&
+        // The record stores the position, so what has to hold is that the
+        // position is well formed and re-encodes into a full observation.
+        std::vector<float> planes(6 * 6 * SnakeEnv::PLANE_COUNT, -1.0f);
+        SnakeEnv::encodeSnapshot(6, 6, record.position, planes.data());
+        float body_marks = 0.0f;
+        for (int cell = 0; cell < 36; cell++) {
+            body_marks += planes[cell];
+        }
+        shapes_right = shapes_right && !record.position.body_cells.empty() &&
+                       body_marks == (float)record.position.body_cells.size() &&
                        std::fabs(total - 1.0f) < 1e-4f;
     }
-    expect(shapes_right, "each record carries a full observation and a normalised policy");
+    expect(shapes_right, "each record re-encodes to a full observation and carries a normalised policy");
 }
 
 void testReturnsAreDiscountedBackwards() {

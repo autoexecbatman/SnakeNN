@@ -673,6 +673,28 @@ if(WIN32)
     target_link_options(AlphaZeroEvaluate PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
 endif()
 
+# Watch a trained network play, under the same conditions it is scored under.
+add_executable(AlphaZeroVisual
+    src/az_visual.cpp
+    src/board_render.cpp
+    src/mcts.cpp
+    src/network_evaluator.cpp
+    src/az_network.cpp
+    src/snake_env.cpp
+)
+
+target_include_directories(AlphaZeroVisual PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(AlphaZeroVisual raylib ${TORCH_LIBRARIES})
+set_property(TARGET AlphaZeroVisual PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(AlphaZeroVisual)
+
+target_compile_definitions(AlphaZeroVisual PRIVATE USE_CUDA=1)
+target_compile_definitions(AlphaZeroVisual PRIVATE TORCH_CUDA=1)
+
+if(WIN32)
+    target_link_options(AlphaZeroVisual PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
 # Throughput measurement - simulator steps and network evaluations per second.
 # The only target in this group that needs LibTorch.
 add_executable(ThroughputBenchmark
@@ -709,6 +731,7 @@ set_property(TARGET Benchmark PROPERTY CXX_STANDARD 20)
 # Perfect Snake AI - complete game winner with Hamiltonian Cycle
 add_executable(PerfectSnakeAI
     src/perfect_snake_ai.cpp
+    src/board_render.cpp
     src/cycle_agent.cpp
     src/hamiltonian_cycle.cpp
     src/network_nn.cpp

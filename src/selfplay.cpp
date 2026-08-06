@@ -94,8 +94,7 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
             SnakeEnv& game = games[index];
 
             TrainingRecord record;
-            record.planes.resize(game.encodedSize());
-            game.encode(record.planes.data());
+            record.position = game.snapshot();
             for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++) {
                 record.policy[action] = results[position].policy[action];
             }

@@ -135,8 +135,21 @@ SnakeEnv::StepResult SnakeEnv::step(Action action) {
     return {0.0f, false, false};
 }
 
-void SnakeEnv::encode(float* planes_out) const {
-    const int cells = cellCount();
+SnakeEnv::Snapshot SnakeEnv::snapshot() const {
+    Snapshot out;
+    out.body_cells.reserve(body_.size());
+    for (const Position& segment : body_) {
+        out.body_cells.push_back((unsigned short)cellIndex(segment));
+    }
+    out.food_cell = (unsigned short)cellIndex(food_);
+    out.heading = (unsigned char)heading_;
+    out.won = won_;
+    return out;
+}
+
+void SnakeEnv::encodeSnapshot(int width, int height, const Snapshot& snapshot,
+                              float* planes_out) {
+    const int cells = width * height;
     for (int index = 0; index < PLANE_COUNT * cells; index++) {
         planes_out[index] = 0.0f;
     }
@@ -149,23 +162,26 @@ void SnakeEnv::encode(float* planes_out) const {
     // The timer plane is what makes tail-chasing visible to a convolution: a
     // cell holds how long it stays blocked, scaled so the tail reads near zero
     // and the head reads one. Without it every occupied cell looks like a wall.
-    const float length = (float)body_.size();
-    for (size_t index = 0; index < body_.size(); index++) {
-        int cell = cellIndex(body_[index]);
+    const float length = (float)snapshot.body_cells.size();
+    for (size_t index = 0; index < snapshot.body_cells.size(); index++) {
+        int cell = snapshot.body_cells[index];
         body_plane[cell] = 1.0f;
         timer_plane[cell] = (length - (float)index) / length;
     }
 
-    head_plane[cellIndex(body_[0])] = 1.0f;
-    if (!won_) {
-        food_plane[cellIndex(food_)] = 1.0f;
+    head_plane[snapshot.body_cells[0]] = 1.0f;
+    if (!snapshot.won) {
+        food_plane[snapshot.food_cell] = 1.0f;
     }
 
-    int heading_plane = 4 + (int)heading_;
-    float* heading_out = planes_out + heading_plane * cells;
+    float* heading_out = planes_out + (4 + (int)snapshot.heading) * cells;
     for (int cell = 0; cell < cells; cell++) {
         heading_out[cell] = 1.0f;
     }
+}
+
+void SnakeEnv::encode(float* planes_out) const {
+    encodeSnapshot(width_, height_, snapshot(), planes_out);
 }
 
 bool SnakeEnv::insideGrid(const Position& cell) const {

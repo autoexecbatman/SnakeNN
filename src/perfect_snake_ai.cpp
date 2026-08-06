@@ -1,6 +1,7 @@
 #include "neural_network.h"
 #include "snake_logic.h"
 #include "cycle_agent.h"
+#include "board_render.h"
 #include <iostream>
 #include <raylib.h>
 #include <vector>
@@ -11,69 +12,19 @@
 // Presentation constants. The board is the only thing whose size is dictated by
 // the game; everything else is laid out around it on a single spacing scale so
 // the panel lines up with the board edges rather than floating near them.
+// Layout specific to this demo. Everything shared with the learned-agent demo
+// - palette, fonts, text helpers, board drawing - lives in board_render.h; two
+// copies of a renderer diverge, and the second is always the one nobody
+// updates.
 namespace ui {
 
-constexpr int CELL = 22;
-constexpr int GAP = 16;                 // one unit of spacing
 constexpr int BOARD_WIDTH = CELL * SnakeGame::GRID_WIDTH;
 constexpr int BOARD_HEIGHT = CELL * SnakeGame::GRID_HEIGHT;
-constexpr int MARGIN = GAP + GAP / 2;   // 24, the outer frame
-constexpr int HEADER_HEIGHT = 74;
 constexpr int PANEL_HEIGHT = 168;
 constexpr int BOARD_X = MARGIN;
 constexpr int BOARD_Y = HEADER_HEIGHT;
 constexpr int WINDOW_WIDTH = BOARD_WIDTH + MARGIN * 2;
 constexpr int WINDOW_HEIGHT = HEADER_HEIGHT + BOARD_HEIGHT + PANEL_HEIGHT;
-
-// One accent per meaning: mint is the snake and success, amber is the food and
-// the call to action, slate carries everything structural.
-constexpr Color BACKGROUND = {13, 16, 22, 255};
-constexpr Color SURFACE = {21, 26, 34, 255};
-constexpr Color SURFACE_EDGE = {38, 46, 58, 255};
-constexpr Color GRID_LINE = {29, 35, 45, 255};
-constexpr Color TEXT_PRIMARY = {233, 238, 245, 255};
-constexpr Color TEXT_MUTED = {150, 163, 182, 255};
-constexpr Color MINT = {84, 224, 168, 255};
-constexpr Color MINT_DEEP = {24, 108, 88, 255};
-constexpr Color AMBER = {245, 176, 66, 255};
-
-// raylib's built-in font is a 10-pixel bitmap face that cannot be scaled
-// cleanly, which is most of why the old panel looked improvised. Two system
-// faces instead: a condensed grotesque for display text, and a monospace for
-// every number, so digits keep their column as the counters run rather than
-// shuffling the labels sideways on each frame.
-constexpr const char* DISPLAY_FONT_PATH = "C:/Windows/Fonts/segoeui.ttf";
-// Small caps at 12px carry no weight in a regular face. raylib has no synthetic
-// emboldening, so the labels get the real bold cut.
-constexpr const char* LABEL_FONT_PATH = "C:/Windows/Fonts/segoeuib.ttf";
-constexpr const char* MONO_FONT_PATH = "C:/Windows/Fonts/CascadiaMono.ttf";
-// Glyphs are baked at well above display size and filtered down, which is what
-// keeps them sharp at every size drawn here.
-constexpr int FONT_BAKE_SIZE = 64;
-
-Font loadFont(const char* path) {
-    if (!FileExists(path)) {
-        std::cerr << "[UI] Font not found, falling back to the built-in face: " << path << std::endl;
-        return GetFontDefault();
-    }
-    Font font = LoadFontEx(path, FONT_BAKE_SIZE, nullptr, 0);
-    SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
-    return font;
-}
-
-// Small-caps labels carry extra letter spacing, which is most of what separates
-// a label from a value at a glance.
-void drawLabel(const Font& font, const char* text, float x, float y, Color color) {
-    DrawTextEx(font, text, {x, y}, 12.0f, 1.4f, color);
-}
-
-void drawText(const Font& font, const char* text, float x, float y, float size, float spacing, Color color) {
-    DrawTextEx(font, text, {x, y}, size, spacing, color);
-}
-
-float textWidth(const Font& font, const char* text, float size, float spacing) {
-    return MeasureTextEx(font, text, size, spacing).x;
-}
 
 }  // namespace ui
 
@@ -123,9 +74,7 @@ public:
 
         // Fonts need a live GL context, so they load after InitWindow and are
         // released before the window closes.
-        font_display = ui::loadFont(ui::DISPLAY_FONT_PATH);
-        font_label = ui::loadFont(ui::LABEL_FONT_PATH);
-        font_mono = ui::loadFont(ui::MONO_FONT_PATH);
+        fonts_ = ui::loadFonts();
 
         // A cycle lap costs up to one pass of the grid per food, so a win runs
         // to roughly 40000 moves. At one move per frame that is over half an
@@ -304,15 +253,7 @@ public:
 private:
     // The built-in face is not ours to free, so only unload what was loaded.
     void unloadFonts() {
-        if (font_display.texture.id != GetFontDefault().texture.id) {
-            UnloadFont(font_display);
-        }
-        if (font_label.texture.id != GetFontDefault().texture.id) {
-            UnloadFont(font_label);
-        }
-        if (font_mono.texture.id != GetFontDefault().texture.id) {
-            UnloadFont(font_mono);
-        }
+        ui::unloadFonts(fonts_);
     }
 
     SnakeNeuralNetwork network_8x64{8, 64, 4};
@@ -321,9 +262,7 @@ private:
     SnakeNeuralNetwork* active_network = nullptr;
     std::string network_type, loaded_model;
     std::unique_ptr<CycleAgent> cycle_agent;
-    Font font_display{};
-    Font font_label{};
-    Font font_mono{};
+    ui::Fonts fonts_{};
     
     // Loop detection
     std::vector<Position> position_history;
@@ -497,84 +436,19 @@ private:
         return safe_moves * 10.0f; // Bonus for having escape routes
     }
     
-    Rectangle cellRect(const Position& cell, float inset) const {
-        return {ui::BOARD_X + cell.x * (float)ui::CELL + inset,
-                ui::BOARD_Y + cell.y * (float)ui::CELL + inset,
-                ui::CELL - inset * 2.0f,
-                ui::CELL - inset * 2.0f};
-    }
-
     void drawGame(const SnakeGame& game, int cell_size) {
-        (void)cell_size;  // layout comes from ui::CELL now
-
-        // Board surface, then hairline separators. Lines this close in value to
-        // the surface read as texture rather than as a table.
-        Rectangle board = {ui::BOARD_X - 2.0f, ui::BOARD_Y - 2.0f,
-                           ui::BOARD_WIDTH + 4.0f, ui::BOARD_HEIGHT + 4.0f};
-        DrawRectangleRounded(board, 0.02f, 8, ui::SURFACE);
-        DrawRectangleRoundedLines(board, 0.02f, 8, ui::SURFACE_EDGE);
-
-        for (int column = 1; column < SnakeGame::GRID_WIDTH; column++) {
-            float x = ui::BOARD_X + column * (float)ui::CELL;
-            DrawLineV({x, (float)ui::BOARD_Y}, {x, (float)(ui::BOARD_Y + ui::BOARD_HEIGHT)}, ui::GRID_LINE);
-        }
-        for (int row = 1; row < SnakeGame::GRID_HEIGHT; row++) {
-            float y = ui::BOARD_Y + row * (float)ui::CELL;
-            DrawLineV({(float)ui::BOARD_X, y}, {(float)(ui::BOARD_X + ui::BOARD_WIDTH), y}, ui::GRID_LINE);
-        }
-
-        // Food pulses so the eye can find it on a board that is mostly snake.
-        Position food = game.getFoodPosition();
-        Rectangle food_cell = cellRect(food, 0.0f);
-        Vector2 food_centre = {food_cell.x + food_cell.width / 2.0f,
-                               food_cell.y + food_cell.height / 2.0f};
-        float pulse = 0.5f + 0.5f * sinf((float)GetTime() * 4.0f);
-        DrawCircleV(food_centre, ui::CELL * (0.46f + 0.10f * pulse), Fade(ui::AMBER, 0.16f));
-        DrawCircleV(food_centre, ui::CELL * 0.26f, ui::AMBER);
-
-        // Snake, tail to head, so the head always draws on top. The body fades
-        // from mint at the head to deep teal at the tail, which makes the
-        // direction of travel readable in a still frame.
-        const std::vector<Position>& body = game.getSnakeBody();
-        for (size_t index = body.size(); index-- > 0; ) {
-            float along = body.size() > 1 ? (float)index / (float)(body.size() - 1) : 0.0f;
-            Color segment = {
-                (unsigned char)(ui::MINT.r + (ui::MINT_DEEP.r - ui::MINT.r) * along),
-                (unsigned char)(ui::MINT.g + (ui::MINT_DEEP.g - ui::MINT.g) * along),
-                (unsigned char)(ui::MINT.b + (ui::MINT_DEEP.b - ui::MINT.b) * along),
-                255};
-            DrawRectangleRounded(cellRect(body[index], 1.5f), 0.35f, 6, segment);
-        }
-
-        // Head marker: a brighter cap plus two eyes facing the direction of
-        // travel, so it is obvious which end is leading.
-        Rectangle head = cellRect(body[0], 1.0f);
-        DrawRectangleRounded(head, 0.35f, 6, ui::MINT);
-        Vector2 head_centre = {head.x + head.width / 2.0f, head.y + head.height / 2.0f};
-        Vector2 facing = {0.0f, 0.0f};
-        switch (game.getDirection()) {
-            case Direction::UP: facing = {0.0f, -1.0f}; break;
-            case Direction::DOWN: facing = {0.0f, 1.0f}; break;
-            case Direction::LEFT: facing = {-1.0f, 0.0f}; break;
-            case Direction::RIGHT: facing = {1.0f, 0.0f}; break;
-        }
-        Vector2 across = {-facing.y, facing.x};
-        float forward = ui::CELL * 0.18f;
-        float apart = ui::CELL * 0.20f;
-        for (float side : {-1.0f, 1.0f}) {
-            Vector2 eye = {head_centre.x + facing.x * forward + across.x * apart * side,
-                           head_centre.y + facing.y * forward + across.y * apart * side};
-            DrawCircleV(eye, ui::CELL * 0.09f, ui::BACKGROUND);
-        }
+        (void)cell_size;  // layout comes from board_render now
+        ui::drawBoard(SnakeGame::GRID_WIDTH, SnakeGame::GRID_HEIGHT, game.getSnakeBody(),
+                      game.getFoodPosition(), game.getDirection(), !game.isWon());
     }
     
     void drawStatTile(const char* label, const char* value, float x, float y,
                       float width, Color value_color) {
-        ui::drawLabel(font_label, label, x, y, ui::TEXT_MUTED);
-        float value_width = ui::textWidth(font_mono, value, 21.0f, 0.5f);
+        ui::drawLabel(fonts_.label, label, x, y, ui::TEXT_MUTED);
+        float value_width = ui::textWidth(fonts_.mono, value, 21.0f, 0.5f);
         // Values sit centred under their label so four tiles read as a row of
         // figures rather than four ragged left edges.
-        ui::drawText(font_mono, value, x + (width - value_width) / 2.0f - 4.0f, y + 17.0f,
+        ui::drawText(fonts_.mono, value, x + (width - value_width) / 2.0f - 4.0f, y + 17.0f,
                      21.0f, 0.5f, value_color);
     }
 
@@ -586,9 +460,9 @@ private:
         (void)avg_score;
 
         // Header
-        ui::drawText(font_display, "HAMILTONIAN CYCLE", (float)ui::MARGIN, 20.0f, 27.0f, 0.5f,
+        ui::drawText(fonts_.display, "HAMILTONIAN CYCLE", (float)ui::MARGIN, 20.0f, 27.0f, 0.5f,
                      ui::TEXT_PRIMARY);
-        ui::drawText(font_display, "follows a full-grid cycle",
+        ui::drawText(fonts_.display, "follows a full-grid cycle",
                      (float)ui::MARGIN, 49.0f, 13.0f, 0.4f, ui::TEXT_MUTED);
 
         float panel_y = (float)(ui::BOARD_Y + ui::BOARD_HEIGHT + ui::GAP + 6);
@@ -596,11 +470,11 @@ private:
         // Fill meter. The board is the picture; this is the number that decides
         // whether the run was a win, so it gets the full width.
         float completion = (float)game.getScore() / SnakeGame::FOODS_TO_WIN;
-        ui::drawLabel(font_label, "GRID FILLED", (float)ui::MARGIN, panel_y, ui::TEXT_MUTED);
+        ui::drawLabel(fonts_.label, "GRID FILLED", (float)ui::MARGIN, panel_y, ui::TEXT_MUTED);
 
         const char* percent = TextFormat("%.1f%%", completion * 100.0f);
-        float percent_width = ui::textWidth(font_mono, percent, 13.0f, 0.5f);
-        ui::drawText(font_mono, percent, ui::WINDOW_WIDTH - ui::MARGIN - percent_width,
+        float percent_width = ui::textWidth(fonts_.mono, percent, 13.0f, 0.5f);
+        ui::drawText(fonts_.mono, percent, ui::WINDOW_WIDTH - ui::MARGIN - percent_width,
                      panel_y - 2.0f, 13.0f, 0.5f, completion >= 1.0f ? ui::MINT : ui::TEXT_PRIMARY);
 
         Rectangle track = {(float)ui::MARGIN, panel_y + 18.0f, (float)ui::BOARD_WIDTH, 6.0f};
@@ -625,8 +499,8 @@ private:
         // Call to action, only when there is an action to take.
         if (game_over) {
             const char* prompt = "PRESS SPACE FOR NEXT GAME";
-            float prompt_width = ui::textWidth(font_label, prompt, 13.0f, 2.0f);
-            ui::drawText(font_label, prompt, (ui::WINDOW_WIDTH - prompt_width) / 2.0f,
+            float prompt_width = ui::textWidth(fonts_.label, prompt, 13.0f, 2.0f);
+            ui::drawText(fonts_.label, prompt, (ui::WINDOW_WIDTH - prompt_width) / 2.0f,
                          tile_y + 54.0f, 13.0f, 2.0f, ui::AMBER);
         }
     }

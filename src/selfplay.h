@@ -8,9 +8,18 @@
 // One training record: what the network saw, what the search concluded, and
 // what actually happened afterwards.
 struct TrainingRecord {
-    std::vector<float> planes;   // encoded observation
+    // The position, not its encoding. Storing encoded planes cost 3.2KB per
+    // move at 10x10 and drove a long run into swap; a snapshot is a sixteenth
+    // of that and the planes are regenerated when a batch is drawn.
+    SnakeEnv::Snapshot position;
     float policy[SnakeEnv::ACTION_COUNT];
     float value_target;          // discounted return from this position onward
+
+    // Roughly what this record costs, for a buffer that is capped by memory
+    // rather than by a record count that means different things per board.
+    size_t bytesUsed() const {
+        return sizeof(TrainingRecord) + position.body_cells.capacity() * sizeof(unsigned short);
+    }
 };
 
 struct GameSummary {
