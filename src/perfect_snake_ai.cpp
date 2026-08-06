@@ -32,18 +32,17 @@ constexpr Color SURFACE = {21, 26, 34, 255};
 constexpr Color SURFACE_EDGE = {38, 46, 58, 255};
 constexpr Color GRID_LINE = {29, 35, 45, 255};
 constexpr Color TEXT_PRIMARY = {233, 238, 245, 255};
-constexpr Color TEXT_MUTED = {124, 137, 156, 255};
+constexpr Color TEXT_MUTED = {150, 163, 182, 255};
 constexpr Color MINT = {84, 224, 168, 255};
 constexpr Color MINT_DEEP = {24, 108, 88, 255};
 constexpr Color AMBER = {245, 176, 66, 255};
-constexpr Color CRIMSON = {232, 93, 93, 255};
 
 // raylib's built-in font is a 10-pixel bitmap face that cannot be scaled
 // cleanly, which is most of why the old panel looked improvised. Two system
 // faces instead: a condensed grotesque for display text, and a monospace for
 // every number, so digits keep their column as the counters run rather than
 // shuffling the labels sideways on each frame.
-constexpr const char* DISPLAY_FONT_PATH = "C:/Windows/Fonts/bahnschrift.ttf";
+constexpr const char* DISPLAY_FONT_PATH = "C:/Windows/Fonts/segoeui.ttf";
 constexpr const char* MONO_FONT_PATH = "C:/Windows/Fonts/CascadiaMono.ttf";
 // Glyphs are baked at well above display size and filtered down, which is what
 // keeps them sharp at every size drawn here.
@@ -62,7 +61,7 @@ Font loadFont(const char* path) {
 // Small-caps labels carry extra letter spacing, which is most of what separates
 // a label from a value at a glance.
 void drawLabel(const Font& font, const char* text, float x, float y, Color color) {
-    DrawTextEx(font, text, {x, y}, 11.0f, 2.2f, color);
+    DrawTextEx(font, text, {x, y}, 12.0f, 1.4f, color);
 }
 
 void drawText(const Font& font, const char* text, float x, float y, float size, float spacing, Color color) {
@@ -571,22 +570,6 @@ private:
                      21.0f, 0.5f, value_color);
     }
 
-    void drawStatusPill(const SnakeGame& game, bool game_over) {
-        const char* state = "RUNNING";
-        Color tone = ui::MINT;
-        if (game_over) {
-            state = game.isWon() ? "PERFECT" : "DEAD";
-            tone = game.isWon() ? ui::MINT : ui::CRIMSON;
-        }
-
-        float text_width = ui::textWidth(font_display, state, 12.0f, 1.8f);
-        float pill_width = text_width + 30.0f;
-        Rectangle pill = {ui::WINDOW_WIDTH - ui::MARGIN - pill_width, 24.0f, pill_width, 24.0f};
-        DrawRectangleRounded(pill, 0.5f, 8, Fade(tone, 0.14f));
-        DrawCircleV({pill.x + 13.0f, pill.y + pill.height / 2.0f}, 3.5f, tone);
-        ui::drawText(font_display, state, pill.x + 22.0f, pill.y + 6.0f, 12.0f, 1.8f, tone);
-    }
-
     void drawHamiltonianUI(const SnakeGame& game, int total_games, int current_score,
                           int max_score, float avg_score, int steps, bool game_over,
                           int perfect_wins, int shortcuts_taken) {
@@ -597,9 +580,8 @@ private:
         // Header
         ui::drawText(font_display, "HAMILTONIAN CYCLE", (float)ui::MARGIN, 20.0f, 27.0f, 0.5f,
                      ui::TEXT_PRIMARY);
-        ui::drawText(font_display, "follows a full-grid cycle - cannot trap itself",
+        ui::drawText(font_display, "follows a full-grid cycle",
                      (float)ui::MARGIN, 49.0f, 13.0f, 0.4f, ui::TEXT_MUTED);
-        drawStatusPill(game, game_over);
 
         float panel_y = (float)(ui::BOARD_Y + ui::BOARD_HEIGHT + ui::GAP + 6);
 
