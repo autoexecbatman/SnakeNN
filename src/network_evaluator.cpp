@@ -2,29 +2,33 @@
 #include <stdexcept>
 
 NetworkEvaluator::NetworkEvaluator(AlphaZeroNet network, torch::Device device)
-    : network_(network), device_(device), evaluations_(0) {
+    : network_(network), device_(device), evaluations_(0)
+{
     network_->to(device_);
     network_->eval();
 }
 
-void NetworkEvaluator::evaluate(const std::vector<const SnakeEnv*>& states,
-                                float* priors_out,
-                                float* values_out) {
-    if (states.empty()) {
+void NetworkEvaluator::evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
+                                float* values_out)
+{
+    if (states.empty())
+    {
         return;
     }
 
-    const int batch = (int)states.size();
+    const int batch = static_cast<int>(states.size());
     const int per_state = states[0]->encodedSize();
     const int width = states[0]->width();
     const int height = states[0]->height();
 
-    staging_.resize((size_t)batch * per_state);
-    for (int index = 0; index < batch; index++) {
-        if (states[index]->encodedSize() != per_state) {
+    staging_.resize(static_cast<size_t>(batch) * per_state);
+    for (int index = 0; index < batch; index++)
+    {
+        if (states[index]->encodedSize() != per_state)
+        {
             throw std::invalid_argument("evaluator received mixed board sizes in one batch");
         }
-        states[index]->encode(staging_.data() + (size_t)index * per_state);
+        states[index]->encode(staging_.data() + static_cast<size_t>(index) * per_state);
     }
 
     torch::NoGradGuard no_grad;
@@ -42,10 +46,12 @@ void NetworkEvaluator::evaluate(const std::vector<const SnakeEnv*>& states,
 
     const float* prior_data = priors.data_ptr<float>();
     const float* value_data = values.data_ptr<float>();
-    for (int index = 0; index < batch * SnakeEnv::ACTION_COUNT; index++) {
+    for (int index = 0; index < batch * SnakeEnv::ACTION_COUNT; index++)
+    {
         priors_out[index] = prior_data[index];
     }
-    for (int index = 0; index < batch; index++) {
+    for (int index = 0; index < batch; index++)
+    {
         values_out[index] = value_data[index];
     }
 

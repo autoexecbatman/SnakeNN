@@ -10,7 +10,8 @@
 // on a target that builds in seconds without CUDA. A search that can only be
 // exercised through a network is a search whose bugs are indistinguishable from
 // the network's.
-class Evaluator {
+class Evaluator
+{
 public:
     virtual ~Evaluator() = default;
 
@@ -18,7 +19,6 @@ public:
     // one value in [-1, 1] standing for the return from that state onward.
     // Called once per simulation round with every tree's leaf, so batching lives
     // here rather than in the search.
-    virtual void evaluate(const std::vector<const SnakeEnv*>& states,
-                          float* priors_out,
+    virtual void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
                           float* values_out) = 0;
 };

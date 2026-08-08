@@ -13,7 +13,8 @@
 // actions to order the search, and a value to stand in for the rest of the game
 // at a leaf. Board size is a constructor argument, so the same architecture
 // trains at 6x6 and transfers up - only the head's linear layers depend on it.
-struct AlphaZeroNetImpl : torch::nn::Module {
+struct AlphaZeroNetImpl : torch::nn::Module
+{
     AlphaZeroNetImpl(int board_width, int board_height, int channels, int blocks);
 
     // Returns {policy_logits [N,3], value [N,1] in (-1,1)}.

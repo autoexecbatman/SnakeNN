@@ -9,20 +9,26 @@
 // board size. That is easy to break and silent when broken - a size-dependent
 // head simply fails to load later, after the small-board run has finished.
 
-namespace {
+namespace
+{
 
 int failures = 0;
 
-void expect(bool condition, const std::string& description) {
-    if (condition) {
+void expect(bool condition, const std::string& description)
+{
+    if (condition)
+    {
         std::cout << "  PASS  " << description << std::endl;
-    } else {
+    }
+    else
+    {
         std::cout << "  FAIL  " << description << std::endl;
         failures++;
     }
 }
 
-void testOutputShapes() {
+void testOutputShapes()
+{
     AlphaZeroNet network(8, 8, 32, 2);
     network->eval();
     torch::NoGradGuard no_grad;
@@ -37,7 +43,8 @@ void testOutputShapes() {
     expect(value.abs().max().item<float>() <= 1.0f, "value stays inside the bounded range");
 }
 
-void testWeightsTransferAcrossBoardSizes() {
+void testWeightsTransferAcrossBoardSizes()
+{
     AlphaZeroNet small(6, 6, 32, 2);
     AlphaZeroNet large(20, 20, 32, 2);
 
@@ -47,10 +54,13 @@ void testWeightsTransferAcrossBoardSizes() {
     auto large_params = large->named_parameters();
 
     bool shapes_match = small_params.size() == large_params.size();
-    if (shapes_match) {
-        for (const auto& item : small_params) {
+    if (shapes_match)
+    {
+        for (const auto& item : small_params)
+        {
             torch::Tensor* counterpart = large_params.find(item.key());
-            if (counterpart == nullptr || counterpart->sizes() != item.value().sizes()) {
+            if (counterpart == nullptr || counterpart->sizes() != item.value().sizes())
+            {
                 shapes_match = false;
                 break;
             }
@@ -60,21 +70,27 @@ void testWeightsTransferAcrossBoardSizes() {
 
     // And the transfer works in practice, not only on paper.
     bool loaded = true;
-    try {
+    try
+    {
         torch::NoGradGuard no_grad;
-        for (const auto& item : small->named_parameters()) {
+        for (const auto& item : small->named_parameters())
+        {
             large->named_parameters()[item.key()].copy_(item.value());
         }
-        for (const auto& item : small->named_buffers()) {
+        for (const auto& item : small->named_buffers())
+        {
             large->named_buffers()[item.key()].copy_(item.value());
         }
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error)
+    {
         std::cout << "        " << error.what() << std::endl;
         loaded = false;
     }
     expect(loaded, "a 6x6 network's weights load into a 20x20 network");
 
-    if (loaded) {
+    if (loaded)
+    {
         large->eval();
         torch::NoGradGuard no_grad;
         torch::Tensor input = torch::rand({2, SnakeEnv::PLANE_COUNT, 20, 20});
@@ -86,14 +102,16 @@ void testWeightsTransferAcrossBoardSizes() {
 
 }  // namespace
 
-int main() {
+int main()
+{
     torch::manual_seed(0);
     std::cout << "AlphaZeroNet properties" << std::endl;
     testOutputShapes();
     testWeightsTransferAcrossBoardSizes();
 
     std::cout << std::endl;
-    if (failures == 0) {
+    if (failures == 0)
+    {
         std::cout << "All checks passed." << std::endl;
         return 0;
     }

@@ -9,12 +9,12 @@
 // Holds its own staging buffer so a search that evaluates the same batch size
 // every round allocates once. Inference only - gradients are the trainer's
 // business, and a search that built a graph would run out of memory in minutes.
-class NetworkEvaluator : public Evaluator {
+class NetworkEvaluator : public Evaluator
+{
 public:
     NetworkEvaluator(AlphaZeroNet network, torch::Device device);
 
-    void evaluate(const std::vector<const SnakeEnv*>& states,
-                  float* priors_out,
+    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
                   float* values_out) override;
 
     // Positions scored since construction. The search is evaluation-bound, so

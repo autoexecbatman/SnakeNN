@@ -12,7 +12,8 @@
 // Episodes are not restarted behind the caller's back. A finished game stays
 // finished until resetOne, because the trainer needs to read its outcome before
 // it disappears, and a silent auto-reset is how return bookkeeping goes wrong.
-class VectorEnv {
+class VectorEnv
+{
 public:
     VectorEnv(int count, int width, int height, unsigned int base_seed);
 
@@ -28,7 +29,7 @@ public:
     // within a game, which is the layout a Conv2d batch wants.
     void encodeAll(float* batch_out) const;
 
-    int count() const { return (int)envs_.size(); }
+    int count() const { return static_cast<int>(envs_.size()); }
     int encodedSizePerEnv() const { return envs_[0].encodedSize(); }
     int encodedSizeTotal() const { return count() * encodedSizePerEnv(); }
 

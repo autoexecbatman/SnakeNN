@@ -1,0 +1,27 @@
+# Style for the learned-agent stack. The legacy experiment files under src/ are
+# records of individual runs and are deliberately not formatted - see CLAUDE.md.
+#
+# Allman braces, and otherwise the conventions the stack already used: 100
+# columns, four spaces, no tabs.
+Language: Cpp
+BasedOnStyle: Google
+
+BreakBeforeBraces: Allman
+ColumnLimit: 100
+IndentWidth: 4
+AccessModifierOffset: -4
+UseTab: Never
+
+# The repo puts a body on one line in a few small accessors; Allman plus this
+# keeps those readable rather than exploding every getter to five lines.
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: true
+
+# Braces on every body is a project rule; never let the formatter remove them.
+InsertBraces: true
+
+PointerAlignment: Left
+DerivePointerAlignment: false
+SortIncludes: false
