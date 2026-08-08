@@ -5,40 +5,139 @@
 namespace
 {
 
+// The geometry, in one place. All three take a Direction and are total over the
+// four enumerators, so an unrecognised value means someone cast an integer into
+// the enum rather than that a case was forgotten.
+//
+// Each ends in a default that throws instead of falling off the end of the
+// switch. The trade is worth stating: while these switches listed every
+// enumerator and had no default, a fifth Direction would have been a compiler
+// diagnostic (MSVC C4062) at each of the three sites. With a default present
+// that becomes a runtime throw instead, so adding a Direction is now caught by
+// running the tests rather than by building. The assert above each throw is
+// what keeps the debug builds failing at the fault site.
+
 Position stepFrom(const Position& cell, Direction heading)
 {
+    Position moved(0, 0);
     switch (heading)
     {
-        case Direction::UP: return Position(cell.x, cell.y - 1);
-        case Direction::DOWN: return Position(cell.x, cell.y + 1);
-        case Direction::LEFT: return Position(cell.x - 1, cell.y);
-        case Direction::RIGHT: return Position(cell.x + 1, cell.y);
+        case Direction::UP:
+        {
+            moved = Position(cell.x, cell.y - 1);
+            break;
+        }
+        case Direction::DOWN:
+        {
+            moved = Position(cell.x, cell.y + 1);
+            break;
+        }
+        case Direction::LEFT:
+        {
+            moved = Position(cell.x - 1, cell.y);
+            break;
+        }
+        case Direction::RIGHT:
+        {
+            moved = Position(cell.x + 1, cell.y);
+            break;
+        }
+        default:
+        {
+            assert(false && "stepFrom given a Direction outside the four enumerators");
+            throw std::logic_error("unreachable heading");
+        }
     }
-    throw std::logic_error("unreachable heading");
+
+    // One orthogonal step, and the arithmetic that has to deliver it is right
+    // here. Asserted at the source rather than at the callers: headAfter said
+    // the same thing a level up, which meant one property stated twice and only
+    // one of the two places able to name the line that broke it. No bound on the
+    // result - a step off the board is a legal answer and its caller decides.
+    const int moved_x = moved.x - cell.x;
+    const int moved_y = moved.y - cell.y;
+    assert(((moved_x == 0) != (moved_y == 0)) && (moved_x * moved_x + moved_y * moved_y) == 1 &&
+           "stepFrom moved by something other than one orthogonal step");
+
+    return moved;
 }
 
 Direction turnLeft(Direction heading)
 {
+    Direction turned = heading;
     switch (heading)
     {
-        case Direction::UP: return Direction::LEFT;
-        case Direction::LEFT: return Direction::DOWN;
-        case Direction::DOWN: return Direction::RIGHT;
-        case Direction::RIGHT: return Direction::UP;
+        case Direction::UP:
+        {
+            turned = Direction::LEFT;
+            break;
+        }
+        case Direction::LEFT:
+        {
+            turned = Direction::DOWN;
+            break;
+        }
+        case Direction::DOWN:
+        {
+            turned = Direction::RIGHT;
+            break;
+        }
+        case Direction::RIGHT:
+        {
+            turned = Direction::UP;
+            break;
+        }
+        default:
+        {
+            assert(false && "turnLeft given a Direction outside the four enumerators");
+            throw std::logic_error("unreachable heading");
+        }
     }
-    throw std::logic_error("unreachable heading");
+
+    // A quarter turn changes the heading. If it ever returned its own argument
+    // the snake would have a second way to go straight, and the search would
+    // carry two children that are the same move.
+    assert(turned != heading && "turnLeft returned the heading it was given");
+    return turned;
 }
 
 Direction turnRight(Direction heading)
 {
+    Direction turned = heading;
     switch (heading)
     {
-        case Direction::UP: return Direction::RIGHT;
-        case Direction::RIGHT: return Direction::DOWN;
-        case Direction::DOWN: return Direction::LEFT;
-        case Direction::LEFT: return Direction::UP;
+        case Direction::UP:
+        {
+            turned = Direction::RIGHT;
+            break;
+        }
+        case Direction::RIGHT:
+        {
+            turned = Direction::DOWN;
+            break;
+        }
+        case Direction::DOWN:
+        {
+            turned = Direction::LEFT;
+            break;
+        }
+        case Direction::LEFT:
+        {
+            turned = Direction::UP;
+            break;
+        }
+        default:
+        {
+            assert(false && "turnRight given a Direction outside the four enumerators");
+            throw std::logic_error("unreachable heading");
+        }
     }
-    throw std::logic_error("unreachable heading");
+
+    assert(turned != heading && "turnRight returned the heading it was given");
+    // The two turns must disagree, or one relative action aliases the other.
+    // Stated here rather than in both, since checking it once covers the pair.
+    assert(turned != turnLeft(heading) && "turnRight and turnLeft agree on this heading");
+    return turned;
 }
 
 }  // namespace
@@ -81,13 +180,47 @@ void SnakeEnv::reset()
 
 Direction SnakeEnv::headingAfter(Action action) const
 {
+    Direction turned = heading_;
     switch (action)
     {
-        case Action::STRAIGHT: return heading_;
-        case Action::LEFT: return turnLeft(heading_);
-        case Action::RIGHT: return turnRight(heading_);
+        case Action::STRAIGHT:
+        {
+            turned = heading_;
+            break;
+        }
+        case Action::LEFT:
+        {
+            turned = turnLeft(heading_);
+            break;
+        }
+        case Action::RIGHT:
+        {
+            turned = turnRight(heading_);
+            break;
+        }
+        default:
+        {
+            // Same trade as the three helpers above: a default costs the
+            // compiler diagnostic that a fourth Action would have produced here,
+            // and buys a failure at this line instead of undefined fallthrough.
+            assert(false && "headingAfter given an Action outside the three enumerators");
+            throw std::logic_error("unreachable action");
+        }
     }
-    throw std::logic_error("unreachable action");
+
+    // No action reverses the snake. This is the whole reason the action space is
+    // relative rather than absolute: a reverse move does not exist rather than
+    // existing and being filtered, which is what lets the search treat all three
+    // children as legal and keeps the tree a third smaller per ply. Two quarter
+    // turns name the reverse without needing a function for it.
+    //
+    // The individual turns already assert they change the heading, so this adds
+    // the one thing they cannot see on their own - that neither of them, nor
+    // going straight, lands on the opposite direction.
+    assert(turned != turnLeft(turnLeft(heading_)) &&
+           "headingAfter produced the reverse heading - the snake could reverse into its neck");
+
+    return turned;
 }
 
 Position SnakeEnv::headAfter(Action action) const
@@ -97,21 +230,12 @@ Position SnakeEnv::headAfter(Action action) const
     // before it was constructed rather than that the game ended.
     assert(!body_.empty() && "headAfter called on an environment with no body");
 
-    const Position next = stepFrom(body_[0], headingAfter(action));
-
-    // One orthogonal step, always. Every caller relies on it: the search orders
-    // children by where each move lands, blocksHead indexes occupancy_ by this
-    // cell, and the tail-vacating rule compares it against body_.back(). A
-    // diagonal or a stalled result would be silently wrong at all three sites
-    // rather than failing anywhere. Deliberately not clamped to the board - an
-    // off-grid answer is the correct answer, and reporting a wall as a legal
-    // cell is what this would hide.
-    const int moved_x = next.x - body_[0].x;
-    const int moved_y = next.y - body_[0].y;
-    assert(((moved_x == 0) != (moved_y == 0)) && (moved_x * moved_x + moved_y * moved_y) == 1 &&
-           "headAfter moved the head by something other than one orthogonal step");
-
-    return next;
+    // The one-orthogonal-step guarantee every caller here relies on - the search
+    // ordering children, blocksHead indexing occupancy_, the tail-vacating rule
+    // comparing against body_.back() - is asserted inside stepFrom, which is
+    // where the arithmetic lives. Restating it here would be one property in two
+    // places, and the copy further from the fault.
+    return stepFrom(body_[0], headingAfter(action));
 }
 
 bool SnakeEnv::blocksHead(const Position& next, bool will_eat) const

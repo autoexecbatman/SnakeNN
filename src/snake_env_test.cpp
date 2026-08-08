@@ -319,6 +319,270 @@ void testWouldDieAgreesWithStepping()
     }
 }
 
+// Rotate a fresh environment onto a chosen heading. Turning is the only way to
+// change it, and a one-segment snake cannot collide with itself while turning,
+// so this is safe for any quarter_turns.
+bool faceHeading(SnakeEnv& env, int quarter_turns)
+{
+    for (int turn = 0; turn < quarter_turns; turn++)
+    {
+        env.step(SnakeEnv::Action::LEFT);
+        if (env.done())
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+void testTurnAlgebra()
+{
+    // testTurning checks the three actions from a single heading - the one a
+    // fresh board happens to start on. That leaves three quarters of turnLeft
+    // and turnRight unexercised, and each is a hand-written four-case switch
+    // where a transposed pair would go unnoticed. These properties hold for
+    // every heading, so they are checked from all four.
+    //
+    // Why it matters beyond tidiness: the relative action space is what removes
+    // the reverse move from the game. If either turn ever produced the opposite
+    // heading, the snake could reverse into its own neck and the MDP the search
+    // solves would stop matching the one being played.
+    int headings_checked = 0;
+    bool identity_holds = true;
+    bool four_lefts_return = true;
+    bool four_rights_return = true;
+    bool turns_disagree = true;
+    bool turns_compose_to_reverse = true;
+    bool reverse_never_offered = true;
+    bool straight_is_fixed = true;
+    bool setup_failed = false;
+
+    for (int start = 0; start < 4; start++)
+    {
+        SnakeEnv env(20, 20, 1000 + start);
+        if (!faceHeading(env, start))
+        {
+            setup_failed = true;
+            break;
+        }
+        const Direction heading = env.heading();
+        headings_checked++;
+
+        // Straight is the identity on the heading, by definition of relative.
+        if (env.headingAfter(SnakeEnv::Action::STRAIGHT) != heading)
+        {
+            straight_is_fixed = false;
+        }
+
+        // The two turns are distinct, so no relative action aliases another.
+        const Direction left_once = env.headingAfter(SnakeEnv::Action::LEFT);
+        const Direction right_once = env.headingAfter(SnakeEnv::Action::RIGHT);
+        if (left_once == right_once || left_once == heading || right_once == heading)
+        {
+            turns_disagree = false;
+        }
+
+        // Two turns the same way give the reverse, and the two routes to it
+        // agree. This is also how the reverse heading is named without adding a
+        // function for it.
+        SnakeEnv twice_left(20, 20, 2000 + start);
+        SnakeEnv twice_right(20, 20, 3000 + start);
+        if (!faceHeading(twice_left, start) || !faceHeading(twice_right, start))
+        {
+            setup_failed = true;
+            break;
+        }
+        twice_left.step(SnakeEnv::Action::LEFT);
+        twice_left.step(SnakeEnv::Action::LEFT);
+        twice_right.step(SnakeEnv::Action::RIGHT);
+        twice_right.step(SnakeEnv::Action::RIGHT);
+        const Direction reverse = twice_left.heading();
+        if (reverse == heading || reverse != twice_right.heading())
+        {
+            turns_compose_to_reverse = false;
+        }
+
+        // The reverse is unreachable in one move. This is the property the whole
+        // relative action space exists to provide.
+        if (left_once == reverse || right_once == reverse ||
+            env.headingAfter(SnakeEnv::Action::STRAIGHT) == reverse)
+        {
+            reverse_never_offered = false;
+        }
+
+        // Four quarter turns either way return to where they started, which is
+        // what makes each switch a rotation rather than an arbitrary mapping.
+        SnakeEnv lap_left(20, 20, 4000 + start);
+        SnakeEnv lap_right(20, 20, 5000 + start);
+        if (!faceHeading(lap_left, start) || !faceHeading(lap_right, start))
+        {
+            setup_failed = true;
+            break;
+        }
+        for (int turn = 0; turn < 4; turn++)
+        {
+            lap_left.step(SnakeEnv::Action::LEFT);
+            lap_right.step(SnakeEnv::Action::RIGHT);
+        }
+        if (lap_left.heading() != heading)
+        {
+            four_lefts_return = false;
+        }
+        if (lap_right.heading() != heading)
+        {
+            four_rights_return = false;
+        }
+
+        // A left then a right is the identity, so the two are inverses and not
+        // merely different.
+        SnakeEnv there_and_back(20, 20, 6000 + start);
+        if (!faceHeading(there_and_back, start))
+        {
+            setup_failed = true;
+            break;
+        }
+        there_and_back.step(SnakeEnv::Action::LEFT);
+        there_and_back.step(SnakeEnv::Action::RIGHT);
+        if (there_and_back.heading() != heading)
+        {
+            identity_holds = false;
+        }
+    }
+
+    expect(!setup_failed, "the rotation setup never killed the snake");
+    expect(headings_checked == 4, "all four headings were reached and checked");
+    expect(straight_is_fixed, "going straight leaves the heading alone, from every heading");
+    expect(turns_disagree, "left and right differ from each other and from straight");
+    expect(turns_compose_to_reverse, "two turns the same way give the reverse, by either route");
+    expect(reverse_never_offered, "no single action produces the reverse heading");
+    expect(four_lefts_return, "four left turns return to the starting heading");
+    expect(four_rights_return, "four right turns return to the starting heading");
+    expect(identity_holds, "a left turn followed by a right turn is the identity");
+}
+
+void testHeadingAfterDependsOnlyOnTheHeading()
+{
+    // headingAfter is meant to be a pure function of the heading and the action -
+    // nothing about the body, the score, the hunger clock or the food may enter
+    // it. Nothing checked that. The turn algebra above exercises it only on
+    // fresh one-segment boards, so a version that consulted the body length
+    // would pass every property there and diverge in real play, which is exactly
+    // where the search uses it.
+    //
+    // So: rotate throwaway boards to each heading and keep them as the reference
+    // answer, then walk a real game to a long body and a wound-up hunger clock
+    // and require the answers to match at every position.
+    Direction reference_heading[4];
+    Direction reference_answer[4][SnakeEnv::ACTION_COUNT];
+    for (int turns = 0; turns < 4; turns++)
+    {
+        SnakeEnv fresh(20, 20, 7100 + turns);
+        if (!faceHeading(fresh, turns))
+        {
+            expect(false, "the reference rotation never killed the snake");
+            return;
+        }
+        reference_heading[turns] = fresh.heading();
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            reference_answer[turns][action] =
+                fresh.headingAfter(static_cast<SnakeEnv::Action>(action));
+        }
+    }
+
+    SnakeEnv env(8, 8, 4711);
+    int comparisons = 0;
+    int mismatches = 0;
+    int unknown_heading = 0;
+    size_t longest_body = 0;
+    int highest_hunger = 0;
+    unsigned int cursor = 17;
+
+    for (int step = 0; step < 20000; step++)
+    {
+        if (env.done())
+        {
+            env.reset();
+            continue;
+        }
+
+        int which = -1;
+        for (int turns = 0; turns < 4; turns++)
+        {
+            if (reference_heading[turns] == env.heading())
+            {
+                which = turns;
+            }
+        }
+        if (which < 0)
+        {
+            unknown_heading++;
+        }
+        else
+        {
+            for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+            {
+                const Direction expected = reference_answer[which][action];
+                if (env.headingAfter(static_cast<SnakeEnv::Action>(action)) != expected)
+                {
+                    mismatches++;
+                }
+                comparisons++;
+            }
+        }
+
+        longest_body = (env.body().size() > longest_body) ? env.body().size() : longest_body;
+        highest_hunger =
+            (env.stepsSinceFood() > highest_hunger) ? env.stepsSinceFood() : highest_hunger;
+
+        // Survive first, chase food most of the time - the same steering the
+        // other walks use, for the same reason: a random walk here stays one
+        // segment long and would compare only the state the reference already is.
+        int survivor_count = 0;
+        SnakeEnv::Action survivors[SnakeEnv::ACTION_COUNT];
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            const SnakeEnv::Action candidate = static_cast<SnakeEnv::Action>(action);
+            SnakeEnv probe = env;
+            const SnakeEnv::StepResult outcome = probe.step(candidate);
+            if (!outcome.done || outcome.won)
+            {
+                survivors[survivor_count++] = candidate;
+            }
+        }
+        cursor = cursor * 1664525u + 1013904223u;
+        SnakeEnv::Action move = static_cast<SnakeEnv::Action>((cursor >> 16) % 3);
+        if (survivor_count > 0)
+        {
+            move = survivors[(cursor >> 16) % static_cast<unsigned int>(survivor_count)];
+            if ((cursor >> 24) % 4 != 0)
+            {
+                int best_distance = 1 << 30;
+                for (int index = 0; index < survivor_count; index++)
+                {
+                    const Position next = env.headAfter(survivors[index]);
+                    const int distance =
+                        std::abs(next.x - env.food().x) + std::abs(next.y - env.food().y);
+                    if (distance < best_distance)
+                    {
+                        best_distance = distance;
+                        move = survivors[index];
+                    }
+                }
+            }
+        }
+        env.step(move);
+    }
+
+    expect(unknown_heading == 0, "every heading reached in play was one of the four");
+    expect(mismatches == 0, "headingAfter answers from the heading alone, whatever the board");
+    expect(comparisons > 10000, "enough positions were compared to be worth trusting");
+    expect(longest_body > 10, "the walk grew a long body, so the answer was checked away from reset");
+    expect(highest_hunger > 20, "the walk wound the hunger clock up, so that state was covered too");
+    std::cout << "        " << comparisons << " comparisons, longest body " << longest_body
+              << ", highest hunger " << highest_hunger << std::endl;
+}
+
 void testHeadAfterPredictsWhereTheHeadLands()
 {
     // headAfter is a query the search leans on hard: it orders children by where
@@ -649,6 +913,8 @@ int main()
     testTurning();
     testWallDeath();
     testStarvation();
+    testTurnAlgebra();
+    testHeadingAfterDependsOnlyOnTheHeading();
     testWouldDieAgreesWithStepping();
     testHeadAfterPredictsWhereTheHeadLands();
     testHungerBoundaryIsExact();
