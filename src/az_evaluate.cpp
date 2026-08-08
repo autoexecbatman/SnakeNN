@@ -2,9 +2,11 @@
 #include "az_network.h"
 #include "mcts.h"
 #include "network_evaluator.h"
+#include "seed_policy.h"
 #include "snake_env.h"
 #include <algorithm>
 #include <chrono>
+#include <format>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -21,9 +23,11 @@
 // step limit. Average score is reported next to it and must not be read as
 // partial credit toward a win.
 
-namespace {
+namespace
+{
 
-struct Settings {
+struct Settings
+{
     std::string checkpoint;
     int board = 6;
     int games = 64;
@@ -31,27 +35,63 @@ struct Settings {
     int step_limit = 0;
     int channels = 64;
     int blocks = 4;
-    unsigned int seed = 900000;   // held out from training's seed range
+    // An offset within the reserved evaluation range, not an absolute seed. The
+    // old default was the absolute 900000 and it was not held out at all - see
+    // seed_policy.h.
+    unsigned int seed_offset = 0;
     int batch = 64;
 };
 
-Settings parseArguments(int argc, char** argv) {
+Settings parseArguments(int argc, char** argv)
+{
     Settings settings;
-    for (int index = 1; index + 1 < argc; index += 2) {
+    for (int index = 1; index + 1 < argc; index += 2)
+    {
         std::string flag = argv[index];
         std::string value = argv[index + 1];
-        if (flag == "--checkpoint") { settings.checkpoint = value; }
-        else if (flag == "--board") { settings.board = std::stoi(value); }
-        else if (flag == "--games") { settings.games = std::stoi(value); }
-        else if (flag == "--simulations") { settings.simulations = std::stoi(value); }
-        else if (flag == "--step-limit") { settings.step_limit = std::stoi(value); }
-        else if (flag == "--channels") { settings.channels = std::stoi(value); }
-        else if (flag == "--blocks") { settings.blocks = std::stoi(value); }
-        else if (flag == "--seed") { settings.seed = (unsigned int)std::stoul(value); }
-        else if (flag == "--batch") { settings.batch = std::stoi(value); }
-        else { std::cerr << "unknown flag: " << flag << std::endl; }
+        if (flag == "--checkpoint")
+        {
+            settings.checkpoint = value;
+        }
+        else if (flag == "--board")
+        {
+            settings.board = std::stoi(value);
+        }
+        else if (flag == "--games")
+        {
+            settings.games = std::stoi(value);
+        }
+        else if (flag == "--simulations")
+        {
+            settings.simulations = std::stoi(value);
+        }
+        else if (flag == "--step-limit")
+        {
+            settings.step_limit = std::stoi(value);
+        }
+        else if (flag == "--channels")
+        {
+            settings.channels = std::stoi(value);
+        }
+        else if (flag == "--blocks")
+        {
+            settings.blocks = std::stoi(value);
+        }
+        else if (flag == "--seed")
+        {
+            settings.seed_offset = static_cast<unsigned int>(std::stoul(value));
+        }
+        else if (flag == "--batch")
+        {
+            settings.batch = std::stoi(value);
+        }
+        else
+        {
+            std::cerr << "unknown flag: " << flag << std::endl;
+        }
     }
-    if (settings.step_limit == 0) {
+    if (settings.step_limit == 0)
+    {
         settings.step_limit = 12 * settings.board * settings.board;
     }
     return settings;
@@ -59,9 +99,11 @@ Settings parseArguments(int argc, char** argv) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char** argv)
+{
     Settings settings = parseArguments(argc, argv);
-    if (settings.checkpoint.empty()) {
+    if (settings.checkpoint.empty())
+    {
         std::cerr << "usage: --checkpoint <file> [--board N] [--games N] [--simulations N]"
                   << std::endl;
         return 2;
@@ -71,9 +113,12 @@ int main(int argc, char** argv) {
     torch::Device device = cuda ? torch::Device(torch::kCUDA) : torch::Device(torch::kCPU);
 
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
-    try {
+    try
+    {
         torch::load(network, settings.checkpoint);
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error)
+    {
         std::cerr << "could not load " << settings.checkpoint << ": " << error.what() << std::endl;
         return 1;
     }
@@ -81,11 +126,17 @@ int main(int argc, char** argv) {
     network->eval();
 
     std::cout << "=== Evaluation ===" << std::endl;
-    std::cout << settings.checkpoint << " on " << settings.board << "x" << settings.board
-              << ", " << settings.games << " games, " << settings.simulations
-              << " simulations, step limit " << settings.step_limit << std::endl;
-    std::cout << "seeds " << settings.seed << ".." << (settings.seed + settings.games - 1)
-              << " (held out), greedy, no root noise" << std::endl << std::endl;
+    std::cout << std::format("{} on {}x{}, {} games, {} simulations, step limit {}\n",
+                             settings.checkpoint, settings.board, settings.board, settings.games,
+                             settings.simulations, settings.step_limit);
+    // This used to claim the range was held out from training. It is not: the
+    // trainer's game seeds are `seed + iteration * 100003` with a default seed of
+    // 1, so iteration 9 covers 900028..900283 and overlaps the default range
+    // here by 172 of 200. Stating the range and letting the reader check beats a
+    // label that asserts a property nothing verifies.
+    std::cout << std::format("seeds {}..{} (reserved evaluation range), greedy, no root noise\n\n",
+                             seeds::evaluationGameSeed(settings.seed_offset, 0),
+                             seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1));
 
     NetworkEvaluator evaluator(network, device);
 
@@ -95,7 +146,7 @@ int main(int argc, char** argv) {
     search_config.discount = 0.98f;
     search_config.root_noise_fraction = 0.0f;
     search_config.root_noise_alpha = 0.3f;
-    search_config.seed = settings.seed;
+    search_config.seed = seeds::evaluationGameSeed(settings.seed_offset, 0);
     MonteCarloSearch search(evaluator, search_config);
 
     const int foods_to_win = settings.board * settings.board - 1;
@@ -108,70 +159,83 @@ int main(int argc, char** argv) {
 
     auto started = std::chrono::high_resolution_clock::now();
 
-    for (int start = 0; start < settings.games; start += settings.batch) {
+    for (int start = 0; start < settings.games; start += settings.batch)
+    {
         const int count = std::min(settings.batch, settings.games - start);
         std::vector<SnakeEnv> games;
         games.reserve(count);
-        for (int index = 0; index < count; index++) {
+        for (int index = 0; index < count; index++)
+        {
             games.emplace_back(settings.board, settings.board,
-                               settings.seed + start + index);
+                               seeds::evaluationGameSeed(settings.seed_offset, start + index));
         }
         std::vector<bool> timed_out(count, false);
 
-        while (true) {
+        while (true)
+        {
             std::vector<int> live;
             std::vector<const SnakeEnv*> roots;
-            for (int index = 0; index < count; index++) {
-                if (games[index].done()) {
+            for (int index = 0; index < count; index++)
+            {
+                if (games[index].done())
+                {
                     continue;
                 }
-                if (games[index].steps() >= settings.step_limit) {
+                if (games[index].steps() >= settings.step_limit)
+                {
                     timed_out[index] = true;
                     continue;
                 }
                 live.push_back(index);
                 roots.push_back(&games[index]);
             }
-            if (live.empty()) {
+            if (live.empty())
+            {
                 break;
             }
 
             std::vector<MonteCarloSearch::Result> results = search.search(roots);
-            for (size_t position = 0; position < live.size(); position++) {
+            for (size_t position = 0; position < live.size(); position++)
+            {
                 games[live[position]].step(results[position].best_action);
             }
         }
 
-        for (int index = 0; index < count; index++) {
+        for (int index = 0; index < count; index++)
+        {
             const SnakeEnv& game = games[index];
             total_score += game.score();
             total_steps += game.steps();
             best_score = std::max(best_score, game.score());
-            if (game.won()) {
+            if (game.won())
+            {
                 wins++;
-            } else if (timed_out[index]) {
+            }
+            else if (timed_out[index])
+            {
                 timeouts++;
-            } else {
+            }
+            else
+            {
                 deaths++;
             }
         }
 
-        std::cout << "  " << (start + count) << "/" << settings.games << " games, wins " << wins
-                  << std::endl;
+        std::cout << std::format("  {}/{} games, wins {}\n", start + count, settings.games, wins);
     }
 
     double seconds =
         std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - started).count();
 
-    std::cout << std::endl << "Wins:    " << wins << "/" << settings.games << "  ("
-              << (100.0 * wins / settings.games) << "%)" << std::endl;
-    std::cout << "Score:   mean " << ((double)total_score / settings.games) << ", best "
-              << best_score << " of " << foods_to_win << std::endl;
-    std::cout << "Steps:   mean " << ((double)total_steps / settings.games) << std::endl;
-    std::cout << "Endings: " << wins << " won, " << deaths << " died, " << timeouts
-              << " timed out" << std::endl;
-    std::cout << "Took " << seconds << "s, " << evaluator.evaluations() << " evaluations"
-              << std::endl;
+    std::cout << std::format("\nWins:    {}/{}  ({:.1f}%)\n", wins, settings.games,
+                             100.0 * wins / settings.games);
+    std::cout << std::format("Score:   mean {:.3f}, best {} of {}\n",
+                             static_cast<double>(total_score) / settings.games, best_score,
+                             foods_to_win);
+    std::cout << std::format("Steps:   mean {:.3f}\n",
+                             static_cast<double>(total_steps) / settings.games);
+    std::cout << std::format("Endings: {} won, {} died, {} timed out\n", wins, deaths, timeouts);
+    std::cout << std::format("Took {:.2f}s, {} evaluations\n", seconds, evaluator.evaluations());
 
     return wins == settings.games ? 0 : 1;
 }
