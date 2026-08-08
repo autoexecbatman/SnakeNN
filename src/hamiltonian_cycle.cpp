@@ -217,9 +217,6 @@ bool HamiltonianCycle::isShortcutSafe(const Position& head, const Position& tail
     
     if (head_idx == -1 || tail_idx == -1 || new_idx == -1) return false;
     
-    // Check if snake remains ordered in cycle: tail < body < head
-    int total_size = static_cast<int>(cycle_path_.size());
-    
     // Calculate space available after shortcut
     int space_after_head = getCycleDistance({newPos.x, newPos.y}, tail);
     
