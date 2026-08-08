@@ -92,7 +92,26 @@ Direction SnakeEnv::headingAfter(Action action) const
 
 Position SnakeEnv::headAfter(Action action) const
 {
-    return stepFrom(body_[0], headingAfter(action));
+    // The snake is never bodiless: reset() places one segment and no path
+    // shortens the body, so an empty body_ means the environment was used
+    // before it was constructed rather than that the game ended.
+    assert(!body_.empty() && "headAfter called on an environment with no body");
+
+    const Position next = stepFrom(body_[0], headingAfter(action));
+
+    // One orthogonal step, always. Every caller relies on it: the search orders
+    // children by where each move lands, blocksHead indexes occupancy_ by this
+    // cell, and the tail-vacating rule compares it against body_.back(). A
+    // diagonal or a stalled result would be silently wrong at all three sites
+    // rather than failing anywhere. Deliberately not clamped to the board - an
+    // off-grid answer is the correct answer, and reporting a wall as a legal
+    // cell is what this would hide.
+    const int moved_x = next.x - body_[0].x;
+    const int moved_y = next.y - body_[0].y;
+    assert(((moved_x == 0) != (moved_y == 0)) && (moved_x * moved_x + moved_y * moved_y) == 1 &&
+           "headAfter moved the head by something other than one orthogonal step");
+
+    return next;
 }
 
 bool SnakeEnv::blocksHead(const Position& next, bool will_eat) const

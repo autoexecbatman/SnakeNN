@@ -319,6 +319,116 @@ void testWouldDieAgreesWithStepping()
     }
 }
 
+void testHeadAfterPredictsWhereTheHeadLands()
+{
+    // headAfter is a query the search leans on hard: it orders children by where
+    // each move lands before committing to expand them, and blocksHead indexes
+    // occupancy_ by the cell it returns. So the claim is not merely that it
+    // computes some neighbour - it is that the cell it names is the cell step()
+    // actually puts the head in, for every action that does not kill.
+    SnakeEnv env(8, 8, 8675);
+    int predictions = 0;
+    int mismatches = 0;
+    int non_adjacent = 0;
+    int duplicate_targets = 0;
+    int off_board_targets = 0;  // near a wall headAfter must answer outside the grid
+    int after_eating = 0;       // growth moves the body, so check this case explicitly
+    unsigned int cursor = 31;
+
+    for (int step = 0; step < 20000; step++)
+    {
+        if (env.done())
+        {
+            env.reset();
+            continue;
+        }
+
+        Position targets[SnakeEnv::ACTION_COUNT];
+        int survivor_count = 0;
+        SnakeEnv::Action survivors[SnakeEnv::ACTION_COUNT];
+
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            const SnakeEnv::Action chosen = static_cast<SnakeEnv::Action>(action);
+            const Position target = env.headAfter(chosen);
+            targets[action] = target;
+
+            // One orthogonal step from the current head, and nothing else.
+            const int moved_x = target.x - env.body()[0].x;
+            const int moved_y = target.y - env.body()[0].y;
+            if (std::abs(moved_x) + std::abs(moved_y) != 1)
+            {
+                non_adjacent++;
+            }
+            if (!insideBoard(env, target))
+            {
+                off_board_targets++;
+            }
+
+            // Where step() really puts the head, from a copy so the real game is
+            // untouched. Only meaningful when the move survives - a fatal move
+            // leaves the body wherever it was.
+            SnakeEnv probe = env;
+            const SnakeEnv::StepResult outcome = probe.step(chosen);
+            const bool survived = !outcome.done || outcome.won;
+            if (survived)
+            {
+                if (!(probe.body()[0] == target))
+                {
+                    mismatches++;
+                }
+                if (outcome.reward > 0.0f)
+                {
+                    after_eating++;
+                }
+                survivors[survivor_count++] = chosen;
+            }
+            predictions++;
+        }
+
+        // Three different actions turn the head three different ways, so they
+        // cannot name the same cell. If two ever agreed, one relative action
+        // would be aliasing another and the search would have a phantom child.
+        if (targets[0] == targets[1] || targets[1] == targets[2] || targets[0] == targets[2])
+        {
+            duplicate_targets++;
+        }
+
+        cursor = cursor * 1664525u + 1013904223u;
+        SnakeEnv::Action move = static_cast<SnakeEnv::Action>((cursor >> 16) % 3);
+        if (survivor_count > 0)
+        {
+            move = survivors[(cursor >> 16) % static_cast<unsigned int>(survivor_count)];
+            if ((cursor >> 24) % 3 != 0)
+            {
+                int best_distance = 1 << 30;
+                for (int index = 0; index < survivor_count; index++)
+                {
+                    const Position next = env.headAfter(survivors[index]);
+                    const int distance =
+                        std::abs(next.x - env.food().x) + std::abs(next.y - env.food().y);
+                    if (distance < best_distance)
+                    {
+                        best_distance = distance;
+                        move = survivors[index];
+                    }
+                }
+            }
+        }
+        env.step(move);
+    }
+
+    expect(mismatches == 0, "headAfter names the cell step actually puts the head in");
+    expect(non_adjacent == 0, "headAfter always moves exactly one orthogonal step");
+    expect(duplicate_targets == 0, "the three actions never name the same cell");
+    expect(predictions > 10000, "enough predictions were checked to be worth trusting");
+    expect(off_board_targets > 0,
+           "the walk asked next to a wall, so the off-grid answer was exercised");
+    expect(after_eating > 100, "the walk checked the prediction on moves that ate and grew");
+    std::cout << "        " << predictions << " predictions, " << off_board_targets
+              << " off board, " << after_eating << " while eating" << std::endl;
+}
+
 void testHungerBoundaryIsExact()
 {
     // The off-by-one wouldDie is most likely to carry. It predicts one tick
@@ -540,6 +650,7 @@ int main()
     testWallDeath();
     testStarvation();
     testWouldDieAgreesWithStepping();
+    testHeadAfterPredictsWhereTheHeadLands();
     testHungerBoundaryIsExact();
     testFoodNeverSitsOnTheBody();
     testEatingReward();
