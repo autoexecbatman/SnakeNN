@@ -1,7 +1,17 @@
 #pragma once
 #include "evaluator.h"
 #include "snake_env.h"
+#include <optional>
+#include <random>
 #include <vector>
+
+// The move the position leaves no choice about, if there is one.
+//
+// Declared here rather than kept private to the search because it carries a
+// subtle contract and nothing could test it while it was file-local: empty means
+// the caller has a decision to make, which covers both "two or more moves
+// survive" and "none does". It is a pure function of the position.
+std::optional<SnakeEnv::Action> forcedAction(const SnakeEnv& state);
 
 // Monte Carlo tree search over the real simulator, run on many games at once.
 //
@@ -21,11 +31,13 @@
 // each simulation samples one outcome from the true distribution and the tree
 // averages over samples rather than modelling the chance node explicitly. That
 // is an approximation, and it is the one place this search is not exact.
-class MonteCarloSearch {
+class MonteCarloSearch
+{
 public:
-    struct Config {
+    struct Config
+    {
         int simulations;
-        float exploration;        // c_puct
+        float exploration;  // c_puct
         float discount;
         // Dirichlet noise on root priors, the standard device for keeping
         // self-play from collapsing onto one line. Set fraction to zero when
@@ -35,7 +47,8 @@ public:
         unsigned int seed;
     };
 
-    struct Result {
+    struct Result
+    {
         // Visit distribution over actions, the search's improved policy.
         std::vector<float> policy;
         // Root value estimate after search.
@@ -50,7 +63,8 @@ public:
     std::vector<Result> search(const std::vector<const SnakeEnv*>& roots);
 
 private:
-    struct Node {
+    struct Node
+    {
         float prior;
         // Discounted sum of every reward collected on the edge entering this
         // node. An edge usually spans one tick, but forced moves are simulated
@@ -58,7 +72,7 @@ private:
         float reward;
         float value_sum;
         int visit_count;
-        int first_child;   // arena index of action 0's child, or -1
+        int first_child;  // arena index of action 0's child, or -1
         // Ticks the entering edge covers, so backup discounts by the time
         // actually elapsed. Du et al. 2022 write this as gamma^(t(s')-t(s)).
         int edge_steps;
@@ -66,7 +80,8 @@ private:
         bool terminal;
     };
 
-    struct Tree {
+    struct Tree
+    {
         std::vector<Node> nodes;
         // Scratch for the descent in flight: the path taken and the state it
         // reached, kept between the selection phase and the backup phase that
