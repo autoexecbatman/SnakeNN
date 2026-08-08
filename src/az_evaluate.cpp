@@ -129,11 +129,17 @@ int main(int argc, char** argv)
     std::cout << std::format("{} on {}x{}, {} games, {} simulations, step limit {}\n",
                              settings.checkpoint, settings.board, settings.board, settings.games,
                              settings.simulations, settings.step_limit);
-    // This used to claim the range was held out from training. It is not: the
-    // trainer's game seeds are `seed + iteration * 100003` with a default seed of
-    // 1, so iteration 9 covers 900028..900283 and overlaps the default range
-    // here by 172 of 200. Stating the range and letting the reader check beats a
-    // label that asserts a property nothing verifies.
+    // The range really is reserved now, and the reservation is enforced rather
+    // than asserted: seed_policy.h owns both bands, and requireTrainingSeed throws
+    // before an iteration is played if a training seed ever reaches this one.
+    //
+    // It was not always so. Training seeds were `seed + iteration * 100003` from a
+    // default seed of 1, so iteration 9 covered 900028..900283 and overlapped the
+    // old default range here by 172 of 200 - and the comment in this spot claimed
+    // the range was held out while nothing checked it. Any figure measured before
+    // 2026-08-08 was scored partly on games the agent had trained on, and is not
+    // comparable with anything printed below. SeedPolicyTest reproduces the old
+    // arithmetic so the overlap cannot come back quietly.
     std::cout << std::format("seeds {}..{} (reserved evaluation range), greedy, no root noise\n\n",
                              seeds::evaluationGameSeed(settings.seed_offset, 0),
                              seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1));
