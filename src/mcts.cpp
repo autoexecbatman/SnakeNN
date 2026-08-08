@@ -5,6 +5,16 @@
 #include <optional>
 #include <stdexcept>
 
+namespace
+{
+
+// How far the priors an Evaluator hands over may drift from summing to one before
+// the distribution is called broken. Float accumulation over three terms, so the
+// slack is for rounding and nothing else.
+constexpr float PRIOR_SUM_TOLERANCE = 1e-3f;
+
+}  // namespace
+
 // The move the position leaves no choice about, if there is one.
 //
 // Empty means the search has something to decide - either because two or more
@@ -90,65 +100,158 @@ MonteCarloSearch::MonteCarloSearch(Evaluator& evaluator, const Config& config)
     }
 }
 
+float MonteCarloSearch::actionScore(const Node& child, float parent_weight) const
+{
+    assert(child.visit_count >= 0 && "a child cannot have been visited a negative number of times");
+    // Every edge covers at least one tick. expand() creates children at one and
+    // the descent only ever raises it, so a zero here means the arena was
+    // corrupted rather than that an edge is short. This used to be clamped with
+    // max(1, ...), which turned a corrupt tree into a plausible score.
+    assert(child.edge_steps >= 1 && "an edge that spans no ticks cannot exist");
+    // Evaluator promises priors that form a distribution over the actions, so a
+    // negative one is a broken evaluator and would let a child bid negatively for
+    // attention - the opposite of what a prior is for.
+    assert(child.prior >= 0.0f && std::isfinite(child.prior) &&
+           "Evaluator supplied a prior that is not part of a distribution");
+
+    // Exploitation: what the edge pays on the way, plus the discounted mean
+    // return from where it lands, over the ticks the edge actually spans.
+    // An unvisited child has no estimate to offer, so its entire claim on
+    // attention is the prior, carried by the exploration term below.
+    float exploitation = 0.0f;
+    if (child.visit_count > 0)
+    {
+        const float discount_over_edge =
+            std::pow(config_.discount, static_cast<float>(child.edge_steps));
+        const float mean_return = child.value_sum / static_cast<float>(child.visit_count);
+        exploitation = child.reward + discount_over_edge * mean_return;
+    }
+
+    // Exploration: the prior, scaled by how much weight stands behind this
+    // decision and decaying as this particular child gets visited.
+    const float exploration = config_.exploration * child.prior * parent_weight /
+                              (1.0f + static_cast<float>(child.visit_count));
+
+    const float score = exploitation + exploration;
+    // A NaN would compare false against everything, so the argmax below would
+    // silently keep whichever action it started with and the search would look
+    // like a policy that always goes straight. Caught here, at the arithmetic
+    // that produced it.
+    assert(std::isfinite(score) && "action score is not a finite number");
+    return score;
+}
+
 int MonteCarloSearch::selectChild(const Tree& tree, int node_index) const
 {
+    assert(node_index >= 0 && node_index < static_cast<int>(tree.nodes.size()) &&
+           "selectChild given a node index outside the arena");
+
     const Node& parent = tree.nodes[node_index];
-    // The parent's visit count is the total weight behind this decision; the
-    // square root of it is what lets a promising-but-unvisited action keep a
-    // claim on attention as the subtree below it grows.
-    const float parent_weight = std::sqrt(static_cast<float>(std::max(1, parent.visit_count)));
 
+    // Both are guaranteed by the descent loop, which tests them before it calls
+    // here. A node without children has nothing to choose between, and a terminal
+    // one has nothing to choose.
+    assert(parent.first_child.has_value() && "selectChild called on a node with no children");
+    assert(!parent.terminal && "selectChild called on a terminal node");
+
+    const int first_child = parent.first_child.value();
+    assert(first_child >= 0 &&
+           first_child + SnakeEnv::ACTION_COUNT <= static_cast<int>(tree.nodes.size()) &&
+           "the parent's children do not all lie inside the arena");
+
+    // A node with children has always been visited at least once. It acquires
+    // them only at the end of a descent that had it on the path, and that same
+    // simulation's backup increments every node on the path - so having children
+    // implies having been visited, and the two cannot come apart without the
+    // descent loop changing.
+    //
+    // This replaced a max(1, visit_count) clamp. The clamp read as a guard
+    // against a first descent reaching an unvisited root, which cannot happen for
+    // the reason above; a probe that asserted the condition across the whole
+    // search suite never fired. Left as a clamp it would have silently supplied a
+    // weight of one for a tree that had lost its statistics.
+    assert(parent.visit_count > 0 &&
+           "a node with children that was never visited - backup was skipped");
+
+    // The visit count is the weight behind this decision, and its square root is
+    // what keeps a promising-but-unvisited action in contention as the subtree
+    // below it grows.
+    const float parent_weight = std::sqrt(static_cast<float>(parent.visit_count));
+
+    // Argmax over the three actions. Seeded with the first action's real score
+    // rather than with a very negative number standing in for "nothing chosen
+    // yet" - that sentinel was indistinguishable from a legitimately terrible
+    // score, and it made action 0 the answer whenever every score was NaN.
     int best_action = 0;
-    float best_score = -1e30f;
-    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+    float best_score = actionScore(tree.nodes[first_child], parent_weight);
+
+    for (int action = 1; action < SnakeEnv::ACTION_COUNT; action++)
     {
-        const Node& child = tree.nodes[parent.first_child + action];
-
-        // Value of taking this action: the reward it collects now, plus the
-        // discounted value of where it lands. Unvisited children contribute
-        // nothing but their prior, which is what the exploration term carries.
-        float action_value = 0.0f;
-        if (child.visit_count > 0)
-        {
-            float elapsed =
-                std::pow(config_.discount, static_cast<float>(std::max(1, child.edge_steps)));
-            action_value =
-                child.reward + elapsed * (child.value_sum / static_cast<float>(child.visit_count));
-        }
-
-        float exploration = config_.exploration * child.prior * parent_weight /
-                            (1.0f + static_cast<float>(child.visit_count));
-
-        float score = action_value + exploration;
+        const float score = actionScore(tree.nodes[first_child + action], parent_weight);
         if (score > best_score)
         {
             best_score = score;
             best_action = action;
         }
     }
+
+    // Ties go to the lowest action index, since the comparison is strict. That is
+    // deliberate and it is what makes the search reproducible on a seed.
+    assert(best_action >= 0 && best_action < SnakeEnv::ACTION_COUNT &&
+           "selectChild returned something that is not an action");
     return best_action;
 }
 
 void MonteCarloSearch::expand(Tree& tree, int node_index, const float* priors)
 {
+    assert(node_index >= 0 && node_index < static_cast<int>(tree.nodes.size()) &&
+           "expand given a node index outside the arena");
+    assert(priors != nullptr && "expand given no priors to give its children");
+
+    // Expanding twice would push a second set of children and then point the
+    // parent at them, orphaning the first set together with every visit and
+    // return already accumulated in it. The tree would keep working and the
+    // statistics would quietly be for a subtree nothing can reach any more.
+    assert(!tree.nodes[node_index].first_child.has_value() &&
+           "expanding a node that already has children");
+
+    // Nothing follows a finished game. The descent stops at a terminal node and
+    // never asks for an evaluation, so reaching here means the caller lost track
+    // of which leaves were owed one.
+    assert(!tree.nodes[node_index].terminal && "expanding a terminal node");
+
+    // Evaluator promises a distribution over the actions. A prior that is
+    // negative, infinite or does not sum to one is a broken evaluator, and every
+    // symptom of it appears later as a strangely shaped policy rather than here.
+    float prior_total = 0.0f;
+    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+    {
+        assert(std::isfinite(priors[action]) && priors[action] >= 0.0f &&
+               "Evaluator supplied a prior that is not part of a distribution");
+        prior_total += priors[action];
+    }
+    assert(std::fabs(prior_total - 1.0f) < PRIOR_SUM_TOLERANCE &&
+           "Evaluator priors do not sum to one");
+
+    // One child per action, contiguous, so the whole set is reachable from the
+    // index of the first. Every field but the prior comes from the struct's own
+    // defaults - a child differs from a fresh node in exactly one respect.
     const int first_child = static_cast<int>(tree.nodes.size());
     for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
     {
         Node child;
         child.prior = priors[action];
-        child.reward = 0.0f;
-        child.value_sum = 0.0f;
-        child.visit_count = 0;
-        child.first_child = -1;
-        child.edge_steps = 1;
-        child.expanded = false;
-        child.terminal = false;
         tree.nodes.push_back(child);
     }
-    // Written after the pushes: growing the arena invalidates references, so
+
+    // Written after the pushes, and read through the arena rather than through a
+    // reference taken earlier: growing the vector invalidates references, so
     // nothing may hold one across an expansion.
     tree.nodes[node_index].first_child = first_child;
-    tree.nodes[node_index].expanded = true;
+
+    assert(tree.nodes[node_index].first_child.value() + SnakeEnv::ACTION_COUNT ==
+               static_cast<int>(tree.nodes.size()) &&
+           "the children this expansion created are not the last block in the arena");
 }
 
 void MonteCarloSearch::backup(Tree& tree, float leaf_value)
@@ -159,11 +262,18 @@ void MonteCarloSearch::backup(Tree& tree, float leaf_value)
         Node& node = tree.nodes[tree.path[position]];
         node.visit_count++;
         node.value_sum += carried;
+
+        // Every node on a path has a real edge count: children are created at one
+        // and the descent only raises them, and the root now keeps the same
+        // default rather than marking its absent edge with a zero. This was a
+        // max(1, edge_steps) clamp, which produced the identical number for the
+        // root and hid a zero anywhere else.
+        assert(node.edge_steps >= 1 && "backing up across an edge that spans no ticks");
+
         // Step the return back across the edge that entered this node, over the
         // number of ticks that edge actually spans.
-        carried =
-            node.reward +
-            std::pow(config_.discount, static_cast<float>(std::max(1, node.edge_steps))) * carried;
+        carried = node.reward +
+                  std::pow(config_.discount, static_cast<float>(node.edge_steps)) * carried;
     }
 }
 
@@ -187,7 +297,12 @@ void MonteCarloSearch::addRootNoise(Tree& tree)
         return;
     }
 
-    const int first_child = tree.nodes[0].first_child;
+    // Only ever called immediately after the root is expanded, so its children
+    // exist. An empty optional here would mean noise was being mixed into priors
+    // that had not been written yet.
+    assert(tree.nodes[0].first_child.has_value() &&
+           "root noise applied before the root had children");
+    const int first_child = tree.nodes[0].first_child.value();
     for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
     {
         float dirichlet = noise[action] / total;
@@ -218,15 +333,13 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
     for (Tree& tree : trees_)
     {
         tree.nodes.clear();
+        // The root differs from a default node in exactly one respect: it is
+        // certain rather than predicted, so its prior is one. No edge enters it,
+        // and that is left as the default rather than marked with a zero, because
+        // backup computes a return across the root and then discards it - the
+        // field is never read for node zero.
         Node root;
         root.prior = 1.0f;
-        root.reward = 0.0f;
-        root.value_sum = 0.0f;
-        root.visit_count = 0;
-        root.first_child = -1;
-        root.edge_steps = 0;
-        root.expanded = false;
-        root.terminal = false;
         tree.nodes.push_back(root);
         tree.path.clear();
         tree.replay.clear();
@@ -262,10 +375,11 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
             int node_index = 0;
             tree.path.push_back(node_index);
 
-            while (tree.nodes[node_index].expanded && !tree.nodes[node_index].terminal)
+            while (tree.nodes[node_index].first_child.has_value() &&
+                   !tree.nodes[node_index].terminal)
             {
                 int action = selectChild(tree, node_index);
-                int child_index = tree.nodes[node_index].first_child + action;
+                int child_index = tree.nodes[node_index].first_child.value() + action;
 
                 SnakeEnv::StepResult outcome = state.step(static_cast<SnakeEnv::Action>(action));
                 float edge_reward = outcome.reward;
@@ -352,38 +466,44 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         Result result;
         result.policy.assign(SnakeEnv::ACTION_COUNT, 0.0f);
 
-        float total_visits = 0.0f;
-        if (tree.nodes[0].first_child >= 0)
+        // Read the root's children once. The optional is tested here and nowhere
+        // else in this loop: previously every read repeated the same check against
+        // -1, and the two copies had to agree by inspection.
+        //
+        // Zero simulations leaves the root childless and there is nothing to
+        // report, so the policy falls back to uniform. That is a real case rather
+        // than a defensive one - a caller may legitimately ask for no search - and
+        // it is the only reason the visits array can be all zeros.
+        int visits[SnakeEnv::ACTION_COUNT] = {0, 0, 0};
+        int total_visits = 0;
+        if (tree.nodes[0].first_child.has_value())
         {
+            const int first_child = tree.nodes[0].first_child.value();
             for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
             {
-                total_visits +=
-                    static_cast<float>(tree.nodes[tree.nodes[0].first_child + action].visit_count);
+                visits[action] = tree.nodes[first_child + action].visit_count;
+                total_visits += visits[action];
             }
         }
 
+        // Argmax seeded with the first action's real count, so no negative stands
+        // in for "nothing seen yet". Ties go to the lowest index, which is what
+        // makes the choice reproducible on a seed.
         int best_action = 0;
-        int best_visits = -1;
-        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        for (int action = 1; action < SnakeEnv::ACTION_COUNT; action++)
         {
-            int visits = 0;
-            if (tree.nodes[0].first_child >= 0)
+            if (visits[action] > visits[best_action])
             {
-                visits = tree.nodes[tree.nodes[0].first_child + action].visit_count;
-            }
-            if (total_visits > 0.0f)
-            {
-                result.policy[action] = static_cast<float>(visits) / total_visits;
-            }
-            else
-            {
-                result.policy[action] = 1.0f / SnakeEnv::ACTION_COUNT;
-            }
-            if (visits > best_visits)
-            {
-                best_visits = visits;
                 best_action = action;
             }
+        }
+
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            result.policy[action] =
+                (total_visits > 0)
+                    ? static_cast<float>(visits[action]) / static_cast<float>(total_visits)
+                    : 1.0f / static_cast<float>(SnakeEnv::ACTION_COUNT);
         }
 
         result.value = tree.nodes[0].visit_count > 0

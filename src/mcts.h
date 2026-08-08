@@ -86,19 +86,34 @@ public:
 private:
     struct Node
     {
-        float prior;
+        // Every field carries its default here, so a node is fully formed the
+        // moment it is declared. It used to be filled in field by field at two
+        // separate sites - expand() for children and search() for the root - and
+        // those two had already drifted apart on edge_steps. A field added later
+        // would have had to be remembered in both.
+        float prior = 0.0f;
         // Discounted sum of every reward collected on the edge entering this
         // node. An edge usually spans one tick, but forced moves are simulated
         // through rather than given their own node, so it can span several.
-        float reward;
-        float value_sum;
-        int visit_count;
-        int first_child;  // arena index of action 0's child, or -1
+        float reward = 0.0f;
+        float value_sum = 0.0f;
+        int visit_count = 0;
+        // Arena index of action 0's child, once this node has children. Empty
+        // until then, and empty is the whole answer - there is no -1 standing in
+        // for it that could be added to an action and used as an index.
+        //
+        // This is also the only record of whether the node is expanded. A separate
+        // bool used to carry that, which stored one fact twice and could disagree
+        // with this field; having children and being expanded are the same thing,
+        // so they are now the same field.
+        std::optional<int> first_child;
         // Ticks the entering edge covers, so backup discounts by the time
-        // actually elapsed. Du et al. 2022 write this as gamma^(t(s')-t(s)).
-        int edge_steps;
-        bool expanded;
-        bool terminal;
+        // actually elapsed. Du et al. 2022 write this as gamma^(t(s')-t(s)). One
+        // is the floor for any real edge. The root has no entering edge at all,
+        // and rather than marking that with a zero nothing reads, it keeps the
+        // default - backup computes a return across the root and discards it.
+        int edge_steps = 1;
+        bool terminal = false;
     };
 
     struct Tree
@@ -117,6 +132,11 @@ private:
     std::vector<Tree> trees_;
     std::mt19937 rng_;
 
+    // The PUCT score for one child, given how much attention the parent has to
+    // distribute. Separated from the argmax so that the formula and the choosing
+    // are readable on their own, and so the assertions on a child's statistics
+    // sit next to the arithmetic that consumes them.
+    float actionScore(const Node& child, float parent_weight) const;
     int selectChild(const Tree& tree, int node_index) const;
     void expand(Tree& tree, int node_index, const float* priors);
     void backup(Tree& tree, float leaf_value);

@@ -77,6 +77,32 @@ public:
     int largest_batch = 0;
 };
 
+// Says exactly one thing: these priors, and a silent value head. Lets a test
+// state what the network believes and then check that selection acted on it,
+// which is the half of the search no other evaluator here isolates.
+class PriorEvaluator : public Evaluator
+{
+public:
+    explicit PriorEvaluator(const std::vector<float>& priors) : priors_(priors) {}
+
+    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
+                  float* values_out) override
+    {
+        for (size_t index = 0; index < states.size(); index++)
+        {
+            for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+            {
+                priors_out[index * SnakeEnv::ACTION_COUNT + action] =
+                    priors_[static_cast<size_t>(action)];
+            }
+            values_out[index] = 0.0f;
+        }
+    }
+
+private:
+    std::vector<float> priors_;
+};
+
 MonteCarloSearch::Config testConfig(int simulations)
 {
     MonteCarloSearch::Config config;
@@ -100,6 +126,192 @@ int indexOfLargest(const std::vector<float>& values)
         }
     }
     return best;
+}
+
+// A position with room in every direction, so that selection is the only thing
+// deciding anything: no wall, no forced move, no terminal, and the food far
+// enough that no simulation reaches it inside the horizon. Without this the
+// simulator's own rewards would be doing the work the test attributes to priors.
+SnakeEnv openBoard(unsigned int seed)
+{
+    return SnakeEnv(20, 20, seed);
+}
+
+void testPriorsSteerTheSearch()
+{
+    // The exploration term is the only route from a prior to a visit, and nothing
+    // checked that the route works. If it did not, the search would be ignoring
+    // the network entirely and every training result would be search alone.
+    //
+    // The test has to move the prior and watch the answer move with it. A single
+    // skewed vector is not enough: the first version of this asserted that a
+    // 0.90/0.05/0.05 prior put the most visits on action 0, and it passed while
+    // returning the identical distribution for a 0.98/0.01/0.01 prior - the
+    // simulator's own dynamics were doing the work and the priors were never
+    // shown to matter. Favouring each action in turn from the same position is
+    // what makes the claim falsifiable: an inert prior can win at most one of
+    // the three rounds.
+    const int simulations = 96;
+    float visits_when_favoured[SnakeEnv::ACTION_COUNT];
+    int rounds_won = 0;
+
+    for (int favoured = 0; favoured < SnakeEnv::ACTION_COUNT; favoured++)
+    {
+        std::vector<float> priors(SnakeEnv::ACTION_COUNT, 0.02f);
+        priors[static_cast<size_t>(favoured)] = 0.96f;
+
+        SnakeEnv env = openBoard(4242);
+        PriorEvaluator evaluator(priors);
+        MonteCarloSearch search(evaluator, testConfig(simulations));
+        std::vector<const SnakeEnv*> roots{&env};
+        std::vector<MonteCarloSearch::Result> results = search.search(roots);
+
+        visits_when_favoured[favoured] = results[0].policy[static_cast<size_t>(favoured)];
+        if (indexOfLargest(results[0].policy) == favoured)
+        {
+            rounds_won++;
+        }
+        std::cout << "        favouring " << favoured << ": " << results[0].policy[0] << " / "
+                  << results[0].policy[1] << " / " << results[0].policy[2] << std::endl;
+    }
+
+    expect(rounds_won == SnakeEnv::ACTION_COUNT,
+           "whichever action the prior favours is the one that collects the most visits");
+
+    // The same quantity read three ways must actually differ, or the loop above
+    // was comparing one number to itself and the priors changed nothing.
+    const bool distribution_moved =
+        !(visits_when_favoured[0] == visits_when_favoured[1] &&
+          visits_when_favoured[1] == visits_when_favoured[2]);
+    expect(distribution_moved, "moving the prior moved the visit distribution");
+}
+
+void testNoActionIsStarved()
+{
+    // The (1 + visits) denominator is what makes attention decay: without it a
+    // single strong prior would take every simulation and the other two branches
+    // would never be looked at once. That is a silent failure - the search still
+    // returns a policy and still looks confident. So an almost-degenerate prior
+    // has to leave visits on the other two actions anyway.
+    //
+    // Checked on an open board so that the two neglected actions are neglected
+    // rather than fatal; a wall would starve them for a legitimate reason and the
+    // test would be measuring the simulator instead of the selection rule.
+    SnakeEnv env = openBoard(909);
+    std::vector<float> nearly_degenerate{0.98f, 0.01f, 0.01f};
+    PriorEvaluator evaluator(nearly_degenerate);
+    MonteCarloSearch search(evaluator, testConfig(96));
+
+    std::vector<const SnakeEnv*> roots{&env};
+    std::vector<MonteCarloSearch::Result> results = search.search(roots);
+
+    bool all_three_survive = true;
+    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+    {
+        if (env.wouldDie(static_cast<SnakeEnv::Action>(action)))
+        {
+            all_three_survive = false;
+        }
+    }
+    expect(all_three_survive, "the test position really does leave all three actions open");
+    expect(results[0].policy[1] > 0.0f && results[0].policy[2] > 0.0f,
+           "even a 0.98 prior leaves visits for the other two actions");
+    std::cout << "        visits " << results[0].policy[0] << " / " << results[0].policy[1] << " / "
+              << results[0].policy[2] << std::endl;
+}
+
+void testDoomedPositionIsSearchedNotExpandedPastDeath()
+{
+    // A position where every action kills. The descent reaches such a child,
+    // marks it terminal and must stop: expanding past death would ask the network
+    // about a finished game and hang a subtree off a node with no successors.
+    // Nothing exercised that path, so the guard in expand was assertion-only.
+    //
+    // The position is found rather than constructed, because building an enclosed
+    // snake through the public interface takes more setup than it is worth and
+    // would encode one hand-made shape instead of a real one.
+    SnakeEnv game(6, 6, 20260808);
+    bool found_doomed = false;
+    int positions_walked = 0;
+    unsigned int cursor = 5;
+
+    for (int step = 0; step < 40000 && !found_doomed; step++)
+    {
+        if (game.done())
+        {
+            game.reset();
+            continue;
+        }
+        positions_walked++;
+
+        int survivors = 0;
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            if (!game.wouldDie(static_cast<SnakeEnv::Action>(action)))
+            {
+                survivors++;
+            }
+        }
+        if (survivors == 0)
+        {
+            found_doomed = true;
+            break;
+        }
+
+        // Chase the food so the body grows and the board crowds; a random walk
+        // dies at length one and never reaches a position with no way out.
+        SnakeEnv::Action chosen = SnakeEnv::Action::STRAIGHT;
+        int best_distance = 1 << 30;
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            const SnakeEnv::Action candidate = static_cast<SnakeEnv::Action>(action);
+            if (game.wouldDie(candidate))
+            {
+                continue;
+            }
+            const Position next = game.headAfter(candidate);
+            const int distance =
+                std::abs(next.x - game.food().x) + std::abs(next.y - game.food().y);
+            if (distance < best_distance)
+            {
+                best_distance = distance;
+                chosen = candidate;
+            }
+        }
+        cursor = cursor * 1664525u + 1013904223u;
+        if ((cursor >> 24) % 6 == 0)
+        {
+            chosen = static_cast<SnakeEnv::Action>((cursor >> 16) % SnakeEnv::ACTION_COUNT);
+        }
+        game.step(chosen);
+    }
+
+    expect(found_doomed, "the walk reached a live position where every action kills");
+    if (!found_doomed)
+    {
+        return;
+    }
+    expect(!game.done(), "and that position is still live, so search will accept it");
+
+    SilentEvaluator evaluator;
+    MonteCarloSearch search(evaluator, testConfig(48));
+    std::vector<const SnakeEnv*> roots{&game};
+    std::vector<MonteCarloSearch::Result> results = search.search(roots);
+
+    float total = 0.0f;
+    for (float weight : results[0].policy)
+    {
+        total += weight;
+    }
+    expect(std::fabs(total - 1.0f) < 1e-4f,
+           "a doomed position still yields a policy that sums to one");
+    expect(evaluator.calls > 0, "the root itself was evaluated");
+    // Every child of the root is terminal here, so after the root's own expansion
+    // no further expansion is owed. One evaluation call per simulation round would
+    // mean the search kept asking about finished games.
+    expect(evaluator.calls < 48, "and the search stopped asking about finished games");
+    std::cout << "        doomed after " << positions_walked << " positions, body "
+              << game.body().size() << ", evaluator calls " << evaluator.calls << std::endl;
 }
 
 void testPolicyIsADistribution()
@@ -421,6 +633,9 @@ int main()
     std::cout << "MonteCarloSearch properties" << std::endl;
     testForcedActionAgreesWithWouldDie();
     testPolicyIsADistribution();
+    testPriorsSteerTheSearch();
+    testNoActionIsStarved();
+    testDoomedPositionIsSearchedNotExpandedPastDeath();
     testAvoidsAnImmediateWall();
     testPrefersReachableFood();
     testBatchesEveryTreeTogether();
