@@ -1,0 +1,30 @@
+# Line endings, decided by the repository rather than by each machine's git config.
+#
+# core.autocrlf was doing this locally, which meant the answer depended on who
+# checked out the tree and produced files with CRLF and LF mixed inside them -
+# every edit made through a tool that guessed differently from the file it was
+# editing left both in place. That is invisible until something compares text:
+# a whitespace-only diff on a file nobody touched, or a search string that
+# matches in one half of a file and not the other.
+#
+# Everything here is Windows-only tooling - MSVC, vcpkg, a hardcoded LibTorch -
+# so the working tree is CRLF. Git still stores LF in the index, which is what
+# keeps diffs and blame stable.
+* text=auto eol=crlf
+
+# Nothing tracked in this repository is binary today. These are declared anyway,
+# because the failure mode of adding one later is silent corruption: a model
+# checkpoint or a font run through line-ending conversion is not recoverable by
+# converting it back.
+*.bin binary
+*.pt binary
+*.pth binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.exe binary
+*.lib binary
+*.dll binary
+*.pdb binary
