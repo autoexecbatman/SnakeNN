@@ -209,11 +209,14 @@ int MonteCarloSearch::selectChild(const Tree& tree, int node_index) const
     return best_action;
 }
 
-void MonteCarloSearch::expand(Tree& tree, int node_index, const float* priors)
+void MonteCarloSearch::expand(Tree& tree, int node_index, std::span<const float> priors)
 {
     assert(node_index >= 0 && node_index < static_cast<int>(tree.nodes.size()) &&
            "expand given a node index outside the arena");
-    assert(priors != nullptr && "expand given no priors to give its children");
+    // The length used to travel separately from the pointer, which meant this
+    // function read three floats on the caller's word alone.
+    assert(priors.size() == static_cast<size_t>(SnakeEnv::ACTION_COUNT) &&
+           "expand needs exactly one prior per action");
 
     // Expanding twice would push a second set of children and then point the
     // parent at them, orphaning the first set together with every visit and
@@ -390,11 +393,29 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         }
     }
 
+    assert(config_.simulations >= 1 && "the constructor rejects anything less");
+
     const int tree_count = static_cast<int>(roots.size());
-    trees_.clear();
-    trees_.resize(tree_count);
-    for (Tree& tree : trees_)
+
+    // Grow only when the caller brings more games than last time, and never
+    // shrink. This used to clear and resize unconditionally, which destroyed every
+    // Tree and with it the node arena, the path and the replay slot - so a search
+    // called once per move for a whole game reallocated all of them on every move.
+    // Only the contents are reset below; the capacity is what is being kept.
+    if (static_cast<int>(trees_.size()) < tree_count)
     {
+        trees_.resize(tree_count);
+    }
+    assert(static_cast<int>(trees_.size()) >= tree_count &&
+           "fewer trees than games - some root would go unsearched");
+
+    // Reset by index rather than by range, because trees_ may be longer than this
+    // call needs and the tail belongs to a previous, larger batch. Nothing past
+    // tree_count is read, but nothing past it may be reset either - resetting it
+    // would throw away exactly the capacity this is keeping.
+    for (int index = 0; index < tree_count; index++)
+    {
+        Tree& tree = trees_[index];
         tree.nodes.clear();
         // The root differs from a default node in exactly one respect: it is
         // certain rather than predicted, so its prior is one. No edge enters it,
@@ -404,19 +425,18 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         Node root;
         root.prior = 1.0f;
         tree.nodes.push_back(root);
+        // Both of these are overwritten for every tree on every simulation before
+        // anything reads them, so neither is load-bearing - mutation testing
+        // confirms removing either changes no result. They stay because this loop
+        // is the one place that says what a fresh tree is, and trees now outlive
+        // the call that made them.
         tree.path.clear();
-        tree.replay.clear();
-        tree.awaiting_evaluation = false;
+        tree.known_leaf_value.reset();
     }
-
-    std::vector<const SnakeEnv*> batch;
-    std::vector<float> priors;
-    std::vector<float> values;
-    std::vector<float> terminal_leaf_value(tree_count, 0.0f);
 
     for (int simulation = 0; simulation < config_.simulations; simulation++)
     {
-        batch.clear();
+        batch_.clear();
 
         // Selection: every tree walks down to a leaf, replaying the path from
         // its root rather than reading a stored snapshot.
@@ -424,8 +444,21 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         {
             Tree& tree = trees_[index];
             tree.path.clear();
-            tree.replay.clear();
-            tree.replay.push_back(*roots[index]);
+
+            // Assign into the existing slot rather than clearing and refilling it.
+            // Clearing destroyed the SnakeEnv and freed its body and occupancy
+            // vectors, and the push_back allocated two more - twice per simulation
+            // per tree, which at a few hundred of each is tens of thousands of
+            // allocation pairs per move. Copy assignment reuses both buffers.
+            if (tree.replay.empty())
+            {
+                tree.replay.push_back(*roots[index]);
+            }
+            else
+            {
+                tree.replay[0] = *roots[index];
+            }
+            assert(tree.replay.size() == 1 && "the replay slot holds exactly one state");
             SnakeEnv& state = tree.replay[0];
             // A copy carries the root's generator, so every simulation would
             // otherwise draw the same apples and the tree would search a
@@ -478,22 +511,26 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
             {
                 // Nothing follows a finished game, so no evaluation is owed and
                 // the leaf contributes only the reward already on its edge.
-                tree.awaiting_evaluation = false;
-                terminal_leaf_value[index] = 0.0f;
+                tree.known_leaf_value = 0.0f;
             }
             else
             {
-                tree.awaiting_evaluation = true;
-                batch.push_back(&state);
+                tree.known_leaf_value.reset();
+                batch_.push_back(&state);
             }
         }
 
-        // One forward pass for every tree's leaf.
-        if (!batch.empty())
+        assert(batch_.size() <= static_cast<size_t>(tree_count) &&
+               "more leaves queued than there are trees");
+
+        // One forward pass for every tree's leaf. assign rather than resize, so the
+        // buffers keep whatever capacity the largest batch so far needed and the
+        // contents are always freshly written.
+        if (!batch_.empty())
         {
-            priors.assign(batch.size() * SnakeEnv::ACTION_COUNT, 0.0f);
-            values.assign(batch.size(), 0.0f);
-            evaluator_.evaluate(batch, priors.data(), values.data());
+            priors_.assign(batch_.size() * SnakeEnv::ACTION_COUNT, 0.0f);
+            values_.assign(batch_.size(), 0.0f);
+            evaluator_.evaluate(batch_, priors_.data(), values_.data());
         }
 
         // Expansion and backup.
@@ -501,13 +538,27 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         for (int index = 0; index < tree_count; index++)
         {
             Tree& tree = trees_[index];
-            float leaf_value = terminal_leaf_value[index];
 
-            if (tree.awaiting_evaluation)
+            // Either the value is already known, because the descent finished on a
+            // terminal node, or this tree has a leaf in the batch and the value is
+            // the network's. The optional is the only thing that decides which, so
+            // the two cases cannot both be taken or both be missed.
+            float leaf_value = 0.0f;
+            if (tree.known_leaf_value.has_value())
             {
-                const float* leaf_priors = priors.data() + batch_position * SnakeEnv::ACTION_COUNT;
-                leaf_value = values[batch_position];
+                leaf_value = tree.known_leaf_value.value();
+            }
+            else
+            {
+                assert(batch_position < values_.size() &&
+                       "a tree is owed an evaluation the batch does not contain");
+                leaf_value = values_[batch_position];
+
+                const std::span<const float> leaf_priors =
+                    std::span<const float>(priors_).subspan(
+                        batch_position * SnakeEnv::ACTION_COUNT, SnakeEnv::ACTION_COUNT);
                 expand(tree, tree.path.back(), leaf_priors);
+
                 if (tree.path.size() == 1)
                 {
                     // The root has just acquired its priors, which is the only
@@ -519,6 +570,13 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
 
             backup(tree, leaf_value);
         }
+
+        // The batch is consumed in tree order, so every leaf queued during
+        // selection must have been claimed by exactly one tree here. A mismatch
+        // means priors and values were read against the wrong tree - which would
+        // train the network on positions it never saw and leave no other trace.
+        assert(batch_position == batch_.size() &&
+               "the evaluated batch was not consumed exactly once");
     }
 
     std::vector<Result> results;
@@ -573,8 +631,29 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
                            ? tree.nodes[0].value_sum / static_cast<float>(tree.nodes[0].visit_count)
                            : 0.0f;
         result.best_action = static_cast<SnakeEnv::Action>(best_action);
+
+        // What every caller assumes about a Result, checked once here rather than
+        // separately at the trainer, the evaluator and the visual demo. The policy
+        // is a training target, so a total that has drifted trains the network on a
+        // distribution that is not one.
+        float policy_total = 0.0f;
+        for (float weight : result.policy)
+        {
+            assert(std::isfinite(weight) && weight >= 0.0f && "a visit weight is not a proportion");
+            policy_total += weight;
+        }
+        assert(std::fabs(policy_total - 1.0f) < PRIOR_SUM_TOLERANCE &&
+               "the visit policy does not sum to one");
+        assert(std::isfinite(result.value) && "the root value is not a finite number");
+        assert(static_cast<int>(result.best_action) >= 0 &&
+               static_cast<int>(result.best_action) < SnakeEnv::ACTION_COUNT &&
+               "best_action is not an action");
+
         results.push_back(result);
     }
 
+    // One result per root, in the caller's order. Every caller indexes the two
+    // together, so a short return would silently pair a policy with the wrong game.
+    assert(results.size() == roots.size() && "search returned a different number of results");
     return results;
 }

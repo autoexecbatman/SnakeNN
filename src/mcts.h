@@ -3,6 +3,7 @@
 #include "snake_env.h"
 #include <optional>
 #include <random>
+#include <span>
 #include <vector>
 
 // The move the position leaves no choice about, if there is one.
@@ -123,8 +124,20 @@ private:
         // reached, kept between the selection phase and the backup phase that
         // straddle the batched evaluation.
         std::vector<int> path;
-        std::vector<SnakeEnv> replay;  // holds at most one live copy
-        bool awaiting_evaluation;
+        // Holds exactly one live copy once the first simulation has run. A vector
+        // rather than a bare member because SnakeEnv has no default constructor,
+        // and assigned into rather than cleared and refilled - assignment reuses
+        // the body and occupancy allocations, and this is per simulation per tree.
+        std::vector<SnakeEnv> replay;
+        // The leaf's value, when it is already known. Engaged means the descent
+        // ended on a terminal node, which is owed no evaluation and contributes
+        // only what its edge already paid; empty means this tree has a leaf in the
+        // batch and its value is arriving from the network.
+        //
+        // One field, because this used to be a bool paired with a parallel vector
+        // of floats indexed by tree - two things saying one thing, kept in step by
+        // hand.
+        std::optional<float> known_leaf_value;
     };
 
     Evaluator& evaluator_;
@@ -132,13 +145,26 @@ private:
     std::vector<Tree> trees_;
     std::mt19937 rng_;
 
+    // Scratch reused across calls, not per-call temporaries. A search runs a few
+    // hundred simulations over a few hundred trees and is called once per move for
+    // the length of a game, so anything allocated per call is allocated tens of
+    // thousands of times per game. These keep their capacity; only their contents
+    // are reset. Their size is a function of the batch, so they are cleared and
+    // refilled rather than resized away.
+    std::vector<const SnakeEnv*> batch_;
+    std::vector<float> priors_;
+    std::vector<float> values_;
+
     // The PUCT score for one child, given how much attention the parent has to
     // distribute. Separated from the argmax so that the formula and the choosing
     // are readable on their own, and so the assertions on a child's statistics
     // sit next to the arithmetic that consumes them.
     float actionScore(const Node& child, float parent_weight) const;
     int selectChild(const Tree& tree, int node_index) const;
-    void expand(Tree& tree, int node_index, const float* priors);
+    // Priors as a span rather than a bare pointer: the length travelled with the
+    // caller's intent and nowhere else, so the callee could not check it. Now it
+    // can, and does.
+    void expand(Tree& tree, int node_index, std::span<const float> priors);
     void backup(Tree& tree, float leaf_value);
     void addRootNoise(Tree& tree);
 };

@@ -344,9 +344,14 @@ void testDoomedPositionIsSearchedNotExpandedPastDeath()
 // A 20x20 board whose food is far enough from the starting head that no path a
 // short search can walk will reach it. Without that, an eaten apple puts a reward
 // on an edge and the hand-worked arithmetic below stops applying.
-SnakeEnv boardWithDistantFood(int minimum_distance)
+// `first_seed` is where the scan starts, and it is a required argument rather than
+// a default because it decides whether two calls give the same board or different
+// ones - which is the difference between comparing two settings on one position and
+// comparing two positions. A version of this without it returned the same board
+// four times and a test that asked for four distinct games silently got one.
+SnakeEnv boardWithDistantFood(int minimum_distance, unsigned int first_seed)
 {
-    for (unsigned int seed = 1; seed < 500; seed++)
+    for (unsigned int seed = first_seed; seed < first_seed + 500; seed++)
     {
         SnakeEnv candidate(20, 20, seed);
         const Position head = candidate.body()[0];
@@ -379,13 +384,13 @@ void testBackupDiscountsByEdgeLength()
     const float value = 0.5f;
     const float discount = testConfig(1).discount;
 
-    SnakeEnv one_step = boardWithDistantFood(6);
+    SnakeEnv one_step = boardWithDistantFood(6, 1);
     ConstantValueEvaluator first_evaluator(value);
     MonteCarloSearch first_search(first_evaluator, testConfig(1));
     std::vector<const SnakeEnv*> first_roots{&one_step};
     const float undiscounted = first_search.search(first_roots)[0].value;
 
-    SnakeEnv two_step = boardWithDistantFood(6);
+    SnakeEnv two_step = boardWithDistantFood(6, 1);
     ConstantValueEvaluator second_evaluator(value);
     MonteCarloSearch second_search(second_evaluator, testConfig(2));
     std::vector<const SnakeEnv*> second_roots{&two_step};
@@ -423,19 +428,19 @@ void testRootNoiseIsAppliedAndKeepsADistribution()
     // Three things have to hold: the noise reaches the search, it is actually
     // random, and it leaves the priors a distribution. The last is asserted inside
     // the search; what a test can see is that the visit policy still sums to one.
-    SnakeEnv quiet_board = boardWithDistantFood(6);
+    SnakeEnv quiet_board = boardWithDistantFood(6, 1);
     SilentEvaluator quiet_evaluator;
     MonteCarloSearch quiet_search(quiet_evaluator, noisyConfig(64, 0.0f, 555));
     std::vector<const SnakeEnv*> quiet_roots{&quiet_board};
     const std::vector<float> without_noise = quiet_search.search(quiet_roots)[0].policy;
 
-    SnakeEnv noisy_board = boardWithDistantFood(6);
+    SnakeEnv noisy_board = boardWithDistantFood(6, 1);
     SilentEvaluator noisy_evaluator;
     MonteCarloSearch noisy_search(noisy_evaluator, noisyConfig(64, 0.25f, 555));
     std::vector<const SnakeEnv*> noisy_roots{&noisy_board};
     const std::vector<float> with_noise = noisy_search.search(noisy_roots)[0].policy;
 
-    SnakeEnv other_board = boardWithDistantFood(6);
+    SnakeEnv other_board = boardWithDistantFood(6, 1);
     SilentEvaluator other_evaluator;
     MonteCarloSearch other_search(other_evaluator, noisyConfig(64, 0.25f, 98765));
     std::vector<const SnakeEnv*> other_roots{&other_board};
@@ -466,7 +471,7 @@ void testRootNoiseIsAppliedAndKeepsADistribution()
     // The extreme the assertions are really about: at a fraction of one the
     // network's priors are discarded entirely and the Dirichlet weights stand
     // alone. If mixing could break the distribution, this is where it would.
-    SnakeEnv pure_board = boardWithDistantFood(6);
+    SnakeEnv pure_board = boardWithDistantFood(6, 1);
     SilentEvaluator pure_evaluator;
     MonteCarloSearch pure_search(pure_evaluator, noisyConfig(64, 1.0f, 4242));
     std::vector<const SnakeEnv*> pure_roots{&pure_board};
@@ -483,6 +488,98 @@ void testRootNoiseIsAppliedAndKeepsADistribution()
     expect(pure_non_negative, "and no visit weight goes negative");
     std::cout << "        no noise " << without_noise[0] << ", noise " << with_noise[0]
               << ", other seed " << other_noise[0] << ", pure noise " << pure_noise[0] << std::endl;
+}
+
+bool sameResult(const MonteCarloSearch::Result& left, const MonteCarloSearch::Result& right)
+{
+    if (left.policy.size() != right.policy.size() || left.best_action != right.best_action)
+    {
+        return false;
+    }
+    if (std::fabs(left.value - right.value) > 1e-6f)
+    {
+        return false;
+    }
+    for (size_t slot = 0; slot < left.policy.size(); slot++)
+    {
+        if (std::fabs(left.policy[slot] - right.policy[slot]) > 1e-6f)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+void testSearchReusesBuffersWithoutLeakingState()
+{
+    // The search keeps its trees and its batch buffers between calls instead of
+    // rebuilding them, which is worth tens of thousands of allocations per game and
+    // introduces exactly one risk: a later call reading something an earlier one
+    // left behind. Nothing tested that, because nothing called search twice.
+    //
+    // The position makes the check possible. With the food far from the head and a
+    // short search, no simulation reaches it, so no simulated apple is ever placed
+    // and the per-simulation reseeding changes nothing observable. With root noise
+    // off as well, the result becomes a function of the position alone - so the
+    // same position searched again on the same object has to give the same answer,
+    // and a stale tree or an uncleared path would show up as a difference.
+    const int simulations = 16;
+    SnakeEnv board = boardWithDistantFood(10, 1);
+
+    SilentEvaluator first_evaluator;
+    MonteCarloSearch reused(first_evaluator, testConfig(simulations));
+
+    std::vector<const SnakeEnv*> one_root{&board};
+    const MonteCarloSearch::Result baseline = reused.search(one_root)[0];
+
+    // A bigger batch in between, so the trees vector grows and the tail of it is
+    // left holding a fully searched tree that the next call must not touch.
+    std::vector<SnakeEnv> block;
+    for (int game = 0; game < 4; game++)
+    {
+        // Distinct starting seeds, so these are four different positions rather
+        // than one position four times.
+        block.push_back(boardWithDistantFood(10, 500u + 500u * static_cast<unsigned int>(game)));
+    }
+    std::vector<const SnakeEnv*> four_roots;
+    for (const SnakeEnv& game : block)
+    {
+        four_roots.push_back(&game);
+    }
+    const std::vector<MonteCarloSearch::Result> wide = reused.search(four_roots);
+
+    const MonteCarloSearch::Result after_wide = reused.search(one_root)[0];
+
+    expect(wide.size() == 4, "a wider call returns one result per root");
+    expect(sameResult(baseline, after_wide),
+           "a repeated search on a reused object gives the same answer as the first");
+
+    // And the wide call itself must match what a search that had never been used
+    // produces, so growth does not depend on history either.
+    SilentEvaluator fresh_evaluator;
+    MonteCarloSearch fresh(fresh_evaluator, testConfig(simulations));
+    const std::vector<MonteCarloSearch::Result> fresh_wide = fresh.search(four_roots);
+    bool wide_matches = true;
+    for (size_t index = 0; index < wide.size(); index++)
+    {
+        if (!sameResult(wide[index], fresh_wide[index]))
+        {
+            wide_matches = false;
+        }
+    }
+    expect(wide_matches, "and a reused object searches a wide batch exactly as a new one does");
+
+    // Deliberately not asserted here: that the four results differ from each other.
+    // They do not, and that is correct - every game starts with its head at the
+    // centre of an empty board and the only thing distinguishing them is food the
+    // search cannot reach within this horizon, so the positions are identical as
+    // far as selection is concerned. The first version of this test claimed the
+    // opposite and failed, which is the position telling the truth about itself.
+    // Tree independence is what testBatchesEveryTreeTogether covers, on a batch
+    // whose games really do diverge.
+
+    std::vector<const SnakeEnv*> no_roots;
+    expect(reused.search(no_roots).empty(), "no roots yields no results");
 }
 
 void testPolicyIsADistribution()
@@ -809,6 +906,7 @@ int main()
     testDoomedPositionIsSearchedNotExpandedPastDeath();
     testBackupDiscountsByEdgeLength();
     testRootNoiseIsAppliedAndKeepsADistribution();
+    testSearchReusesBuffersWithoutLeakingState();
     testAvoidsAnImmediateWall();
     testPrefersReachableFood();
     testBatchesEveryTreeTogether();
