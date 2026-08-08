@@ -3,11 +3,14 @@
 #include "network_evaluator.h"
 #include "seed_policy.h"
 #include "selfplay.h"
+#include "trainer_options.h"
+#include <algorithm>
 #include <chrono>
 #include <deque>
-#include <algorithm>
 #include <format>
+#include <fstream>
 #include <iostream>
+#include <span>
 #include <string>
 
 // AlphaZero training loop for Snake.
@@ -15,197 +18,60 @@
 // Hyperparameters follow Du, Gemp, Wu and Wu 2022 (arXiv:2211.09622), which
 // reached 944/1000 wins on 10x10 with 200 search states per move over 6,000
 // games: discount 0.98, c_puct 0.5, visit-count temperature 0.5, learning rate
-// 0.001, minibatches of 100 drawn from a window of recent games. Where this
-// deviates it is noted at the deviation, because a hyperparameter that silently
-// differs from the paper it cites is worse than one chosen freely.
+// 0.001, minibatches of 100 drawn from a window of recent games. They are named
+// once, in trainer_options.h, because the discount was written out twice here and
+// two copies of one number are two numbers waiting to disagree.
 //
 // Board size is an argument so the curriculum can start small. Measured here:
 // the network does 708k evaluations/s at 6x6 and 55k at 20x20, and cost scales
 // with board area, so the small boards are where the cheap signal is.
+//
+// The settings, the step-limit derivation and the progress line live in
+// trainer_options.{h,cpp}. They were in here, which meant nothing about them
+// could be tested - this file is one main() and links LibTorch, so it has neither
+// a test target nor reachable assertions.
 
 namespace
 {
 
-// Characters of hashes and dots in the redrawn progress bar.
-constexpr int PROGRESS_BAR_WIDTH = 28;
-
-struct Settings
+// Whether the checkpoint path can be written, checked before the first iteration
+// rather than after it.
+//
+// torch::save throws on a path that does not exist, and it is called at the end
+// of an iteration - so a mistyped directory cost a full iteration of self-play
+// and training before saying so. Opened for append, which creates the file if it
+// is missing and leaves an existing checkpoint untouched.
+void requireWritableCheckpoint(const std::string& path)
 {
-    int board = 6;
-    int iterations = 20;
-    // Absolute index of the first iteration. A resumed run must be given the
-    // number the previous run stopped at, or it replays that run's games: the
-    // seed for a game is derived from the iteration index, and `--resume`
-    // restores weights only.
-    int start_iteration = 1;
-    int games_per_iteration = 32;
-    int simulations = 64;
-    int step_limit = 0;  // 0 means derive it from the board
-    int channels = 64;
-    int blocks = 4;
-    float learning_rate = 0.001f;
-    int batch_size = 128;
-    int batches_per_iteration = 64;
-    size_t replay_bytes = 1024u * 1024u * 1024u;  // 1 GiB, measured not guessed
-    unsigned int seed = 1;
-    std::string checkpoint;
-    std::string resume;
-};
-
-int parseInt(const char* text)
-{
-    return std::stoi(text);
-}
-
-std::string formatDuration(double seconds)
-{
-    if (seconds < 0.0 || seconds > 60.0 * 60.0 * 99.0)
+    std::ofstream probe(path, std::ios::app | std::ios::binary);
+    if (!probe)
     {
-        return "--:--";
+        throw std::runtime_error(
+            std::format("cannot write the checkpoint '{}' - does its directory exist?", path));
     }
-    int total = static_cast<int>(seconds + 0.5);
-    return std::format("{:02}:{:02}", total / 60, total % 60);
-}
-
-// One redrawn line, ASCII only, so it works in any console this repository is
-// ever run from. Carriage return rather than a newline, so an iteration does not
-// scroll a thousand lines past.
-void drawProgressBar(int iteration, int iterations, const SelfPlay::Progress& progress,
-                     long long evaluations, int step_limit)
-{
-    double by_games = progress.games_total > 0 ? static_cast<double>(progress.games_finished) /
-                                                     static_cast<double>(progress.games_total)
-                                               : 0.0;
-
-    // Games finished is the honest measure but it stays at zero for the first
-    // minutes of a large board, where nothing has ended yet - a bar pinned at 0
-    // percent is the thing this was added to avoid. Moves played against the
-    // worst case is a lower bound on real progress and moves from the first
-    // second, so the bar shows whichever is further along. Both are
-    // non-decreasing, so their maximum is too.
-    double worst_case_moves =
-        static_cast<double>(progress.games_total) * static_cast<double>(step_limit);
-    double by_moves = worst_case_moves > 0.0
-                          ? static_cast<double>(progress.moves_played) / worst_case_moves
-                          : 0.0;
-    double fraction = std::min(1.0, std::max(by_games, by_moves));
-    int filled = static_cast<int>(fraction * PROGRESS_BAR_WIDTH);
-
-    std::string cells(PROGRESS_BAR_WIDTH, '.');
-    for (int cell = 0; cell < filled && cell < PROGRESS_BAR_WIDTH; cell++)
-    {
-        cells[cell] = '#';
-    }
-
-    std::string bar =
-        std::format("\r  iter {}/{} [{}] {:>3}%  games {}/{}  moves {}", iteration, iterations,
-                    cells, static_cast<int>(fraction * 100.0), progress.games_finished,
-                    progress.games_total, progress.moves_played);
-
-    if (progress.elapsed_seconds > 0.5)
-    {
-        bar += std::format("  {} ev/s",
-                           static_cast<long long>(evaluations / progress.elapsed_seconds));
-    }
-    bar += std::format("  {}", formatDuration(progress.elapsed_seconds));
-
-    // Remaining time from the share of games already finished. Games do not all
-    // take the same length, so this is an estimate and is labelled as one.
-    if (fraction > 0.02)
-    {
-        double remaining = progress.elapsed_seconds * (1.0 / fraction - 1.0);
-        bar += std::format(" eta {}", formatDuration(remaining));
-    }
-    else
-    {
-        bar += " eta --:--";
-    }
-    // Trailing blanks wipe the tail of a longer previous line, since this is
-    // redrawn in place rather than scrolled.
-    bar += "        ";
-
-    std::cout << bar << std::flush;
-}
-
-Settings parseArguments(int argc, char** argv)
-{
-    Settings settings;
-    for (int index = 1; index + 1 < argc; index += 2)
-    {
-        std::string flag = argv[index];
-        const char* value = argv[index + 1];
-        if (flag == "--board")
-        {
-            settings.board = parseInt(value);
-        }
-        else if (flag == "--iterations")
-        {
-            settings.iterations = parseInt(value);
-        }
-        else if (flag == "--start-iteration")
-        {
-            settings.start_iteration = parseInt(value);
-        }
-        else if (flag == "--games")
-        {
-            settings.games_per_iteration = parseInt(value);
-        }
-        else if (flag == "--simulations")
-        {
-            settings.simulations = parseInt(value);
-        }
-        else if (flag == "--step-limit")
-        {
-            settings.step_limit = parseInt(value);
-        }
-        else if (flag == "--channels")
-        {
-            settings.channels = parseInt(value);
-        }
-        else if (flag == "--blocks")
-        {
-            settings.blocks = parseInt(value);
-        }
-        else if (flag == "--batch")
-        {
-            settings.batch_size = parseInt(value);
-        }
-        else if (flag == "--batches")
-        {
-            settings.batches_per_iteration = parseInt(value);
-        }
-        else if (flag == "--seed")
-        {
-            settings.seed = static_cast<unsigned int>(parseInt(value));
-        }
-        else if (flag == "--checkpoint")
-        {
-            settings.checkpoint = value;
-        }
-        else if (flag == "--resume")
-        {
-            settings.resume = value;
-        }
-        else
-        {
-            std::cerr << "unknown flag: " << flag << std::endl;
-        }
-    }
-    if (settings.step_limit == 0)
-    {
-        // Du et al. cap a 10x10 game at 1,200 steps. Scaled by area, so the
-        // budget per cell is the same at every board size, which keeps "win"
-        // meaning the same thing across the curriculum.
-        settings.step_limit = 12 * settings.board * settings.board;
-    }
-    return settings;
 }
 
 }  // namespace
 
 int main(int argc, char** argv)
 {
-    Settings settings = parseArguments(argc, argv);
+    trainer::Settings settings;
+    try
+    {
+        settings = trainer::parseArguments(
+            std::span<const char* const>(argv + 1, static_cast<size_t>(argc - 1)));
+        if (!settings.checkpoint.empty())
+        {
+            requireWritableCheckpoint(settings.checkpoint);
+        }
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << error.what() << std::endl;
+        return 1;
+    }
+
+    const int step_limit = settings.stepLimit();
     torch::manual_seed(settings.seed);
 
     const bool cuda = torch::cuda::is_available();
@@ -213,12 +79,11 @@ int main(int argc, char** argv)
 
     std::cout << "=== AlphaZero Snake ===" << std::endl;
     std::cout << std::format("board {}x{}  step limit {}  simulations {}\n", settings.board,
-                             settings.board, settings.step_limit, settings.simulations);
+                             settings.board, step_limit, settings.simulations);
     std::cout << std::format("network {}x{}  device {}\n", settings.channels, settings.blocks,
                              cuda ? "cuda" : "cpu");
     std::cout << std::format("iterations {}..{} x {} games  seed {}\n\n", settings.start_iteration,
-                             settings.start_iteration + settings.iterations - 1,
-                             settings.games_per_iteration, settings.seed);
+                             settings.lastIteration(), settings.games_per_iteration, settings.seed);
 
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
 
@@ -242,33 +107,36 @@ int main(int argc, char** argv)
 
     NetworkEvaluator evaluator(network, device);
     torch::optim::Adam optimizer(network->parameters(),
-                                 torch::optim::AdamOptions(settings.learning_rate));
+                                 torch::optim::AdamOptions(trainer::LEARNING_RATE));
 
     MonteCarloSearch::Config search_config;
     search_config.simulations = settings.simulations;
-    search_config.exploration = 0.5f;
-    search_config.discount = 0.98f;
-    search_config.root_noise_fraction = 0.25f;
-    search_config.root_noise_alpha = 0.3f;
+    search_config.exploration = trainer::EXPLORATION;
+    search_config.discount = trainer::DISCOUNT;
+    search_config.root_noise_fraction = trainer::ROOT_NOISE_FRACTION;
+    search_config.root_noise_alpha = trainer::ROOT_NOISE_ALPHA;
     search_config.seed = settings.seed;
 
     SelfPlay::Config play_config;
     play_config.games_in_parallel = settings.games_per_iteration;
-    play_config.step_limit = settings.step_limit;
-    play_config.discount = 0.98f;
-    play_config.temperature = 0.5f;
-    play_config.temperature_moves = settings.board * settings.board / 2;
+    play_config.step_limit = step_limit;
+    play_config.discount = trainer::DISCOUNT;
+    play_config.temperature = trainer::VISIT_TEMPERATURE;
+    play_config.temperature_moves = settings.cellCount() / 2;
     play_config.seed = settings.seed;
 
     SelfPlay play(evaluator, search_config, play_config);
 
-    // Throttled so drawing never becomes the bottleneck it is reporting on.
     const int first_iteration = settings.start_iteration;
-    const int last_iteration = settings.start_iteration + settings.iterations - 1;
+    const int last_iteration = settings.lastIteration();
 
+    // Throttled so drawing never becomes the bottleneck it is reporting on, and
+    // the length of the last line drawn is kept so the next write can wipe
+    // exactly it. A fixed-width wipe left the tail of anything longer on screen.
     auto last_drawn = std::chrono::high_resolution_clock::now();
     int current_iteration = 0;
     long long evaluations_at_iteration_start = 0;
+    size_t drawn_length = 0;
     play.setProgressCallback(
         [&](const SelfPlay::Progress& progress)
         {
@@ -278,14 +146,29 @@ int main(int argc, char** argv)
                 return;
             }
             last_drawn = now;
-            drawProgressBar(current_iteration, last_iteration, progress,
-                            evaluator.evaluations() - evaluations_at_iteration_start,
-                            settings.step_limit);
+
+            trainer::ProgressSnapshot snapshot;
+            snapshot.games_total = progress.games_total;
+            snapshot.games_finished = progress.games_finished;
+            snapshot.moves_played = progress.moves_played;
+            snapshot.evaluations = evaluator.evaluations() - evaluations_at_iteration_start;
+            snapshot.step_limit = step_limit;
+            snapshot.elapsed_seconds = progress.elapsed_seconds;
+
+            const std::string bar =
+                trainer::formatProgressBar(current_iteration, last_iteration, snapshot);
+            std::cout << "\r" << bar;
+            if (bar.size() < drawn_length)
+            {
+                std::cout << std::string(drawn_length - bar.size(), ' ');
+            }
+            drawn_length = bar.size();
+            std::cout << std::flush;
         });
 
     std::deque<TrainingRecord> replay;
     size_t replay_bytes_used = 0;
-    const int foods_to_win = settings.board * settings.board - 1;
+    const int foods_to_win = settings.foodsToWin();
 
     for (int iteration = first_iteration; iteration <= last_iteration; iteration++)
     {
@@ -305,6 +188,21 @@ int main(int argc, char** argv)
         seeds::requireTrainingSeed(
             seeds::trainingGameSeed(settings.seed, iteration, settings.games_per_iteration - 1));
         play.playBatch(settings.board, settings.board, batch_seed, fresh, summaries);
+
+        // parseArguments refuses --games below 1, so an empty batch means
+        // playBatch returned nothing for a batch it was given - and the summary
+        // line below divides by this count.
+        //
+        // TORCH_CHECK rather than assert, and the distinction is not stylistic:
+        // this file links LibTorch, so a debug build of it cannot run at all -
+        // the shipped libraries are release-only and the binary dies of an access
+        // violation before main - while the release build defines NDEBUG and
+        // compiles an assert away. An assert here would be unreachable in both
+        // configurations. Every check in a Torch-linked file in this repository
+        // is a TORCH_CHECK for that reason, and every check in a Torch-free one
+        // is an assert.
+        TORCH_CHECK(!summaries.empty(), "self-play returned no games for a batch of ",
+                    settings.games_per_iteration);
 
         for (TrainingRecord& record : fresh)
         {
@@ -345,7 +243,7 @@ int main(int argc, char** argv)
 
         if (static_cast<int>(replay.size()) >= settings.batch_size)
         {
-            const int cells = settings.board * settings.board;
+            const int cells = settings.cellCount();
             std::vector<float> planes(static_cast<size_t>(settings.batch_size) *
                                       SnakeEnv::PLANE_COUNT * cells);
             std::vector<float> policies(static_cast<size_t>(settings.batch_size) *
@@ -393,6 +291,15 @@ int main(int argc, char** argv)
                 torch::Tensor value_loss = torch::mse_loss(value, value_target);
                 torch::Tensor loss = policy_loss + value_loss;
 
+                // A non-finite loss trains every weight into NaN and the run
+                // continues printing plausible-looking iterations afterwards, so
+                // it stops here instead. TORCH_CHECK rather than assert: LibTorch
+                // ships release-only libraries, and a debug binary linked against
+                // them dies before reaching any assertion.
+                TORCH_CHECK(std::isfinite(loss.item<double>()), "loss is not finite at iteration ",
+                            iteration, " batch ", batch, " - policy ", policy_loss.item<double>(),
+                            " value ", value_loss.item<double>());
+
                 optimizer.zero_grad();
                 loss.backward();
                 optimizer.step();
@@ -410,7 +317,8 @@ int main(int argc, char** argv)
 
         // Wipe the progress line before the iteration summary lands, or the
         // summary is printed over a longer bar and inherits its tail.
-        std::cout << "\r" << std::string(110, ' ') << "\r";
+        std::cout << "\r" << std::string(drawn_length, ' ') << "\r";
+        drawn_length = 0;
 
         // Precisions are fixed rather than left to the default so the line keeps
         // a stable shape across runs - these summaries get parsed out of the log.

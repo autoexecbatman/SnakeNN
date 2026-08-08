@@ -672,9 +672,24 @@ add_executable(SelfPlayTest
 set_property(TARGET SelfPlayTest PROPERTY CXX_STANDARD 20)
 add_test(NAME selfplay_properties COMMAND SelfPlayTest)
 
+# The trainer's settings and the two strings it prints. Extracted from
+# az_trainer.cpp, which was one main() and therefore untestable: it accepted
+# "--games 0" and divided by the game count eight hundred seconds later, and
+# warned about a mistyped flag on stderr before training with the default. No
+# LibTorch, so assertions here are reachable in a debug build - the ones in any
+# Torch-linked file are not.
+add_executable(TrainerOptionsTest
+    src/trainer_options_test.cpp
+    src/trainer_options.cpp
+)
+
+set_property(TARGET TrainerOptionsTest PROPERTY CXX_STANDARD 20)
+add_test(NAME trainer_options COMMAND TrainerOptionsTest)
+
 # AlphaZero training loop.
 add_executable(AlphaZeroTrainer
     src/az_trainer.cpp
+    src/trainer_options.cpp
     src/selfplay.cpp
     src/mcts.cpp
     src/network_evaluator.cpp
