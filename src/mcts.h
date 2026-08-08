@@ -58,6 +58,27 @@ public:
 
     MonteCarloSearch(Evaluator& evaluator, const Config& config);
 
+    // Not copyable and not movable, and the destructor stays compiler-generated:
+    // nothing here owns a raw resource, so there is no release to write down.
+    // These deletions are an interface decision rather than resource management -
+    // a search has no value semantics.
+    //
+    // Three reasons a copy would be wrong, and the first has already happened
+    // one level down. rng_ would be duplicated, so two searches would draw the
+    // identical stream - the same defect as a copied SnakeEnv carrying its
+    // generator, which made every simulation see the same apples. trees_ holds
+    // the descent in flight, so a copy taken mid-search is a half-finished
+    // search that looks complete. And evaluator_ is a reference, so both copies
+    // would advance one evaluation counter while each reported its own rate.
+    //
+    // The reference member had already deleted both assignments implicitly,
+    // leaving the type copy-constructible but not copy-assignable. Nobody chose
+    // that asymmetry; stating all four removes it.
+    MonteCarloSearch(const MonteCarloSearch&) = delete;
+    MonteCarloSearch& operator=(const MonteCarloSearch&) = delete;
+    MonteCarloSearch(MonteCarloSearch&&) = delete;
+    MonteCarloSearch& operator=(MonteCarloSearch&&) = delete;
+
     // Runs the configured simulations on every root at once. Roots must be live;
     // a finished game has nothing to search and is the caller's to filter.
     std::vector<Result> search(const std::vector<const SnakeEnv*>& roots);

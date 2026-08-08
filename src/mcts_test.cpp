@@ -3,11 +3,37 @@
 #include <cmath>
 #include <iostream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 // The search is checked against hand-written evaluators with known answers, so
 // that a failure here is a failure of selection, backup or terminal handling
 // rather than of a network. Nothing in this file links LibTorch.
+
+// A search has no value semantics: copying one would duplicate the generator so
+// two searches drew the same stream, snapshot a descent that is still in flight,
+// and share the evaluator by reference while each counted its own rate. Checked
+// at compile time because a copy is a bug that produces plausible numbers rather
+// than a crash, so no runtime test would notice it. A member added later that
+// restored copyability would break this line and nothing else.
+static_assert(!std::is_copy_constructible<MonteCarloSearch>::value,
+              "MonteCarloSearch must not be copy constructible");
+static_assert(!std::is_copy_assignable<MonteCarloSearch>::value,
+              "MonteCarloSearch must not be copy assignable");
+static_assert(!std::is_move_constructible<MonteCarloSearch>::value,
+              "MonteCarloSearch must not be move constructible");
+static_assert(!std::is_move_assignable<MonteCarloSearch>::value,
+              "MonteCarloSearch must not be move assignable");
+static_assert(std::is_nothrow_destructible<MonteCarloSearch>::value,
+              "MonteCarloSearch must stay trivially releasable - rule of zero, nothing owned");
+
+// The environment is the opposite case, and deliberately so: the search copies a
+// root once per simulation, so copying has to stay cheap and available. Stated
+// here so that removing it is a decision rather than an accident.
+static_assert(std::is_copy_constructible<SnakeEnv>::value,
+              "the search copies a root per simulation - SnakeEnv must stay copyable");
+static_assert(std::is_copy_assignable<SnakeEnv>::value,
+              "SnakeEnv must stay copy assignable - the descent assigns into its replay slot");
 
 namespace
 {
