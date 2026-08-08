@@ -2,27 +2,31 @@
 #include "evaluator.h"
 #include "mcts.h"
 #include "snake_env.h"
+#include <functional>
 #include <random>
 #include <vector>
 
 // One training record: what the network saw, what the search concluded, and
 // what actually happened afterwards.
-struct TrainingRecord {
+struct TrainingRecord
+{
     // The position, not its encoding. Storing encoded planes cost 3.2KB per
     // move at 10x10 and drove a long run into swap; a snapshot is a sixteenth
     // of that and the planes are regenerated when a batch is drawn.
     SnakeEnv::Snapshot position;
     float policy[SnakeEnv::ACTION_COUNT];
-    float value_target;          // discounted return from this position onward
+    float value_target;  // discounted return from this position onward
 
     // Roughly what this record costs, for a buffer that is capped by memory
     // rather than by a record count that means different things per board.
-    size_t bytesUsed() const {
+    size_t bytesUsed() const
+    {
         return sizeof(TrainingRecord) + position.body_cells.capacity() * sizeof(unsigned short);
     }
 };
 
-struct GameSummary {
+struct GameSummary
+{
     int score;
     int steps;
     bool won;
@@ -38,9 +42,23 @@ struct GameSummary {
 // "wins" fails to distinguish a policy that plays well from one that shuffles
 // safely for a hundred thousand steps, and the value head learns that stalling
 // is as good as winning.
-class SelfPlay {
+class SelfPlay
+{
 public:
-    struct Config {
+    // Reported while a batch is in flight, because an iteration takes minutes
+    // and a terminal that prints nothing for minutes is indistinguishable from
+    // one that has hung. Emitted once per move-batch; throttling is the
+    // caller's business, since only the caller knows what it is drawing to.
+    struct Progress
+    {
+        int games_total;
+        int games_finished;
+        long long moves_played;
+        double elapsed_seconds;
+    };
+
+    struct Config
+    {
         int games_in_parallel;
         int step_limit;
         float discount;
@@ -55,6 +73,9 @@ public:
     SelfPlay(Evaluator& evaluator, const MonteCarloSearch::Config& search_config,
              const Config& config);
 
+    // Pass an empty function to report nothing.
+    void setProgressCallback(std::function<void(const Progress&)> callback);
+
     // Plays one batch of games to completion, appending every visited position
     // to `records_out` and one entry per game to `summaries_out`.
     void playBatch(int board_width, int board_height, unsigned int game_seed_base,
@@ -66,6 +87,7 @@ private:
     MonteCarloSearch::Config search_config_;
     Config config_;
     std::mt19937 rng_;
+    std::function<void(const Progress&)> progress_callback_;
 
     int sampleAction(const std::vector<float>& policy, int moves_played);
 };
