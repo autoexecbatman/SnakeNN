@@ -13,6 +13,13 @@ namespace
 // slack is for rounding and nothing else.
 constexpr float PRIOR_SUM_TOLERANCE = 1e-3f;
 
+// How many times to re-draw the Dirichlet weights if every one of them comes back
+// zero. With a concentration below one the gamma density diverges at the origin,
+// so very small draws are ordinary and an underflow to exactly zero is not a
+// theoretical branch. A degenerate sample is a sampling accident and re-drawing is
+// the honest response; running out of attempts is not, and throws.
+constexpr int MAX_NOISE_DRAW_ATTEMPTS = 8;
+
 }  // namespace
 
 // The move the position leaves no choice about, if there is one.
@@ -256,9 +263,25 @@ void MonteCarloSearch::expand(Tree& tree, int node_index, const float* priors)
 
 void MonteCarloSearch::backup(Tree& tree, float leaf_value)
 {
+    // A NaN here would be added into value_sum at every node on the path and then
+    // into every ancestor on every later simulation, and NaN survives addition -
+    // so one bad evaluation permanently poisons the tree while the search goes on
+    // returning policies that look ordinary. Caught at the entrance, because after
+    // this point there is no telling which simulation introduced it.
+    assert(std::isfinite(leaf_value) && "backup handed a leaf value that is not a finite number");
+
+    // Every descent pushes the root before it does anything else, so a path is
+    // never empty. An empty one would make this a silent no-op: the simulation
+    // would be spent and no statistic anywhere would record it.
+    assert(!tree.path.empty() && "backup on an empty path - the simulation would vanish");
+
     float carried = leaf_value;
     for (int position = static_cast<int>(tree.path.size()) - 1; position >= 0; position--)
     {
+        assert(tree.path[position] >= 0 &&
+               tree.path[position] < static_cast<int>(tree.nodes.size()) &&
+               "a path entry points outside the arena");
+
         Node& node = tree.nodes[tree.path[position]];
         node.visit_count++;
         node.value_sum += carried;
@@ -271,9 +294,14 @@ void MonteCarloSearch::backup(Tree& tree, float leaf_value)
         assert(node.edge_steps >= 1 && "backing up across an edge that spans no ticks");
 
         // Step the return back across the edge that entered this node, over the
-        // number of ticks that edge actually spans.
+        // number of ticks that edge actually spans. Du et al. 2022 write the
+        // factor as gamma^(t(s') - t(s)); edge_steps is that exponent, and it is
+        // greater than one exactly where forced moves were simulated through
+        // rather than given nodes of their own.
         carried = node.reward +
                   std::pow(config_.discount, static_cast<float>(node.edge_steps)) * carried;
+
+        assert(std::isfinite(carried) && "the carried return stopped being a finite number");
     }
 }
 
@@ -284,32 +312,67 @@ void MonteCarloSearch::addRootNoise(Tree& tree)
         return;
     }
 
-    std::gamma_distribution<float> gamma(config_.root_noise_alpha, 1.0f);
-    float noise[SnakeEnv::ACTION_COUNT];
-    float total = 0.0f;
-    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
-    {
-        noise[action] = gamma(rng_);
-        total += noise[action];
-    }
-    if (total <= 0.0f)
-    {
-        return;
-    }
+    // A fraction above one would make the weight on the network's own prior
+    // negative, so a child could bid negatively for attention and expand's
+    // sum-to-one check cannot see it - the noise is mixed in after that check has
+    // already run.
+    assert(config_.root_noise_fraction <= 1.0f && "root noise fraction above one inverts the prior");
+    // std::gamma_distribution is undefined for a non-positive shape.
+    assert(config_.root_noise_alpha > 0.0f && "Dirichlet concentration must be positive");
 
     // Only ever called immediately after the root is expanded, so its children
     // exist. An empty optional here would mean noise was being mixed into priors
     // that had not been written yet.
     assert(tree.nodes[0].first_child.has_value() &&
            "root noise applied before the root had children");
+
+    // Draw the Dirichlet weights. Every draw is non-negative, so the only way the
+    // total can fail to be positive is all three underflowing to zero - which
+    // leaves the distribution undefined rather than merely skewed.
+    //
+    // This used to return silently when that happened: noise requested, no noise
+    // applied, nothing said. That is the failure mode self-play cannot report,
+    // because a run with no exploration looks exactly like a run with bad luck.
+    std::gamma_distribution<float> gamma(config_.root_noise_alpha, 1.0f);
+    float noise[SnakeEnv::ACTION_COUNT];
+    float total = 0.0f;
+    for (int attempt = 0; attempt < MAX_NOISE_DRAW_ATTEMPTS && total <= 0.0f; attempt++)
+    {
+        total = 0.0f;
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            noise[action] = gamma(rng_);
+            assert(noise[action] >= 0.0f && std::isfinite(noise[action]) &&
+                   "a gamma draw must be a finite non-negative number");
+            total += noise[action];
+        }
+    }
+    if (total <= 0.0f)
+    {
+        throw std::runtime_error(
+            "root noise: every Dirichlet draw underflowed to zero repeatedly - the concentration "
+            "is too small for single precision");
+    }
+
     const int first_child = tree.nodes[0].first_child.value();
+    float mixed_total = 0.0f;
     for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
     {
-        float dirichlet = noise[action] / total;
+        const float dirichlet = noise[action] / total;
         Node& child = tree.nodes[first_child + action];
         child.prior = (1.0f - config_.root_noise_fraction) * child.prior +
                       config_.root_noise_fraction * dirichlet;
+        assert(child.prior >= 0.0f && std::isfinite(child.prior) &&
+               "mixing noise produced a prior that is not part of a distribution");
+        mixed_total += child.prior;
     }
+
+    // The convex combination of two distributions is a distribution, so this has
+    // to still hold - and this is the only place that can check it. expand asserts
+    // the same property, but it runs before the noise is applied, so the one
+    // operation able to break the invariant sat outside the one check for it.
+    assert(std::fabs(mixed_total - 1.0f) < PRIOR_SUM_TOLERANCE &&
+           "root priors stopped summing to one after noise was mixed in");
 }
 
 std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(

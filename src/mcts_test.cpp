@@ -103,6 +103,33 @@ private:
     std::vector<float> priors_;
 };
 
+// Flat priors and a fixed value, so the return that arrives back at the root is
+// an arithmetic consequence of the discount and the path length and nothing else.
+// That is what makes backup's exponent checkable against a number worked out by
+// hand rather than against whatever it currently produces.
+class ConstantValueEvaluator : public Evaluator
+{
+public:
+    explicit ConstantValueEvaluator(float value) : value_(value) {}
+
+    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
+                  float* values_out) override
+    {
+        for (size_t index = 0; index < states.size(); index++)
+        {
+            for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+            {
+                priors_out[index * SnakeEnv::ACTION_COUNT + action] =
+                    1.0f / static_cast<float>(SnakeEnv::ACTION_COUNT);
+            }
+            values_out[index] = value_;
+        }
+    }
+
+private:
+    float value_;
+};
+
 MonteCarloSearch::Config testConfig(int simulations)
 {
     MonteCarloSearch::Config config;
@@ -312,6 +339,150 @@ void testDoomedPositionIsSearchedNotExpandedPastDeath()
     expect(evaluator.calls < 48, "and the search stopped asking about finished games");
     std::cout << "        doomed after " << positions_walked << " positions, body "
               << game.body().size() << ", evaluator calls " << evaluator.calls << std::endl;
+}
+
+// A 20x20 board whose food is far enough from the starting head that no path a
+// short search can walk will reach it. Without that, an eaten apple puts a reward
+// on an edge and the hand-worked arithmetic below stops applying.
+SnakeEnv boardWithDistantFood(int minimum_distance)
+{
+    for (unsigned int seed = 1; seed < 500; seed++)
+    {
+        SnakeEnv candidate(20, 20, seed);
+        const Position head = candidate.body()[0];
+        const int distance =
+            std::abs(candidate.food().x - head.x) + std::abs(candidate.food().y - head.y);
+        if (distance >= minimum_distance)
+        {
+            return candidate;
+        }
+    }
+    // Every seed in the range put the food within reach, which would silently
+    // invalidate the caller's arithmetic.
+    throw std::runtime_error("no seed produced a board with distant food");
+}
+
+void testBackupDiscountsByEdgeLength()
+{
+    // The one piece of backup's arithmetic no test reached. It is checkable
+    // exactly, because with a constant value head, flat priors and no reward
+    // anywhere on the path, the return arriving at the root is determined:
+    //
+    //   one simulation  - the leaf is the root itself, so the root's mean value is
+    //                     the evaluator's value V, undiscounted.
+    //   two simulations - the second descends one edge of one tick, so the root
+    //                     accumulates V + gamma*V over two visits, giving
+    //                     V * (1 + gamma) / 2.
+    //
+    // Dropping the discount would make the second case V as well, which is why the
+    // two are checked together rather than only the second.
+    const float value = 0.5f;
+    const float discount = testConfig(1).discount;
+
+    SnakeEnv one_step = boardWithDistantFood(6);
+    ConstantValueEvaluator first_evaluator(value);
+    MonteCarloSearch first_search(first_evaluator, testConfig(1));
+    std::vector<const SnakeEnv*> first_roots{&one_step};
+    const float undiscounted = first_search.search(first_roots)[0].value;
+
+    SnakeEnv two_step = boardWithDistantFood(6);
+    ConstantValueEvaluator second_evaluator(value);
+    MonteCarloSearch second_search(second_evaluator, testConfig(2));
+    std::vector<const SnakeEnv*> second_roots{&two_step};
+    const float over_one_edge = second_search.search(second_roots)[0].value;
+
+    const float expected_over_one_edge = value * (1.0f + discount) / 2.0f;
+
+    expect(std::fabs(undiscounted - value) < 1e-6f,
+           "one simulation returns the leaf value undiscounted");
+    expect(std::fabs(over_one_edge - expected_over_one_edge) < 1e-6f,
+           "two simulations discount the second by exactly one tick of gamma");
+    // Without this the pair above would also pass for a discount of one, which is
+    // the case the test exists to rule out.
+    expect(std::fabs(over_one_edge - value) > 1e-4f,
+           "and the discounted result is distinguishable from the undiscounted one");
+    std::cout << "        value " << value << ", gamma " << discount << ": got " << undiscounted
+              << " and " << over_one_edge << ", expected " << expected_over_one_edge << std::endl;
+}
+
+MonteCarloSearch::Config noisyConfig(int simulations, float fraction, unsigned int seed)
+{
+    MonteCarloSearch::Config config = testConfig(simulations);
+    config.root_noise_fraction = fraction;
+    config.seed = seed;
+    return config;
+}
+
+void testRootNoiseIsAppliedAndKeepsADistribution()
+{
+    // Root noise had no test at all. Every config in this file and in
+    // selfplay_test sets the fraction to zero, which is the function's first early
+    // return - so its body ran only inside the training binary, on the one path
+    // that shapes every game the agent learns from.
+    //
+    // Three things have to hold: the noise reaches the search, it is actually
+    // random, and it leaves the priors a distribution. The last is asserted inside
+    // the search; what a test can see is that the visit policy still sums to one.
+    SnakeEnv quiet_board = boardWithDistantFood(6);
+    SilentEvaluator quiet_evaluator;
+    MonteCarloSearch quiet_search(quiet_evaluator, noisyConfig(64, 0.0f, 555));
+    std::vector<const SnakeEnv*> quiet_roots{&quiet_board};
+    const std::vector<float> without_noise = quiet_search.search(quiet_roots)[0].policy;
+
+    SnakeEnv noisy_board = boardWithDistantFood(6);
+    SilentEvaluator noisy_evaluator;
+    MonteCarloSearch noisy_search(noisy_evaluator, noisyConfig(64, 0.25f, 555));
+    std::vector<const SnakeEnv*> noisy_roots{&noisy_board};
+    const std::vector<float> with_noise = noisy_search.search(noisy_roots)[0].policy;
+
+    SnakeEnv other_board = boardWithDistantFood(6);
+    SilentEvaluator other_evaluator;
+    MonteCarloSearch other_search(other_evaluator, noisyConfig(64, 0.25f, 98765));
+    std::vector<const SnakeEnv*> other_roots{&other_board};
+    const std::vector<float> other_noise = other_search.search(other_roots)[0].policy;
+
+    bool noise_changed_the_search = false;
+    bool seed_changed_the_noise = false;
+    float noisy_total = 0.0f;
+    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+    {
+        const size_t slot = static_cast<size_t>(action);
+        if (std::fabs(with_noise[slot] - without_noise[slot]) > 1e-6f)
+        {
+            noise_changed_the_search = true;
+        }
+        if (std::fabs(with_noise[slot] - other_noise[slot]) > 1e-6f)
+        {
+            seed_changed_the_noise = true;
+        }
+        noisy_total += with_noise[slot];
+    }
+
+    expect(noise_changed_the_search,
+           "root noise reaches the search - the same position and seed answer differently with it");
+    expect(seed_changed_the_noise, "and the noise is drawn, not fixed - a new seed moves it");
+    expect(std::fabs(noisy_total - 1.0f) < 1e-4f, "the policy under noise still sums to one");
+
+    // The extreme the assertions are really about: at a fraction of one the
+    // network's priors are discarded entirely and the Dirichlet weights stand
+    // alone. If mixing could break the distribution, this is where it would.
+    SnakeEnv pure_board = boardWithDistantFood(6);
+    SilentEvaluator pure_evaluator;
+    MonteCarloSearch pure_search(pure_evaluator, noisyConfig(64, 1.0f, 4242));
+    std::vector<const SnakeEnv*> pure_roots{&pure_board};
+    const std::vector<float> pure_noise = pure_search.search(pure_roots)[0].policy;
+    float pure_total = 0.0f;
+    bool pure_non_negative = true;
+    for (float weight : pure_noise)
+    {
+        pure_total += weight;
+        pure_non_negative = pure_non_negative && weight >= 0.0f;
+    }
+    expect(std::fabs(pure_total - 1.0f) < 1e-4f,
+           "a fraction of one replaces the priors outright and still yields a distribution");
+    expect(pure_non_negative, "and no visit weight goes negative");
+    std::cout << "        no noise " << without_noise[0] << ", noise " << with_noise[0]
+              << ", other seed " << other_noise[0] << ", pure noise " << pure_noise[0] << std::endl;
 }
 
 void testPolicyIsADistribution()
@@ -636,6 +807,8 @@ int main()
     testPriorsSteerTheSearch();
     testNoActionIsStarved();
     testDoomedPositionIsSearchedNotExpandedPastDeath();
+    testBackupDiscountsByEdgeLength();
+    testRootNoiseIsAppliedAndKeepsADistribution();
     testAvoidsAnImmediateWall();
     testPrefersReachableFood();
     testBatchesEveryTreeTogether();
