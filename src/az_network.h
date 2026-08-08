@@ -13,12 +13,47 @@
 // actions to order the search, and a value to stand in for the rest of the game
 // at a leaf. Board size is a constructor argument, so the same architecture
 // trains at 6x6 and transfers up - only the head's linear layers depend on it.
+// What one forward pass produces. A struct rather than a pair, because `first`
+// and `second` name the order the two were written in and nothing else - and the
+// two are not interchangeable: one is unnormalised logits over actions and the
+// other a bounded scalar. Reading `.first` at a call site tells you neither.
+//
+// Structured bindings work on this exactly as they did on the pair, so callers
+// that already wrote `auto [policy, value] = ...` are unaffected.
+struct Prediction
+{
+    // [N, ACTION_COUNT]. Logits, not probabilities - no softmax has been applied,
+    // and the search's evaluator is what normalises them.
+    torch::Tensor policy_logits;
+    // [N, 1] in (-1, 1), from a tanh. Stands in for the discounted return from
+    // this position onward.
+    torch::Tensor value;
+};
+
 struct AlphaZeroNetImpl : torch::nn::Module
 {
     AlphaZeroNetImpl(int board_width, int board_height, int channels, int blocks);
 
-    // Returns {policy_logits [N,3], value [N,1] in (-1,1)}.
-    std::pair<torch::Tensor, torch::Tensor> forward(torch::Tensor planes);
+    // Not copyable and not movable, and nothing is defined: the base class owns
+    // the parameters through shared pointers and its destructor releases them, so
+    // this is the rule of zero and the deletions are an interface decision.
+    //
+    // A copy would be the dangerous kind - it would duplicate the bookkeeping and
+    // share every parameter tensor, so two networks would appear independent and
+    // train each other's weights. Callers pass the TORCH_MODULE holder below,
+    // which is a shared pointer and copyable on purpose; that is the value type
+    // here, and this is not.
+    AlphaZeroNetImpl(const AlphaZeroNetImpl&) = delete;
+    AlphaZeroNetImpl& operator=(const AlphaZeroNetImpl&) = delete;
+    AlphaZeroNetImpl(AlphaZeroNetImpl&&) = delete;
+    AlphaZeroNetImpl& operator=(AlphaZeroNetImpl&&) = delete;
+
+    // Checks its input and throws on a mismatch rather than asserting it. Nothing
+    // in this file can be exercised in a debug build: LibTorch here ships
+    // release-only libraries, and a debug binary linked against them dies of an
+    // access violation before it reaches any assertion. Measured, not assumed.
+    // TORCH_CHECK is live in the configuration this code actually runs in.
+    Prediction forward(torch::Tensor planes);
 
     int boardWidth() const { return board_width_; }
     int boardHeight() const { return board_height_; }

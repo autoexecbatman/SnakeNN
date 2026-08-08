@@ -1,4 +1,5 @@
 #include "az_network.h"
+#include <format>
 
 namespace
 {
@@ -17,6 +18,18 @@ constexpr int POOLED_CELLS = POOLED_SIDE * POOLED_SIDE;
 AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channels, int blocks)
     : board_width_(board_width), board_height_(board_height), channels_(channels)
 {
+    // Checked at construction, because every one of these is a size a caller
+    // passes in from a command line and a wrong one produces a network that builds
+    // and trains and means nothing. A zero-channel trunk in particular constructs
+    // happily and emits constant policies.
+    TORCH_CHECK(board_width >= 2 && board_height >= 2,
+                std::format("AlphaZeroNet needs a board of at least 2x2, got {}x{}", board_width,
+                            board_height));
+    TORCH_CHECK(channels >= 1, std::format("AlphaZeroNet needs at least one trunk channel, got {}",
+                                           channels));
+    TORCH_CHECK(blocks >= 0,
+                std::format("AlphaZeroNet cannot have a negative block count, got {}", blocks));
+
     stem_conv = register_module(
         "stem_conv",
         torch::nn::Conv2d(
@@ -55,8 +68,26 @@ AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channe
     value_out = register_module("value_out", torch::nn::Linear(VALUE_HIDDEN, 1));
 }
 
-std::pair<torch::Tensor, torch::Tensor> AlphaZeroNetImpl::forward(torch::Tensor planes)
+Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
 {
+    // The pooling that makes this architecture board-size independent also makes
+    // it silent about the wrong board: a 6x6 network fed 20x20 planes runs to
+    // completion and returns confident nonsense, because nothing downstream of the
+    // pool can tell what went in. Transfer is done by constructing a network at
+    // the new size and copying weights into it, never by feeding a different size
+    // to an existing one - so a mismatch here is a caller that encoded against the
+    // wrong board, and it is worth refusing.
+    TORCH_CHECK(planes.dim() == 4,
+                std::format("forward expects [N, planes, height, width], got {} dimensions",
+                            planes.dim()));
+    TORCH_CHECK(planes.size(1) == SnakeEnv::PLANE_COUNT,
+                std::format("forward expects {} planes per state, got {}", SnakeEnv::PLANE_COUNT,
+                            planes.size(1)));
+    TORCH_CHECK(planes.size(2) == board_height_ && planes.size(3) == board_width_,
+                std::format("forward was built for a {}x{} board but given {}x{}", board_width_,
+                            board_height_, planes.size(3), planes.size(2)));
+    TORCH_CHECK(planes.size(0) > 0, "forward given an empty batch");
+
     torch::Tensor trunk = torch::relu(stem_norm(stem_conv(planes)));
 
     for (size_t block = 0; block < block_convs.size(); block += 2)
@@ -81,5 +112,17 @@ std::pair<torch::Tensor, torch::Tensor> AlphaZeroNetImpl::forward(torch::Tensor 
     // dominate every comparison it appears in.
     value = torch::tanh(value_out(value));
 
-    return {policy, value};
+    // The two shapes every consumer indexes without checking: the evaluator reads
+    // ACTION_COUNT priors per state and one value, and the trainer builds its loss
+    // against both. A wrong batch dimension here would misalign policy targets with
+    // positions and train the network on the wrong labels.
+    TORCH_CHECK(policy.dim() == 2 && policy.size(0) == planes.size(0) &&
+                    policy.size(1) == SnakeEnv::ACTION_COUNT,
+                std::format("the policy head produced [{}] for a batch of {}, expected [{}, {}]",
+                            policy.dim(), planes.size(0), planes.size(0), SnakeEnv::ACTION_COUNT));
+    TORCH_CHECK(value.dim() == 2 && value.size(0) == planes.size(0) && value.size(1) == 1,
+                std::format("the value head produced [{}] for a batch of {}, expected [{}, 1]",
+                            value.dim(), planes.size(0), planes.size(0)));
+
+    return Prediction{policy, value};
 }

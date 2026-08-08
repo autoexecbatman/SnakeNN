@@ -1,13 +1,39 @@
 #include "az_network.h"
 #include "snake_env.h"
 #include <torch/torch.h>
+#include <cmath>
+#include <format>
+#include <functional>
 #include <iostream>
 #include <string>
+#include <type_traits>
 
 // The curriculum trains on small boards and moves up, so the property that
 // matters most about this architecture is that its weights do not depend on
 // board size. That is easy to break and silent when broken - a size-dependent
 // head simply fails to load later, after the small-board run has finished.
+
+// The network implementation has no value semantics: copying one would duplicate
+// the module bookkeeping while sharing every parameter tensor, so two networks
+// would look independent and train each other's weights. Pinned at compile time,
+// because that failure produces plausible losses rather than a crash.
+static_assert(!std::is_copy_constructible<AlphaZeroNetImpl>::value,
+              "AlphaZeroNetImpl must not be copy constructible");
+static_assert(!std::is_copy_assignable<AlphaZeroNetImpl>::value,
+              "AlphaZeroNetImpl must not be copy assignable");
+static_assert(!std::is_move_constructible<AlphaZeroNetImpl>::value,
+              "AlphaZeroNetImpl must not be move constructible");
+static_assert(!std::is_move_assignable<AlphaZeroNetImpl>::value,
+              "AlphaZeroNetImpl must not be move assignable");
+
+// The holder is the opposite case and deliberately so: it is a shared pointer,
+// it is what every caller passes around, and it must stay copyable.
+static_assert(std::is_copy_constructible<AlphaZeroNet>::value,
+              "the AlphaZeroNet holder is the value type - it must stay copyable");
+
+// Prediction is a plain aggregate so that structured bindings keep working and
+// the two tensors travel under their own names.
+static_assert(std::is_copy_constructible<Prediction>::value, "Prediction must be copyable");
 
 namespace
 {
@@ -18,11 +44,11 @@ void expect(bool condition, const std::string& description)
 {
     if (condition)
     {
-        std::cout << "  PASS  " << description << std::endl;
+        std::cout << std::format("  PASS  {}\n", description);
     }
     else
     {
-        std::cout << "  FAIL  " << description << std::endl;
+        std::cout << std::format("  FAIL  {}\n", description);
         failures++;
     }
 }
@@ -41,6 +67,104 @@ void testOutputShapes()
            "the policy head emits one logit per relative action");
     expect(value.sizes() == torch::IntArrayRef({batch, 1}), "the value head emits one scalar");
     expect(value.abs().max().item<float>() <= 1.0f, "value stays inside the bounded range");
+}
+
+// Whether calling `action` throws. The checks in this network are TORCH_CHECK
+// rather than assert, because a debug build cannot run at all here - LibTorch
+// ships release-only libraries and a debug binary linked against them dies of an
+// access violation before reaching any assertion. So these are testable, and a
+// test is the only thing that can confirm they fire.
+bool throwsOnCall(const std::function<void()>& action)
+{
+    try
+    {
+        action();
+    }
+    catch (const std::exception&)
+    {
+        return true;
+    }
+    return false;
+}
+
+void testConstructorRejectsImpossibleShapes()
+{
+    expect(throwsOnCall([] { AlphaZeroNet bad(1, 8, 32, 2); }),
+           "a board narrower than 2 is refused");
+    expect(throwsOnCall([] { AlphaZeroNet bad(8, 1, 32, 2); }),
+           "a board shorter than 2 is refused");
+    expect(throwsOnCall([] { AlphaZeroNet bad(8, 8, 0, 2); }),
+           "a trunk with no channels is refused rather than emitting constant policies");
+    expect(throwsOnCall([] { AlphaZeroNet bad(8, 8, 32, -1); }),
+           "a negative block count is refused");
+    expect(!throwsOnCall([] { AlphaZeroNet fine(2, 2, 1, 0); }),
+           "and the smallest legitimate network is still allowed");
+}
+
+void testForwardRejectsTheWrongInput()
+{
+    AlphaZeroNet network(8, 8, 16, 1);
+    network->eval();
+    torch::NoGradGuard no_grad;
+
+    // The pooling that makes the weights board-size independent also makes this
+    // silent: a network fed the wrong board runs to completion and returns
+    // confident nonsense, because nothing downstream of the pool can tell what
+    // went in. That is the failure these checks exist for.
+    expect(throwsOnCall([&] {
+               network->forward(torch::zeros({SnakeEnv::PLANE_COUNT, 8, 8}));
+           }),
+           "an unbatched input is refused");
+    expect(throwsOnCall([&] {
+               network->forward(torch::zeros({2, SnakeEnv::PLANE_COUNT - 1, 8, 8}));
+           }),
+           "the wrong number of planes is refused");
+    expect(throwsOnCall([&] {
+               network->forward(torch::zeros({2, SnakeEnv::PLANE_COUNT, 20, 20}));
+           }),
+           "a board the network was not built for is refused instead of pooled away");
+    expect(throwsOnCall([&] {
+               network->forward(torch::zeros({0, SnakeEnv::PLANE_COUNT, 8, 8}));
+           }),
+           "an empty batch is refused");
+    expect(!throwsOnCall([&] {
+               network->forward(torch::zeros({2, SnakeEnv::PLANE_COUNT, 8, 8}));
+           }),
+           "and a correctly shaped batch goes through");
+}
+
+void testPredictionFieldsAreTheOnesNamed()
+{
+    // The struct replaced a std::pair, and the risk in that swap is transposition:
+    // .first and .second carried no meaning, so a caller reading them in the wrong
+    // order would have compiled. The two fields have different shapes, which is
+    // what makes the mix-up detectable at all.
+    AlphaZeroNet network(6, 6, 16, 1);
+    network->eval();
+    torch::NoGradGuard no_grad;
+
+    const int batch = 3;
+    const Prediction prediction =
+        network->forward(torch::rand({batch, SnakeEnv::PLANE_COUNT, 6, 6}));
+
+    expect(prediction.policy_logits.sizes() ==
+               torch::IntArrayRef({batch, SnakeEnv::ACTION_COUNT}),
+           "policy_logits holds one logit per action, not the value");
+    expect(prediction.value.sizes() == torch::IntArrayRef({batch, 1}),
+           "value holds one scalar per state, not the policy");
+
+    // Logits, not probabilities - the evaluator applies the softmax, so a policy
+    // head that had already normalised would be normalised twice.
+    const float logit_total = prediction.policy_logits.exp().sum().item<float>();
+    expect(std::abs(logit_total - static_cast<float>(batch)) > 1e-3f,
+           "policy_logits are unnormalised, as the name says");
+
+    // Structured bindings still work, which is what keeps the existing call sites
+    // in the trainer and the evaluator unchanged.
+    auto [policy, value] = network->forward(torch::rand({batch, SnakeEnv::PLANE_COUNT, 6, 6}));
+    expect(policy.sizes() == prediction.policy_logits.sizes() &&
+               value.sizes() == prediction.value.sizes(),
+           "a structured binding still destructures in policy-then-value order");
 }
 
 void testWeightsTransferAcrossBoardSizes()
@@ -84,7 +208,7 @@ void testWeightsTransferAcrossBoardSizes()
     }
     catch (const std::exception& error)
     {
-        std::cout << "        " << error.what() << std::endl;
+        std::cout << std::format("        {}\n", error.what());
         loaded = false;
     }
     expect(loaded, "a 6x6 network's weights load into a 20x20 network");
@@ -105,16 +229,18 @@ void testWeightsTransferAcrossBoardSizes()
 int main()
 {
     torch::manual_seed(0);
-    std::cout << "AlphaZeroNet properties" << std::endl;
+    std::cout << std::format("AlphaZeroNet properties\n");
     testOutputShapes();
+    testConstructorRejectsImpossibleShapes();
+    testForwardRejectsTheWrongInput();
+    testPredictionFieldsAreTheOnesNamed();
     testWeightsTransferAcrossBoardSizes();
 
-    std::cout << std::endl;
     if (failures == 0)
     {
-        std::cout << "All checks passed." << std::endl;
+        std::cout << std::format("\nAll checks passed.\n");
         return 0;
     }
-    std::cout << failures << " check(s) failed." << std::endl;
+    std::cout << std::format("\n{} check(s) failed.\n", failures);
     return 1;
 }

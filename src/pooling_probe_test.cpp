@@ -240,12 +240,12 @@ int main(int argc, char** argv)
     auto forward = [&](std::vector<float>& planes)
     { return network->forward(toBatch(planes, BOARD, BOARD)); };
 
-    std::pair<torch::Tensor, torch::Tensor> out_a = forward(planes_a);
-    std::pair<torch::Tensor, torch::Tensor> out_b = forward(planes_b);
-    std::pair<torch::Tensor, torch::Tensor> out_c = forward(planes_c);
+    Prediction out_a = forward(planes_a);
+    Prediction out_b = forward(planes_b);
+    Prediction out_c = forward(planes_c);
 
-    double near_distance = (out_a.first - out_b.first).norm().item<double>();
-    double far_distance = (out_a.first - out_c.first).norm().item<double>();
+    double near_distance = (out_a.policy_logits - out_b.policy_logits).norm().item<double>();
+    double far_distance = (out_a.policy_logits - out_c.policy_logits).norm().item<double>();
 
     // Property 2: the one-cell change reaches the policy head at all. The
     // failure this is looking for is a hard zero - two boards that the pooling
@@ -256,7 +256,7 @@ int main(int argc, char** argv)
                       near_distance, far_distance,
                       far_distance > 0.0 ? near_distance / far_distance : 0.0));
 
-    double value_shift = std::abs(out_a.second.item<double>() - out_b.second.item<double>());
+    double value_shift = std::abs(out_a.value.item<double>() - out_b.value.item<double>());
     check(value_shift > 0.0, "a one-cell change reaches the value head",
           std::format("|d value| = {:.6f}", value_shift));
 
@@ -280,7 +280,7 @@ int main(int argc, char** argv)
         {
             SnakeEnv::Snapshot sweep = denseSnapshot(BOARD, BOARD, OPEN_LENGTH, order[index]);
             std::vector<float> planes = encode(BOARD, BOARD, sweep);
-            torch::Tensor logits = forward(planes).first;
+            torch::Tensor logits = forward(planes).policy_logits;
             preferred.push_back(static_cast<int>(logits.argmax(1).item<int64_t>()));
             placements++;
         }
