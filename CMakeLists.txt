@@ -619,6 +619,48 @@ endif()
 
 add_test(NAME network_properties COMMAND NetworkTest)
 
+# Training and evaluation seed ranges are disjoint, and the guard that enforces
+# it actually fires. They overlapped by 86 percent until 2026-08-08, which
+# invalidated every held-out number measured before then. No LibTorch.
+add_executable(SeedPolicyTest
+    src/seed_policy_test.cpp
+)
+
+set_property(TARGET SeedPolicyTest PROPERTY CXX_STANDARD 20)
+add_test(NAME seed_policy COMMAND SeedPolicyTest)
+
+# What the search sees of chance: every simulation copies the root environment
+# and its random generator, so one action sequence always yields one apple. The
+# paper branches over every empty cell instead. No LibTorch.
+add_executable(ChanceNodeTest
+    src/chance_node_test.cpp
+    src/snake_env.cpp
+)
+
+set_property(TARGET ChanceNodeTest PROPERTY CXX_STANDARD 20)
+add_test(NAME chance_nodes COMMAND ChanceNodeTest)
+
+# Whether a one-cell change survives the 4x4 pooling and reaches the heads.
+# The pooling is what makes the weights board-size independent; this measures
+# what it costs. Optional argument: a checkpoint, which enables the property
+# that a trained policy's preferred action depends on where the food is.
+add_executable(PoolingProbeTest
+    src/pooling_probe_test.cpp
+    src/az_network.cpp
+    src/snake_env.cpp
+)
+
+target_include_directories(PoolingProbeTest PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(PoolingProbeTest ${TORCH_LIBRARIES})
+set_property(TARGET PoolingProbeTest PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(PoolingProbeTest)
+
+if(WIN32)
+    target_link_options(PoolingProbeTest PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+add_test(NAME pooling_probe COMMAND PoolingProbeTest)
+
 # Self-play record generation - the value targets no later stage can check.
 add_executable(SelfPlayTest
     src/selfplay_test.cpp
