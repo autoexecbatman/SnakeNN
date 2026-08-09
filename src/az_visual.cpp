@@ -1,14 +1,18 @@
 #include <torch/torch.h>
 #include <raylib.h>
+#include <algorithm>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
 #include "az_network.h"
+#include "az_parameters.h"
 #include "board_render.h"
+#include "eval_options.h"
 #include "mcts.h"
 #include "network_evaluator.h"
 #include "snake_env.h"
-#include <algorithm>
-#include <iostream>
-#include <string>
-#include <vector>
 
 // Watch a trained network play.
 //
@@ -26,69 +30,6 @@ constexpr int PANEL_HEIGHT = 150;
 // Narrowest the window is allowed to get, so the header text still fits.
 constexpr int MIN_WINDOW_WIDTH = 440;
 
-struct Settings
-{
-    std::string checkpoint;
-    int board = 6;
-    int simulations = 200;
-    int step_limit = 0;
-    int channels = 64;
-    int blocks = 4;
-    unsigned int seed = 900000;
-    int moves_per_frame = 1;
-};
-
-Settings parseArguments(int argc, char** argv)
-{
-    Settings settings;
-    for (int index = 1; index + 1 < argc; index += 2)
-    {
-        std::string flag = argv[index];
-        std::string value = argv[index + 1];
-        if (flag == "--checkpoint")
-        {
-            settings.checkpoint = value;
-        }
-        else if (flag == "--board")
-        {
-            settings.board = std::stoi(value);
-        }
-        else if (flag == "--simulations")
-        {
-            settings.simulations = std::stoi(value);
-        }
-        else if (flag == "--step-limit")
-        {
-            settings.step_limit = std::stoi(value);
-        }
-        else if (flag == "--channels")
-        {
-            settings.channels = std::stoi(value);
-        }
-        else if (flag == "--blocks")
-        {
-            settings.blocks = std::stoi(value);
-        }
-        else if (flag == "--seed")
-        {
-            settings.seed = static_cast<unsigned int>(std::stoul(value));
-        }
-        else if (flag == "--speed")
-        {
-            settings.moves_per_frame = std::stoi(value);
-        }
-        else
-        {
-            std::cerr << "unknown flag: " << flag << std::endl;
-        }
-    }
-    if (settings.step_limit == 0)
-    {
-        settings.step_limit = 12 * settings.board * settings.board;
-    }
-    return settings;
-}
-
 void drawStatTile(const ui::Fonts& fonts, const char* label, const char* value, float x, float y,
                   float width, Color value_color)
 {
@@ -102,13 +43,19 @@ void drawStatTile(const ui::Fonts& fonts, const char* label, const char* value, 
 
 int main(int argc, char** argv)
 {
-    Settings settings = parseArguments(argc, argv);
-    if (settings.checkpoint.empty())
+    visual::Settings settings;
+    try
     {
+        settings = visual::parseArguments(std::vector<std::string>(argv + 1, argv + argc));
+    }
+    catch (const std::invalid_argument& error)
+    {
+        std::cerr << error.what() << std::endl;
         std::cerr << "usage: --checkpoint <file> [--board N] [--simulations N] [--seed N]"
                   << std::endl;
         return 2;
     }
+    const int step_limit = settings.stepLimit();
 
     torch::Device device =
         torch::cuda::is_available() ? torch::Device(torch::kCUDA) : torch::Device(torch::kCPU);
@@ -139,10 +86,12 @@ int main(int argc, char** argv)
     NetworkEvaluator evaluator(network, device);
     MonteCarloSearch::Config search_config;
     search_config.simulations = settings.simulations;
-    search_config.exploration = 0.5f;
-    search_config.discount = 0.98f;
+    search_config.exploration = az::EXPLORATION;
+    search_config.discount = az::DISCOUNT;
+    // Off, as in the evaluator, so what is on screen is the agent the win rate
+    // describes rather than the exploration policy.
     search_config.root_noise_fraction = 0.0f;
-    search_config.root_noise_alpha = 0.3f;
+    search_config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
     search_config.seed = settings.seed;
     MonteCarloSearch search(evaluator, search_config);
 
@@ -164,7 +113,7 @@ int main(int argc, char** argv)
 
         for (int move = 0; move < settings.moves_per_frame && !finished; move++)
         {
-            if (game.done() || game.steps() >= settings.step_limit)
+            if (game.done() || game.steps() >= step_limit)
             {
                 games_played++;
                 wins += game.won() ? 1 : 0;

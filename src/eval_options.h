@@ -64,3 +64,50 @@ struct Settings
 Settings parseArguments(std::span<const std::string> arguments);
 
 }  // namespace evaluation
+
+// The visual demo's settings.
+//
+// Separate from evaluation::Settings although six of the eight fields match. They
+// are two programs, not one program twice: this one has a frame rate and a single
+// absolute seed, that one has a game count, a batch and an offset into a reserved
+// band. A shared base would couple them to force-fit the part a free function
+// already shares.
+namespace visual
+{
+
+struct Settings
+{
+    // Required, as in evaluation.
+    std::string checkpoint;
+    int board = 6;
+    int simulations = 200;
+    std::optional<int> step_limit_override;
+    int channels = 64;
+    int blocks = 4;
+    // An absolute seed, unlike evaluation's offset, and 900000 is a training seed
+    // - see seed_policy.h. So the default shows a game the agent may have learned
+    // rather than one held out. Preserved as it was; changing what the demo shows
+    // is a decision, not a hardening pass.
+    unsigned int seed = 900000;
+    // Search steps per rendered frame. At 1 the search runs once per frame, so the
+    // demo advances at the frame rate.
+    int moves_per_frame = 1;
+
+    int cellCount() const noexcept;
+    int foodsToWin() const noexcept;
+    // The override if one was given, az::deriveStepLimit(board) otherwise.
+    int stepLimit() const;
+};
+
+// Parses the command line, or throws std::invalid_argument naming the flag.
+//
+// `arguments` excludes argv[0] and its contents must outlive the call. Rejects
+// --board outside 2..az::LARGEST_BOARD, --simulations below 1, --channels below 1,
+// --blocks below 0, --speed below 1, --step-limit below 1, a missing checkpoint,
+// an unknown flag, and a flag in final position with no value.
+//
+// The seed is unconstrained: it is a whole unsigned value and every one of them
+// names a game.
+Settings parseArguments(std::span<const std::string> arguments);
+
+}  // namespace visual

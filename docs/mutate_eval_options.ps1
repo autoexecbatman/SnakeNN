@@ -50,7 +50,26 @@ $mutants = @(
   @{ name = "step_limit_ignores_override"; from = "if (step_limit_override)"; to = "if (false)" },
   @{ name = "step_limit_always_override"; from = "return az::deriveStepLimit(board);"; to = "return 1200;" },
   @{ name = "cells_off_by_one";      from = "return board * board;"; to = "return board * board + 1;" },
-  @{ name = "foods_off_by_one";      from = "return cellCount() - 1;"; to = "return cellCount();" }
+  @{ name = "foods_off_by_one";      from = "return cellCount() - 1;"; to = "return cellCount();" },
+  # visual. The two parsers share a body shape, so every mutant here is scoped to
+  # the second namespace or it lands in the evaluator's copy.
+  @{ name = "v_board_floor_gone";    scope = "namespace visual"; from = 'flags::requireAtLeast("--board", settings.board, 2);'; to = "" },
+  @{ name = "v_board_ceiling_gone";  scope = "namespace visual"; from = 'requireAtMost("--board", settings.board, az::LARGEST_BOARD);'; to = "" },
+  @{ name = "v_simulations_gone";    scope = "namespace visual"; from = 'flags::requireAtLeast("--simulations", settings.simulations, 1);'; to = "" },
+  @{ name = "v_channels_gone";       scope = "namespace visual"; from = 'flags::requireAtLeast("--channels", settings.channels, 1);'; to = "" },
+  @{ name = "v_blocks_gone";         scope = "namespace visual"; from = 'flags::requireAtLeast("--blocks", settings.blocks, 0);'; to = "" },
+  @{ name = "v_blocks_too_high";     scope = "namespace visual"; from = 'requireAtLeast("--blocks", settings.blocks, 0)'; to = 'requireAtLeast("--blocks", settings.blocks, 1)' },
+  @{ name = "v_speed_floor_gone";    scope = "namespace visual"; from = 'flags::requireAtLeast("--speed", settings.moves_per_frame, 1);'; to = "" },
+  @{ name = "v_speed_allows_zero";   scope = "namespace visual"; from = 'requireAtLeast("--speed", settings.moves_per_frame, 1)'; to = 'requireAtLeast("--speed", settings.moves_per_frame, 0)' },
+  @{ name = "v_step_limit_gone";     scope = "namespace visual"; from = 'flags::requireAtLeast("--step-limit", *settings.step_limit_override, 1);'; to = "" },
+  @{ name = "v_checkpoint_optional"; scope = "namespace visual"; from = "if (settings.checkpoint.empty())"; to = "if (false)" },
+  @{ name = "v_unknown_flag_ignored"; scope = "namespace visual"; from = 'throw std::invalid_argument(std::format("unknown flag: {}", pair.flag));'; to = "" },
+  @{ name = "v_seed_signed";         scope = "namespace visual"; from = "settings.seed = flags::parseWholeUnsigned(pair.flag, pair.value);"; to = "settings.seed = static_cast<unsigned int>(flags::parseWholeInt(pair.flag, pair.value));" },
+  @{ name = "v_speed_writes_blocks"; scope = "namespace visual"; from = "settings.moves_per_frame = flags::parseWholeInt(pair.flag, pair.value);"; to = "settings.blocks = flags::parseWholeInt(pair.flag, pair.value);" },
+  @{ name = "v_validation_skipped";  scope = "namespace visual"; from = "requireUsable(settings);"; to = "" },
+  @{ name = "v_step_ignores_override"; scope = "namespace visual"; from = "if (step_limit_override)"; to = "if (false)" },
+  @{ name = "v_cells_off_by_one";    scope = "namespace visual"; from = "return board * board;"; to = "return board * board + 1;" },
+  @{ name = "v_foods_off_by_one";    scope = "namespace visual"; from = "return cellCount() - 1;"; to = "return cellCount();" }
 )
 
 $killed = 0
@@ -82,7 +101,13 @@ foreach ($mutant in $mutants)
         Write-Host ("  {0,-28} NOT APPLIED - pattern absent, mutation is vacuous" -f $mutant.name)
         continue
     }
-    $mutated = $head + $body.Replace($mutant.from, $mutant.to)
+    # The first occurrence only. evaluation and visual share most of their body
+    # shapes, so replacing every match would mutate both and the mutant's name
+    # would describe one of them. Unscoped therefore means the evaluator's copy,
+    # which comes first in the file; the visual's are reached by scope marker.
+    $at = $body.IndexOf($mutant.from)
+    $mutated = $head + $body.Substring(0, $at) + $mutant.to +
+               $body.Substring($at + $mutant.from.Length)
     Set-Content "$dir/eval_options.cpp" -Value $mutated -Encoding UTF8 -NoNewline
 
     Push-Location $dir

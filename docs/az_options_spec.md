@@ -94,10 +94,33 @@ time rather than this time.
   `build/Release/acceptance_iter123_64games.log`. Exit code 1, as documented.
 - **Property 1 holds for the evaluator**: all four bad inputs now stop before the
   checkpoint load, where all four reached it before.
-- `visual::Settings` and its parser, and property 5's per-game output: not started.
-  The measure's remaining 6 failures are all `az_visual.cpp` - 7 unvalidated
-  `std::stoi`, the `step_limit == 0` sentinel, the `12 * settings.board` literal and
-  the three search literals - plus property 5, which is neither program's yet.
+- **`visual::Settings` and `visual::parseArguments` - done, 2026-08-09.** Same file,
+  second namespace; `az_visual.cpp` parses through it. Red step 32 of 39 assertions;
+  mutation 43 of 43 across both namespaces; four more assertions driven to abort;
+  `clang-format` clean, analyzer clean, Debug and Release both pass.
+  `AlphaZeroVisual` rebuilt in Release, and five bad command lines checked against
+  the real binary - `--bord 12`, `--board 10x10`, `--speed 0`, a trailing `--board`,
+  and a missing checkpoint - each exits 2 with its own diagnosis before a window
+  opens or a checkpoint is read.
+- **Properties 1, 2 and 3 now pass**: the measure reads zero `std::stoi`, zero
+  `step_limit == 0`, zero `12 * settings.board` and zero search literals across both
+  programs, and every bad input stops before the checkpoint load.
+- Property 5 - per-game output lines and the batch recorded in the header - is the
+  only part of this spec not started, and it is the two remaining failures.
+
+### Two decisions taken in the visual, which the evaluator did not force
+
+- **`visual::Settings` is its own type, not a base class shared with
+  `evaluation::Settings`**, although six of eight fields match. Two programs, not
+  one program twice: this one has a frame rate and a single absolute seed, that one
+  has a game count, a batch and an offset into a reserved band. Two uses is not the
+  third repetition that justifies extraction.
+- **`--seed` here stays absolute and keeps its default of 900000, which is a
+  training seed** (`seed_policy.h`). So the demo's default shows a game the agent
+  may have learned, while the file's own comment says what is on screen is what the
+  win-rate number describes. Preserved deliberately: changing what the demo shows is
+  a decision about the demo, not a hardening pass. The test asserts the value, so
+  the change cannot happen quietly.
 - **The board's upper bound has an owner: `az::LARGEST_BOARD`** (`az_parameters.h`),
   with two `static_assert`s pinning it as the largest board whose step limit fits
   in an int. `deriveStepLimit` compares against it rather than recomputing

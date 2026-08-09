@@ -277,6 +277,171 @@ void rejectsASeedRangeThatLeavesTheReservedBand()
     expectRejectedSaying("not negative", {"--checkpoint", "model.pt", "--seed", "-1"});
 }
 
+visual::Settings parseVisual(const std::vector<std::string>& arguments)
+{
+    return visual::parseArguments(std::span<const std::string>(arguments));
+}
+
+visual::Settings parseVisualWithCheckpoint(const std::vector<std::string>& arguments)
+{
+    std::vector<std::string> full{"--checkpoint", "model.pt"};
+    full.insert(full.end(), arguments.begin(), arguments.end());
+    return parseVisual(full);
+}
+
+void expectVisualRejectedNaming(std::string_view flag, const std::vector<std::string>& arguments)
+{
+    try
+    {
+        parseVisual(arguments);
+        fail(flag, "accepted");
+    }
+    catch (const std::invalid_argument& error)
+    {
+        const std::string message = error.what();
+        if (message.find(flag) == std::string::npos)
+        {
+            fail(flag, std::format("message omits the flag: {}", message));
+        }
+    }
+    catch (const std::exception& error)
+    {
+        fail(flag, std::format("wrong exception type: {}", error.what()));
+    }
+}
+
+std::vector<std::string> differingVisualFields(const visual::Settings& left,
+                                               const visual::Settings& right)
+{
+    std::vector<std::string> names;
+    if (left.checkpoint != right.checkpoint)
+    {
+        names.push_back("checkpoint");
+    }
+    if (left.board != right.board)
+    {
+        names.push_back("board");
+    }
+    if (left.simulations != right.simulations)
+    {
+        names.push_back("simulations");
+    }
+    if (left.step_limit_override != right.step_limit_override)
+    {
+        names.push_back("step_limit_override");
+    }
+    if (left.channels != right.channels)
+    {
+        names.push_back("channels");
+    }
+    if (left.blocks != right.blocks)
+    {
+        names.push_back("blocks");
+    }
+    if (left.seed != right.seed)
+    {
+        names.push_back("seed");
+    }
+    if (left.moves_per_frame != right.moves_per_frame)
+    {
+        names.push_back("moves_per_frame");
+    }
+    return names;
+}
+
+void expectOnlyVisualFieldChanged(std::string_view field, const std::vector<std::string>& arguments)
+{
+    const visual::Settings baseline = parseVisualWithCheckpoint({});
+    const std::vector<std::string> changed =
+        differingVisualFields(baseline, parseVisualWithCheckpoint(arguments));
+    if (changed.size() != 1 || changed.front() != field)
+    {
+        std::string listed;
+        for (const std::string& name : changed)
+        {
+            listed += listed.empty() ? name : ", " + name;
+        }
+        fail(field, std::format("changed [{}] instead of exactly [{}]", listed, field));
+    }
+}
+
+void theVisualDefaultsAreTheOnesTheHeaderStates()
+{
+    const visual::Settings settings = parseVisualWithCheckpoint({});
+    expectText("visual default checkpoint", "model.pt", settings.checkpoint);
+    expectEquals("visual default board", 6, settings.board);
+    expectEquals("visual default simulations", 200, settings.simulations);
+    expectEquals("visual default channels", 64, settings.channels);
+    expectEquals("visual default blocks", 4, settings.blocks);
+    // A training seed, kept deliberately. If this ever changes it is a decision
+    // about what the demo shows, and this line is where it gets noticed.
+    expectUnsignedEquals("visual default seed", 900000u, settings.seed);
+    expectEquals("visual default speed", 1, settings.moves_per_frame);
+    if (settings.step_limit_override.has_value())
+    {
+        fail("visual default step limit", "an override is present when none was given");
+    }
+}
+
+void eachVisualFlagWritesItsOwnField()
+{
+    expectOnlyVisualFieldChanged("board", {"--board", "10"});
+    expectOnlyVisualFieldChanged("simulations", {"--simulations", "800"});
+    expectOnlyVisualFieldChanged("step_limit_override", {"--step-limit", "1200"});
+    expectOnlyVisualFieldChanged("channels", {"--channels", "128"});
+    expectOnlyVisualFieldChanged("blocks", {"--blocks", "8"});
+    expectOnlyVisualFieldChanged("seed", {"--seed", "4294967295"});
+    expectOnlyVisualFieldChanged("moves_per_frame", {"--speed", "25"});
+}
+
+void theVisualDerivesTheSameStepLimit()
+{
+    expectEquals("visual 10x10 step limit", 1200,
+                 parseVisualWithCheckpoint({"--board", "10"}).stepLimit());
+    expectEquals("visual 20x20 step limit", 4800,
+                 parseVisualWithCheckpoint({"--board", "20"}).stepLimit());
+    expectEquals("visual override used verbatim", 2400,
+                 parseVisualWithCheckpoint({"--board", "10", "--step-limit", "2400"}).stepLimit());
+    expectEquals("visual cells", 100, parseVisualWithCheckpoint({"--board", "10"}).cellCount());
+    expectEquals("visual foods to win", 99,
+                 parseVisualWithCheckpoint({"--board", "10"}).foodsToWin());
+}
+
+void theVisualAcceptsTheEdgesOfEveryRange()
+{
+    expectEquals("visual smallest board", 2, parseVisualWithCheckpoint({"--board", "2"}).board);
+    expectEquals("visual largest board", 13377,
+                 parseVisualWithCheckpoint({"--board", "13377"}).board);
+    expectEquals("visual no residual blocks", 0,
+                 parseVisualWithCheckpoint({"--blocks", "0"}).blocks);
+    expectEquals("visual slowest speed", 1,
+                 parseVisualWithCheckpoint({"--speed", "1"}).moves_per_frame);
+    // Every unsigned value names a game, so neither end is rejected.
+    expectUnsignedEquals("visual seed zero", 0u, parseVisualWithCheckpoint({"--seed", "0"}).seed);
+    expectUnsignedEquals("visual largest seed", 4294967295u,
+                         parseVisualWithCheckpoint({"--seed", "4294967295"}).seed);
+}
+
+void theVisualRejectsBeforeAnyWorkIsDone()
+{
+    expectVisualRejectedNaming("--board", {"--checkpoint", "model.pt", "--board", "1"});
+    expectVisualRejectedNaming("--board", {"--checkpoint", "model.pt", "--board", "13378"});
+    expectVisualRejectedNaming("--board", {"--checkpoint", "model.pt", "--board", "10x10"});
+    expectVisualRejectedNaming("--simulations", {"--checkpoint", "model.pt", "--simulations", "0"});
+    expectVisualRejectedNaming("--channels", {"--checkpoint", "model.pt", "--channels", "0"});
+    expectVisualRejectedNaming("--blocks", {"--checkpoint", "model.pt", "--blocks", "-1"});
+    expectVisualRejectedNaming("--speed", {"--checkpoint", "model.pt", "--speed", "0"});
+    expectVisualRejectedNaming("--step-limit", {"--checkpoint", "model.pt", "--step-limit", "0"});
+    expectVisualRejectedNaming("--bord", {"--checkpoint", "model.pt", "--bord", "12"});
+    expectVisualRejectedNaming("--board", {"--checkpoint", "model.pt", "--board"});
+    expectVisualRejectedNaming("--checkpoint", {"--checkpoint", ""});
+    expectVisualRejectedNaming("--seed", {"--checkpoint", "model.pt", "--seed", "-1"});
+    // The evaluator's flags are not this program's, and silently ignoring one
+    // would start a run configured differently from what was typed.
+    expectVisualRejectedNaming("--games", {"--checkpoint", "model.pt", "--games", "64"});
+    expectVisualRejectedNaming("--batch", {"--checkpoint", "model.pt", "--batch", "64"});
+}
+
 }  // namespace
 
 int main()
@@ -287,6 +452,12 @@ int main()
     acceptsTheEdgesOfEveryRange();
     rejectsBeforeAnyWorkIsDone();
     rejectsASeedRangeThatLeavesTheReservedBand();
+
+    theVisualDefaultsAreTheOnesTheHeaderStates();
+    eachVisualFlagWritesItsOwnField();
+    theVisualDerivesTheSameStepLimit();
+    theVisualAcceptsTheEdgesOfEveryRange();
+    theVisualRejectsBeforeAnyWorkIsDone();
 
     if (failures == 0)
     {

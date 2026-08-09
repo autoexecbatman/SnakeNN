@@ -810,6 +810,9 @@ endif()
 # Watch a trained network play, under the same conditions it is scored under.
 add_executable(AlphaZeroVisual
     src/az_visual.cpp
+    src/eval_options.cpp
+    src/az_parameters.cpp
+    src/flag_parser.cpp
     src/board_render.cpp
     src/mcts.cpp
     src/network_evaluator.cpp
