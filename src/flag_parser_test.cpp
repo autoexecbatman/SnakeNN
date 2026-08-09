@@ -1,8 +1,10 @@
 #include <format>
 #include <iostream>
 #include <stdexcept>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "flag_parser.h"
 
@@ -260,6 +262,97 @@ void rejectsBelowTheBound()
     expectBelowBound("--seed", -2147483648, 0);
 }
 
+std::vector<flags::FlagValue> read(const std::vector<std::string>& arguments)
+{
+    return flags::readFlags(std::span<const std::string>(arguments));
+}
+
+void expectPairs(std::string_view what, const std::vector<std::string>& arguments,
+                 const std::vector<std::string>& expected)
+{
+    try
+    {
+        const std::vector<flags::FlagValue> pairs = read(arguments);
+        if (pairs.size() * 2 != expected.size())
+        {
+            std::cout << std::format("[FAIL] {}: expected {} pairs, got {}\n", what,
+                                     expected.size() / 2, pairs.size());
+            failures++;
+            return;
+        }
+        for (size_t index = 0; index < pairs.size(); index++)
+        {
+            if (pairs[index].flag != expected[index * 2] ||
+                pairs[index].value != expected[index * 2 + 1])
+            {
+                std::cout << std::format("[FAIL] {}: pair {} is '{}' '{}', expected '{}' '{}'\n",
+                                         what, index, pairs[index].flag, pairs[index].value,
+                                         expected[index * 2], expected[index * 2 + 1]);
+                failures++;
+            }
+        }
+    }
+    catch (const std::exception& error)
+    {
+        std::cout << std::format("[FAIL] {}: rejected: {}\n", what, error.what());
+        failures++;
+    }
+}
+
+void expectArgumentsRejected(std::string_view what, const std::vector<std::string>& arguments,
+                             std::string_view named)
+{
+    try
+    {
+        const std::vector<flags::FlagValue> pairs = read(arguments);
+        std::cout << std::format("[FAIL] {}: accepted, {} pairs\n", what, pairs.size());
+        failures++;
+    }
+    catch (const std::invalid_argument& error)
+    {
+        const std::string message = error.what();
+        if (message.find(named) == std::string::npos)
+        {
+            std::cout << std::format("[FAIL] {}: message does not name '{}': {}\n", what, named,
+                                     message);
+            failures++;
+        }
+    }
+    catch (const std::exception& error)
+    {
+        std::cout << std::format("[FAIL] {}: wrong exception type: {}\n", what, error.what());
+        failures++;
+    }
+}
+
+void splitsArgumentsIntoPairsInOrder()
+{
+    expectPairs("no arguments", {}, {});
+    expectPairs("one pair", {"--board", "10"}, {"--board", "10"});
+    expectPairs("three pairs, order preserved", {"--board", "10", "--games", "64", "--seed", "0"},
+                {"--board", "10", "--games", "64", "--seed", "0"});
+    // A negative number is a value; only "--" opens a flag.
+    expectPairs("negative value", {"--offset", "-5"}, {"--offset", "-5"});
+    // A path is a value like any other.
+    expectPairs("path value", {"--checkpoint", "az10_iter123.pt"},
+                {"--checkpoint", "az10_iter123.pt"});
+}
+
+void rejectsAFlagWithNoValue()
+{
+    expectArgumentsRejected("trailing flag", {"--board"}, "--board");
+    expectArgumentsRejected("trailing flag after a pair", {"--board", "10", "--games"}, "--games");
+    // The dropped value mid-line: "--games" would otherwise be board's value.
+    expectArgumentsRejected("value dropped mid-line", {"--board", "--games", "64"}, "--board");
+}
+
+void rejectsSomethingThatIsNotAFlag()
+{
+    expectArgumentsRejected("bare word first", {"board", "10"}, "board");
+    expectArgumentsRejected("single dash", {"-board", "10"}, "-board");
+    expectArgumentsRejected("bare word after a pair", {"--board", "10", "games", "64"}, "games");
+}
+
 }  // namespace
 
 int main()
@@ -273,6 +366,9 @@ int main()
     reportsAnOversizedUnsignedAsItsOwnMistake();
     acceptsAtOrAboveTheBound();
     rejectsBelowTheBound();
+    splitsArgumentsIntoPairsInOrder();
+    rejectsAFlagWithNoValue();
+    rejectsSomethingThatIsNotAFlag();
 
     if (failures == 0)
     {

@@ -67,4 +67,33 @@ void requireAtLeast(std::string_view flag, int value, int minimum)
     }
 }
 
+std::vector<FlagValue> readFlags(std::span<const std::string> arguments)
+{
+    std::vector<FlagValue> pairs;
+    pairs.reserve(arguments.size() / 2);
+
+    for (size_t index = 0; index < arguments.size(); index += 2)
+    {
+        const std::string_view flag = arguments[index];
+        if (!flag.starts_with("--"))
+        {
+            throw std::invalid_argument(
+                std::format("'{}' is not a flag; flags start with --", flag));
+        }
+        if (index + 1 >= arguments.size())
+        {
+            throw std::invalid_argument(std::format("{} was given no value", flag));
+        }
+        const std::string_view value = arguments[index + 1];
+        // A flag where a value belongs is a value dropped from the middle of the
+        // line, not a value that happens to read as a flag.
+        if (value.starts_with("--"))
+        {
+            throw std::invalid_argument(std::format("{} was given no value", flag));
+        }
+        pairs.push_back(FlagValue{flag, value});
+    }
+    return pairs;
+}
+
 }  // namespace flags
