@@ -78,7 +78,54 @@ time rather than this time.
 - **`flags::parseWholeInt` - done, 2026-08-09.** `src/flag_parser.{h,cpp}`,
   `src/flag_parser_test.cpp`, CTest target `flag_parser`. Red step 16 of 17
   assertions; mutation 6 of 6 killed; `clang-format` clean; `ctest -C Release` 11/11.
-- Everything else in this spec: not started.
+- **`flags::parseWholeUnsigned`, `requireAtLeast`, `readFlags` - done, 2026-08-09.**
+  Mutation 24 of 24 killed.
+- **`evaluation::Settings` and `evaluation::parseArguments` - done, 2026-08-09.**
+  `src/eval_options.{h,cpp}`, `src/eval_options_test.cpp`, CTest target
+  `eval_options`, CMake target `EvalOptionsTest`. Red step 36 of 44 assertions;
+  mutation 26 of 26 killed after one survivor was fixed; four assertions driven
+  past their bound and watched to abort with exit code 3; `clang-format` clean;
+  Debug and Release both pass; the analyzer reports nothing in the new files.
+  `az_evaluate.cpp` now parses through it.
+- **Property 4 holds, measured 2026-08-09.** `AlphaZeroEvaluate` rebuilt in Release
+  and run on `az10_iter123.pt`, 64 games, seed offset 0, step limit 1200, batch 64,
+  200 simulations: **36 wins**, the number at `eval123_limit1200.log:5`. Score mean
+  90.188, 9 died, 19 timed out, 201.55s, 12,245,942 evaluations. Log:
+  `build/Release/acceptance_iter123_64games.log`. Exit code 1, as documented.
+- **Property 1 holds for the evaluator**: all four bad inputs now stop before the
+  checkpoint load, where all four reached it before.
+- `visual::Settings` and its parser, and property 5's per-game output: not started.
+  The measure's remaining 6 failures are all `az_visual.cpp` - 7 unvalidated
+  `std::stoi`, the `step_limit == 0` sentinel, the `12 * settings.board` literal and
+  the three search literals - plus property 5, which is neither program's yet.
+- **The board's upper bound has an owner: `az::LARGEST_BOARD`** (`az_parameters.h`),
+  with two `static_assert`s pinning it as the largest board whose step limit fits
+  in an int. `deriveStepLimit` compares against it rather than recomputing
+  `INT_MAX / STEPS_PER_CELL`.
+### The prover, added 2026-08-09
+
+`docs/prove_arithmetic.py` - Z3 over the integer arithmetic no test can enumerate.
+Eight claims, each with a mutant that must answer the other way, so a claim that
+cannot fire is reported rather than counted as a pass. It proves the board bound is
+both sound and not over-strict, that `evaluation::Settings::cellCount` cannot
+overflow because of that bound, and that the seed-band check accepts exactly the
+runs that stay inside the reserved range.
+
+It also found two expressions that do overflow, both in the trainer, both left as
+found: `trainer::Settings::cellCount()` computes `board * board` in an int with no
+upper bound on `board` (`trainer_options.h:53`, witness board 46341), and
+`lastIteration()` adds two unbounded ints (`:59`, witness start_iteration
+2147483647 with 2 iterations). Undefined behaviour on values the trainer's parser
+accepts today.
+
+### What the second mutation run found
+
+`seed_signed` survived: replacing `parseWholeUnsigned` with a cast of
+`parseWholeInt` for `--seed` still rejected `--seed -1`, because -1 casts to a value
+the seed-band check refuses anyway. Right rejection, wrong diagnosis - the operator
+would be told their seed range overran when what they typed was a negative number.
+This is the same shape as `drop_range_branch` in the first run, and the same fix:
+an assertion that reads the message, not more code.
 
 ### Interface decisions taken during it, which bind the rest
 
