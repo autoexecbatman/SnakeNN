@@ -106,6 +106,90 @@ void reportsAnOutOfRangeValueAsItsOwnMistake()
     }
 }
 
+void expectUnsignedEquals(std::string_view what, unsigned int expected, unsigned int actual)
+{
+    if (expected == actual)
+    {
+        return;
+    }
+    std::cout << std::format("[FAIL] {}: expected {}, got {}\n", what, expected, actual);
+    failures++;
+}
+
+void expectUnsignedRejected(std::string_view flag, std::string_view text)
+{
+    try
+    {
+        const unsigned int value = flags::parseWholeUnsigned(flag, text);
+        std::cout << std::format("[FAIL] {} '{}': accepted, returned {}\n", flag, text, value);
+        failures++;
+    }
+    catch (const std::invalid_argument& error)
+    {
+        const std::string message = error.what();
+        if (message.find(flag) == std::string::npos)
+        {
+            std::cout << std::format("[FAIL] {} '{}': message omits the flag: {}\n", flag, text,
+                                     message);
+            failures++;
+        }
+    }
+    catch (const std::exception& error)
+    {
+        std::cout << std::format("[FAIL] {} '{}': wrong exception type: {}\n", flag, text,
+                                 error.what());
+        failures++;
+    }
+}
+
+void acceptsAnUnsignedWholeNumber()
+{
+    expectUnsignedEquals("zero", 0u, flags::parseWholeUnsigned("--seed", "0"));
+    expectUnsignedEquals("plain digits", 900000u, flags::parseWholeUnsigned("--seed", "900000"));
+    expectUnsignedEquals("largest unsigned", 4294967295u,
+                         flags::parseWholeUnsigned("--seed", "4294967295"));
+}
+
+// A negative value must be an error, not a wraparound to a huge seed.
+void rejectsANegativeValueRatherThanWrappingIt()
+{
+    expectUnsignedRejected("--seed", "-1");
+    expectUnsignedRejected("--seed", "-900000");
+}
+
+void rejectsMalformedAndOversizedUnsigned()
+{
+    expectUnsignedRejected("--seed", "");
+    expectUnsignedRejected("--seed", "12abc");
+    expectUnsignedRejected("--seed", " 12");
+    expectUnsignedRejected("--seed", "+7");
+    expectUnsignedRejected("--seed", "4294967296");
+    expectUnsignedRejected("--seed", "99999999999999999999");
+}
+
+// Both branches throw the same type, so only the message distinguishes them.
+void reportsAnOversizedUnsignedAsItsOwnMistake()
+{
+    try
+    {
+        flags::parseWholeUnsigned("--seed", "4294967296");
+        std::cout << "[FAIL] --seed '4294967296': accepted\n";
+        failures++;
+    }
+    catch (const std::invalid_argument& error)
+    {
+        const std::string message = error.what();
+        if (message.find("out of range") == std::string::npos)
+        {
+            std::cout << std::format(
+                "[FAIL] --seed '4294967296': diagnosed as malformed, not as "
+                "out of range: {}\n",
+                message);
+            failures++;
+        }
+    }
+}
+
 }  // namespace
 
 int main()
@@ -113,10 +197,14 @@ int main()
     acceptsAWholeNumber();
     rejectsAnythingItDidNotFullyConsume();
     reportsAnOutOfRangeValueAsItsOwnMistake();
+    acceptsAnUnsignedWholeNumber();
+    rejectsANegativeValueRatherThanWrappingIt();
+    rejectsMalformedAndOversizedUnsigned();
+    reportsAnOversizedUnsignedAsItsOwnMistake();
 
     if (failures == 0)
     {
-        std::cout << "[SUCCESS] flags::parseWholeInt: all properties hold\n";
+        std::cout << "[SUCCESS] flag_parser: all properties hold\n";
         return 0;
     }
     std::cout << std::format("[FAILURE] {} property violations\n", failures);

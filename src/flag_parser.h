@@ -16,4 +16,10 @@ namespace flags
 // call and nothing is stored.
 int parseWholeInt(std::string_view flag, std::string_view text);
 
+// As parseWholeInt, for a value that cannot be negative.
+//
+// A leading '-' is rejected rather than wrapped, so "-1" is an error and not
+// 4294967295. Accepts 0 through 4294967295.
+unsigned int parseWholeUnsigned(std::string_view flag, std::string_view text);
+
 }  // namespace flags
