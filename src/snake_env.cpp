@@ -1,6 +1,7 @@
-#include "snake_env.h"
 #include <cassert>
 #include <stdexcept>
+
+#include "snake_env.h"
 
 namespace
 {
@@ -54,8 +55,10 @@ Position stepFrom(const Position& cell, Direction heading)
     // the same thing a level up, which meant one property stated twice and only
     // one of the two places able to name the line that broke it. No bound on the
     // result - a step off the board is a legal answer and its caller decides.
-    const int moved_x = moved.x - cell.x;
-    const int moved_y = moved.y - cell.y;
+    // Referenced only by the assert below, so Release, where NDEBUG deletes it,
+    // has no use for them.
+    [[maybe_unused]] const int moved_x = moved.x - cell.x;
+    [[maybe_unused]] const int moved_y = moved.y - cell.y;
     assert(((moved_x == 0) != (moved_y == 0)) && (moved_x * moved_x + moved_y * moved_y) == 1 &&
            "stepFrom moved by something other than one orthogonal step");
 

@@ -570,6 +570,21 @@ endif()
 # `ctest -C Debug` from the build directory, or build and run a target directly.
 enable_testing()
 
+# /W4 with warnings as errors, for the targets measured clean under it.
+#
+# Not applied to the LibTorch or raylib targets - their headers warn - nor to
+# Benchmark and PerfectSnakeAI, because snake_logic.cpp has two narrowing
+# conversions (C4244 at :146, C4267 at :181), nor to anything in legacy/.
+# /external:W0 keeps the standard library's own warnings out.
+#
+# Core Guidelines analysis is a separate pass, not part of the build: see
+# docs/analyze.ps1. Header self-containment is a third: docs/check_headers.ps1.
+function(enable_strict_warnings target_name)
+    if(MSVC)
+        target_compile_options(${target_name} PRIVATE
+            /W4 /WX /permissive- /external:anglebrackets /external:W0)
+    endif()
+endfunction()
 
 # Cycle validity test - no LibTorch, no raylib, runs anywhere
 add_executable(CycleTest
@@ -578,6 +593,7 @@ add_executable(CycleTest
 )
 
 set_property(TARGET CycleTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(CycleTest)
 add_test(NAME cycle_is_hamiltonian COMMAND CycleTest)
 
 # Training environment properties - the simulator the learner will be trained
@@ -589,6 +605,7 @@ add_executable(EnvTest
 )
 
 set_property(TARGET EnvTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(EnvTest)
 add_test(NAME snake_env_properties COMMAND EnvTest)
 
 # Batched environment - the layer everything the learner concludes rests on.
@@ -599,6 +616,7 @@ add_executable(VectorEnvTest
 )
 
 set_property(TARGET VectorEnvTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(VectorEnvTest)
 add_test(NAME vector_env_properties COMMAND VectorEnvTest)
 
 # Search correctness, checked against hand-written evaluators rather than a
@@ -610,6 +628,7 @@ add_executable(SearchTest
 )
 
 set_property(TARGET SearchTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(SearchTest)
 add_test(NAME search_properties COMMAND SearchTest)
 
 # Network properties, including that its weights are board-size independent,
@@ -639,6 +658,7 @@ add_executable(SeedPolicyTest
 )
 
 set_property(TARGET SeedPolicyTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(SeedPolicyTest)
 add_test(NAME seed_policy COMMAND SeedPolicyTest)
 
 # What the search sees of chance: every simulation copies the root environment
@@ -650,6 +670,7 @@ add_executable(ChanceNodeTest
 )
 
 set_property(TARGET ChanceNodeTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(ChanceNodeTest)
 add_test(NAME chance_nodes COMMAND ChanceNodeTest)
 
 # Whether a one-cell change survives the 4x4 pooling and reaches the heads.
@@ -682,6 +703,7 @@ add_executable(SelfPlayTest
 )
 
 set_property(TARGET SelfPlayTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(SelfPlayTest)
 add_test(NAME selfplay_properties COMMAND SelfPlayTest)
 
 # The trainer's settings and the two strings it prints. Extracted from
@@ -697,6 +719,7 @@ add_executable(TrainerOptionsTest
 )
 
 set_property(TARGET TrainerOptionsTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(TrainerOptionsTest)
 add_test(NAME trainer_options COMMAND TrainerOptionsTest)
 
 # The paper's hyperparameters and the step limit derived from the board area.
@@ -707,6 +730,7 @@ add_executable(ParametersTest
 )
 
 set_property(TARGET ParametersTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(ParametersTest)
 add_test(NAME az_parameters COMMAND ParametersTest)
 
 # Command-line number parsing, shared by the trainer, the evaluator and the
@@ -717,6 +741,7 @@ add_executable(FlagParserTest
 )
 
 set_property(TARGET FlagParserTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(FlagParserTest)
 add_test(NAME flag_parser COMMAND FlagParserTest)
 
 # AlphaZero training loop.
