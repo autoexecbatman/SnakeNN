@@ -45,6 +45,11 @@ struct Settings
     int blocks = 4;
     int batch_size = 128;
     int batches_per_iteration = 64;
+    // Given instead of --batches, this sets it: batches = samples * games / batch.
+    // The paper trains 30 batches of 100 states after every game, so 3,000 per
+    // game; the equivalent --batches depends on the game count and the batch size
+    // and is therefore the wrong thing to write down. Giving both is refused.
+    std::optional<int> samples_per_game_override;
     size_t replay_bytes = 1024u * 1024u * 1024u;  // 1 GiB, measured not guessed
     unsigned int seed = 1;
     std::string checkpoint;
@@ -61,6 +66,10 @@ struct Settings
     int stepLimit() const;
     // Last iteration this run will play, inclusive.
     int lastIteration() const noexcept { return start_iteration + iterations - 1; }
+    // Gradient samples drawn per game played, which is the quantity comparable
+    // with the paper's 3,000 - --batches on its own is not, since it says nothing
+    // about how many games those batches were spread over.
+    long long samplesPerGame() const noexcept;
 };
 
 // Parses the command line, or throws std::invalid_argument naming the flag.

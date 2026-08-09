@@ -82,14 +82,14 @@ int main(int argc, char** argv)
 
     // Opened before any work, so a run that is killed leaves a started row and no
     // completion - the only way a killed process records what happened to it.
-    ledger::Entry run{ledger::makeRunId(ledger::utcNow(), static_cast<unsigned int>(_getpid())),
-                      ledger::utcNow(),
-                      ledger::Kind::Training,
-                      ledger::formatCommand(std::vector<std::string>(argv + 1, argv + argc)),
-                      ledger::Outcome::Started,
-                      0.0,
-                      0,
-                      0};
+    ledger::Entry run{ ledger::makeRunId(ledger::utcNow(), static_cast<unsigned int>(_getpid())),
+                       ledger::utcNow(),
+                       ledger::Kind::Training,
+                       ledger::formatCommand(std::vector<std::string>(argv + 1, argv + argc)),
+                       ledger::Outcome::Started,
+                       0.0,
+                       0,
+                       0 };
     ledger::append(settings.ledger_path, run);
 
     const bool cuda = torch::cuda::is_available();
@@ -100,8 +100,14 @@ int main(int argc, char** argv)
                              settings.board, step_limit, settings.simulations);
     std::cout << std::format("network {}x{}  device {}\n", settings.channels, settings.blocks,
                              cuda ? "cuda" : "cpu");
-    std::cout << std::format("iterations {}..{} x {} games  seed {}\n\n", settings.start_iteration,
+    std::cout << std::format("iterations {}..{} x {} games  seed {}\n", settings.start_iteration,
                              settings.lastIteration(), settings.games_per_iteration, settings.seed);
+    // Printed because it is the quantity comparable with the paper's 3,000, and
+    // --batches on its own is not - it says nothing about how many games those
+    // batches were spread over.
+    std::cout << std::format(
+        "gradient {} batches of {} = {} samples per game (the paper: 3000)\n\n",
+        settings.batches_per_iteration, settings.batch_size, settings.samplesPerGame());
 
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
 
@@ -281,7 +287,7 @@ int main(int argc, char** argv)
                 for (int item = 0; item < settings.batch_size; item++)
                 {
                     size_t pick = static_cast<size_t>(
-                        torch::randint(0, static_cast<int64_t>(replay.size()), {1})
+                        torch::randint(0, static_cast<int64_t>(replay.size()), { 1 })
                             .item<int64_t>());
                     const TrainingRecord& record = replay[pick];
                     SnakeEnv::encodeSnapshot(
@@ -296,14 +302,15 @@ int main(int argc, char** argv)
                 }
 
                 torch::Tensor input =
-                    torch::from_blob(planes.data(), {settings.batch_size, SnakeEnv::PLANE_COUNT,
-                                                     settings.board, settings.board})
+                    torch::from_blob(planes.data(), { settings.batch_size, SnakeEnv::PLANE_COUNT,
+                                                      settings.board, settings.board })
                         .to(device);
                 torch::Tensor policy_target =
-                    torch::from_blob(policies.data(), {settings.batch_size, SnakeEnv::ACTION_COUNT})
+                    torch::from_blob(policies.data(),
+                                     { settings.batch_size, SnakeEnv::ACTION_COUNT })
                         .to(device);
                 torch::Tensor value_target =
-                    torch::from_blob(values.data(), {settings.batch_size, 1}).to(device);
+                    torch::from_blob(values.data(), { settings.batch_size, 1 }).to(device);
 
                 // The value head is a tanh, so its targets have to live in the
                 // same range. Rewards run to +/-10, so returns are scaled by the

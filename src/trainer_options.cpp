@@ -62,6 +62,38 @@ void requireAtMost(const std::string& flag, int value, int ceiling)
     }
 }
 
+// Turns a per-game gradient budget into the batch count the loop consumes.
+//
+// Validates the two operands it divides by before dividing, since requireUsable
+// has not run yet - the batch count it would check is the one being computed here.
+void resolveGradientBudget(Settings& settings, bool batches_given)
+{
+    if (!settings.samples_per_game_override)
+    {
+        return;
+    }
+    if (batches_given)
+    {
+        throw std::invalid_argument(
+            "--samples-per-game and --batches say the same thing two ways; give one");
+    }
+    requireAtLeast("--samples-per-game", *settings.samples_per_game_override, 1);
+    requireAtLeast("--games", settings.games_per_iteration, 1);
+    requireAtLeast("--batch", settings.batch_size, 1);
+
+    const long long batches = static_cast<long long>(*settings.samples_per_game_override) *
+                              settings.games_per_iteration / settings.batch_size;
+    if (batches > std::numeric_limits<int>::max())
+    {
+        throw std::invalid_argument(
+            std::format("--samples-per-game {} over {} games at batch {} needs {} batches, past "
+                        "the end of an int",
+                        *settings.samples_per_game_override, settings.games_per_iteration,
+                        settings.batch_size, batches));
+    }
+    settings.batches_per_iteration = static_cast<int>(batches);
+}
+
 // Everything that has to hold before a single game is played.
 //
 // These fire in the first millisecond of the process rather than partway into an
@@ -113,6 +145,13 @@ void requireUsable(const Settings& settings)
 
 }  // namespace
 
+long long Settings::samplesPerGame() const noexcept
+{
+    assert(games_per_iteration >= 1 && "samplesPerGame on a settings with no games to divide by");
+    // Widened before multiplying: 6,000 batches of 512 already exceeds an int.
+    return static_cast<long long>(batches_per_iteration) * batch_size / games_per_iteration;
+}
+
 int Settings::stepLimit() const
 {
     assert(board >= 2 && "stepLimit on a board smaller than 2x2 - parseArguments rejects those");
@@ -127,6 +166,10 @@ int Settings::stepLimit() const
 Settings parseArguments(std::span<const char* const> arguments)
 {
     Settings settings;
+    // The budget and the batch count say the same thing two ways, so exactly one
+    // of them may be given. Tracked rather than inferred from the defaults: a
+    // --batches equal to its default is still a --batches that was given.
+    bool batches_given = false;
     for (size_t index = 0; index < arguments.size(); index++)
     {
         const std::string flag = arguments[index];
@@ -176,6 +219,11 @@ Settings parseArguments(std::span<const char* const> arguments)
         else if (flag == "--batches")
         {
             settings.batches_per_iteration = parseWholeInt(flag, value);
+            batches_given = true;
+        }
+        else if (flag == "--samples-per-game")
+        {
+            settings.samples_per_game_override = parseWholeInt(flag, value);
         }
         else if (flag == "--replay-mb")
         {
@@ -212,6 +260,7 @@ Settings parseArguments(std::span<const char* const> arguments)
             throw std::invalid_argument(std::format("unknown flag: {}", flag));
         }
     }
+    resolveGradientBudget(settings, batches_given);
     requireUsable(settings);
     assert(settings.stepLimit() >= 1 && "a validated settings object still has no step limit");
     return settings;

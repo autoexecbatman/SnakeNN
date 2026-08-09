@@ -97,7 +97,7 @@ void expectFlagSetsOnly(const char* flag, const char* value, const std::string& 
 {
     flags_checked++;
     const std::vector<std::string> before = lines(describe(trainer::Settings{}));
-    const std::vector<std::string> after = lines(describe(parse({flag, value})));
+    const std::vector<std::string> after = lines(describe(parse({ flag, value })));
     assert(before.size() == after.size() && "describe changed shape between two Settings");
 
     std::vector<std::string> changed;
@@ -155,12 +155,54 @@ void testStepLimitIsDerivedFromTheBoardUnlessGiven()
     expect(settings.cellCount() == 400 && settings.foodsToWin() == 399,
            "cellCount and foodsToWin agree with a 20x20 board holding a one-segment snake");
 
-    const trainer::Settings parsed = parse({"--board", "10", "--step-limit", "77"});
+    const trainer::Settings parsed = parse({ "--board", "10", "--step-limit", "77" });
     expect(parsed.stepLimit() == 77, "and parsing preserves the override rather than resolving it");
     expect(parsed.step_limit_override.has_value() && *parsed.step_limit_override == 77,
            "the override stays visible as an override");
-    expect(parse({"--board", "10"}).stepLimit() == 1200,
+    expect(parse({ "--board", "10" }).stepLimit() == 1200,
            "while an unset override still derives at parse time or after it");
+}
+
+// The paper's budget is 3,000 samples per game. Ours is batches times batch size
+// divided by games, and the expected values here are that division written out.
+void testTheGradientBudgetIsPerGameAndDerivable()
+{
+    trainer::Settings settings;
+    settings.batches_per_iteration = 3000;
+    settings.batch_size = 128;
+    settings.games_per_iteration = 256;
+    // 3000 * 128 / 256 = 1500, which is half the paper's and what runs 101 to 140
+    // actually trained on.
+    expect(settings.samplesPerGame() == 1500, "the budget in use through iteration 140 was 1,500");
+
+    settings.batches_per_iteration = 6000;
+    expect(settings.samplesPerGame() == 3000, "and twice the batches is the paper's 3,000");
+
+    // An iteration that plays and does not train draws nothing.
+    settings.batches_per_iteration = 0;
+    expect(settings.samplesPerGame() == 0, "no batches is no samples, not a division by zero");
+
+    // Asking for the paper's budget derives the batch count rather than making the
+    // operator do the arithmetic at every launch.
+    const trainer::Settings derived =
+        parse({ "--games", "256", "--batch", "128", "--samples-per-game", "3000" });
+    expect(derived.batches_per_iteration == 6000,
+           "--samples-per-game 3000 over 256 games at batch 128 is 6,000 batches");
+    expect(derived.samplesPerGame() == 3000, "and it reads back as the budget that was asked for");
+
+    // The derivation uses the game count and batch size from the same command line,
+    // whatever order they appear in.
+    const trainer::Settings reordered =
+        parse({ "--samples-per-game", "3000", "--batch", "64", "--games", "32" });
+    expect(reordered.batches_per_iteration == 1500,
+           "3000 * 32 / 64 = 1500, and the flags before it did not decide that");
+
+    expectRejected({ "--samples-per-game", "3000", "--batches", "6000" },
+                   "giving both the budget and the batch count is refused rather than one winning");
+    expectRejected({ "--batches", "6000", "--samples-per-game", "3000" },
+                   "and refused in the other order too");
+    expectRejected({ "--samples-per-game", "0" }, "a budget of nothing is refused");
+    expectRejected({ "--samples-per-game", "-1" }, "a negative budget is refused");
 }
 
 void testEveryFlagSetsTheFieldItNames()
@@ -187,17 +229,17 @@ void testEveryFlagSetsTheFieldItNames()
     // The whole command line the current run was launched with, parsed at once.
     // Each of the fourteen above is checked alone; this is the one check that a
     // realistic invocation survives the loop that walks them in pairs.
-    const trainer::Settings settings = parse({"--board",           "10",
-                                              "--iterations",      "30",
-                                              "--start-iteration", "111",
-                                              "--games",           "256",
-                                              "--simulations",     "200",
-                                              "--batch",           "512",
-                                              "--batches",         "3000",
-                                              "--channels",        "96",
-                                              "--blocks",          "6",
-                                              "--checkpoint",      "az10_seeded.pt",
-                                              "--resume",          "az10_iter110.pt"});
+    const trainer::Settings settings = parse({ "--board",           "10",
+                                               "--iterations",      "30",
+                                               "--start-iteration", "111",
+                                               "--games",           "256",
+                                               "--simulations",     "200",
+                                               "--batch",           "512",
+                                               "--batches",         "3000",
+                                               "--channels",        "96",
+                                               "--blocks",          "6",
+                                               "--checkpoint",      "az10_seeded.pt",
+                                               "--resume",          "az10_iter110.pt" });
     expect(settings.board == 10 && settings.iterations == 30 && settings.start_iteration == 111 &&
                settings.games_per_iteration == 256 && settings.simulations == 200 &&
                settings.batch_size == 512 && settings.batches_per_iteration == 3000 &&
@@ -213,52 +255,52 @@ void testBadArgumentsAreRefusedRatherThanDefaulted()
     // The old parser warned on stderr and continued with the default, so a
     // mistyped flag produced a run that looked configured and was not - and the
     // warning had scrolled away by the time anyone read the log.
-    expectRejected({"--bord", "12"}, "a mistyped flag is refused, not warned about");
-    expectRejected({"--board"}, "a flag with no value is refused, not silently dropped");
-    expectRejected({"--board", "10", "--games"},
+    expectRejected({ "--bord", "12" }, "a mistyped flag is refused, not warned about");
+    expectRejected({ "--board" }, "a flag with no value is refused, not silently dropped");
+    expectRejected({ "--board", "10", "--games" },
                    "and a trailing flag with no value is refused too");
-    expectRejected({"--board", "ten"}, "a non-numeric value is refused with the flag named");
-    expectRejected({"--board", "10x10"}, "trailing characters after a number are refused");
-    expectRejected({"--board", ""}, "an empty value is refused");
-    expectRejected({"--board", "99999999999999999999"}, "a value outside int range is refused");
+    expectRejected({ "--board", "ten" }, "a non-numeric value is refused with the flag named");
+    expectRejected({ "--board", "10x10" }, "trailing characters after a number are refused");
+    expectRejected({ "--board", "" }, "an empty value is refused");
+    expectRejected({ "--board", "99999999999999999999" }, "a value outside int range is refused");
 
     // Ranges. Each of these ran to completion before: --games 0 divided by the
     // summary count, --batch 0 built an empty tensor, --board 1 reached the
     // network's own check only after the process had set everything else up.
-    expectRejected({"--games", "0"}, "zero games per iteration is refused - it divided by zero");
-    expectRejected({"--board", "1"}, "a board of one cell is refused");
-    expectRejected({"--iterations", "0"}, "a run with no iterations is refused");
-    expectRejected({"--start-iteration", "0"}, "iteration zero is refused - they start at one");
-    expectRejected({"--simulations", "0"}, "a search with no simulations is refused");
-    expectRejected({"--channels", "0"}, "a trunk with no channels is refused");
-    expectRejected({"--blocks", "-1"}, "a negative block count is refused");
-    expectRejected({"--batch", "0"}, "an empty minibatch is refused");
-    expectRejected({"--batches", "-1"}, "a negative batch count is refused");
-    expectRejected({"--step-limit", "0"},
+    expectRejected({ "--games", "0" }, "zero games per iteration is refused - it divided by zero");
+    expectRejected({ "--board", "1" }, "a board of one cell is refused");
+    expectRejected({ "--iterations", "0" }, "a run with no iterations is refused");
+    expectRejected({ "--start-iteration", "0" }, "iteration zero is refused - they start at one");
+    expectRejected({ "--simulations", "0" }, "a search with no simulations is refused");
+    expectRejected({ "--channels", "0" }, "a trunk with no channels is refused");
+    expectRejected({ "--blocks", "-1" }, "a negative block count is refused");
+    expectRejected({ "--batch", "0" }, "an empty minibatch is refused");
+    expectRejected({ "--batches", "-1" }, "a negative batch count is refused");
+    expectRejected({ "--step-limit", "0" },
                    "an explicit step limit of zero is refused rather than read as absent");
-    expectRejected({"--replay-mb", "0"}, "a replay buffer of nothing is refused");
+    expectRejected({ "--replay-mb", "0" }, "a replay buffer of nothing is refused");
 
     // Overflow, which the parser accepted and the derived quantities then hit as
     // undefined behaviour. cellCount squares the board in an int, so 46341 is past
     // the edge; the board's real ceiling is lower, at the largest whose step limit
     // fits. lastIteration adds two ints that were each bounded below and not above.
-    expectRejected({"--board", "13378"},
+    expectRejected({ "--board", "13378" },
                    "a board whose step limit does not fit in an int is refused");
-    expectRejected({"--board", "46341"}, "and one whose area does not fit either");
-    expectRejected({"--start-iteration", "2147483647", "--iterations", "2"},
+    expectRejected({ "--board", "46341" }, "and one whose area does not fit either");
+    expectRejected({ "--start-iteration", "2147483647", "--iterations", "2" },
                    "a last iteration past the end of an int is refused");
 
     // And the boundary on each side, so the checks are bounds and not blanket
     // rejections: a test that only feeds invalid values passes against a parser
     // that throws unconditionally.
-    expect(!throwsOnParse({"--board", "2"}), "the smallest legal board is accepted");
-    expect(!throwsOnParse({"--blocks", "0"}), "a trunk with no residual blocks is legal");
-    expect(!throwsOnParse({"--batches", "0"}),
+    expect(!throwsOnParse({ "--board", "2" }), "the smallest legal board is accepted");
+    expect(!throwsOnParse({ "--blocks", "0" }), "a trunk with no residual blocks is legal");
+    expect(!throwsOnParse({ "--batches", "0" }),
            "and an iteration that only plays, without training, is legal");
     expect(!throwsOnParse({}), "no arguments at all is legal and yields the defaults");
-    expect(!throwsOnParse({"--board", "13377"}),
+    expect(!throwsOnParse({ "--board", "13377" }),
            "the largest board whose step limit fits is accepted");
-    expect(!throwsOnParse({"--start-iteration", "2147483646", "--iterations", "2"}),
+    expect(!throwsOnParse({ "--start-iteration", "2147483646", "--iterations", "2" }),
            "and a last iteration landing exactly on the end of an int is accepted");
 }
 
@@ -357,6 +399,7 @@ int main()
     std::cout << "Trainer options\n";
     testDefaultsAreTheDocumentedOnes();
     testStepLimitIsDerivedFromTheBoardUnlessGiven();
+    testTheGradientBudgetIsPerGameAndDerivable();
     testEveryFlagSetsTheFieldItNames();
     testBadArgumentsAreRefusedRatherThanDefaulted();
     testDurationFormatting();
