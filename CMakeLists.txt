@@ -744,6 +744,18 @@ set_property(TARGET FlagParserTest PROPERTY CXX_STANDARD 20)
 enable_strict_warnings(FlagParserTest)
 add_test(NAME flag_parser COMMAND FlagParserTest)
 
+# What every training and evaluation run cost, appended by the run itself. A
+# checkpoint reached after 140 iterations had no recoverable wall-clock and no
+# cumulative game count. No LibTorch, so its assertions are reachable in Debug.
+add_executable(RunLedgerTest
+    src/run_ledger_test.cpp
+    src/run_ledger.cpp
+)
+
+set_property(TARGET RunLedgerTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(RunLedgerTest)
+add_test(NAME run_ledger COMMAND RunLedgerTest)
+
 # The evaluator's settings. Extracted from az_evaluate.cpp, whose parser warned
 # about an unknown flag and then scored the run with the default, and reached
 # std::stoi for every number. Every figure this project quotes comes out of that
