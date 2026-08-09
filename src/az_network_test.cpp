@@ -60,12 +60,12 @@ void testOutputShapes()
     torch::NoGradGuard no_grad;
 
     const int batch = 5;
-    torch::Tensor input = torch::zeros({batch, SnakeEnv::PLANE_COUNT, 8, 8});
+    torch::Tensor input = torch::zeros({ batch, SnakeEnv::PLANE_COUNT, 8, 8 });
     auto [policy, value] = network->forward(input);
 
-    expect(policy.sizes() == torch::IntArrayRef({batch, SnakeEnv::ACTION_COUNT}),
+    expect(policy.sizes() == torch::IntArrayRef({ batch, SnakeEnv::ACTION_COUNT }),
            "the policy head emits one logit per relative action");
-    expect(value.sizes() == torch::IntArrayRef({batch, 1}), "the value head emits one scalar");
+    expect(value.sizes() == torch::IntArrayRef({ batch, 1 }), "the value head emits one scalar");
     expect(value.abs().max().item<float>() <= 1.0f, "value stays inside the bounded range");
 }
 
@@ -111,26 +111,20 @@ void testForwardRejectsTheWrongInput()
     // silent: a network fed the wrong board runs to completion and returns
     // confident nonsense, because nothing downstream of the pool can tell what
     // went in. That is the failure these checks exist for.
-    expect(throwsOnCall([&] {
-               network->forward(torch::zeros({SnakeEnv::PLANE_COUNT, 8, 8}));
-           }),
+    expect(throwsOnCall([&] { network->forward(torch::zeros({ SnakeEnv::PLANE_COUNT, 8, 8 })); }),
            "an unbatched input is refused");
-    expect(throwsOnCall([&] {
-               network->forward(torch::zeros({2, SnakeEnv::PLANE_COUNT - 1, 8, 8}));
-           }),
+    expect(throwsOnCall(
+               [&] { network->forward(torch::zeros({ 2, SnakeEnv::PLANE_COUNT - 1, 8, 8 })); }),
            "the wrong number of planes is refused");
-    expect(throwsOnCall([&] {
-               network->forward(torch::zeros({2, SnakeEnv::PLANE_COUNT, 20, 20}));
-           }),
-           "a board the network was not built for is refused instead of pooled away");
-    expect(throwsOnCall([&] {
-               network->forward(torch::zeros({0, SnakeEnv::PLANE_COUNT, 8, 8}));
-           }),
-           "an empty batch is refused");
-    expect(!throwsOnCall([&] {
-               network->forward(torch::zeros({2, SnakeEnv::PLANE_COUNT, 8, 8}));
-           }),
-           "and a correctly shaped batch goes through");
+    expect(
+        throwsOnCall([&] { network->forward(torch::zeros({ 2, SnakeEnv::PLANE_COUNT, 20, 20 })); }),
+        "a board the network was not built for is refused instead of pooled away");
+    expect(
+        throwsOnCall([&] { network->forward(torch::zeros({ 0, SnakeEnv::PLANE_COUNT, 8, 8 })); }),
+        "an empty batch is refused");
+    expect(
+        !throwsOnCall([&] { network->forward(torch::zeros({ 2, SnakeEnv::PLANE_COUNT, 8, 8 })); }),
+        "and a correctly shaped batch goes through");
 }
 
 void testPredictionFieldsAreTheOnesNamed()
@@ -145,12 +139,12 @@ void testPredictionFieldsAreTheOnesNamed()
 
     const int batch = 3;
     const Prediction prediction =
-        network->forward(torch::rand({batch, SnakeEnv::PLANE_COUNT, 6, 6}));
+        network->forward(torch::rand({ batch, SnakeEnv::PLANE_COUNT, 6, 6 }));
 
-    expect(prediction.policy_logits.sizes() ==
-               torch::IntArrayRef({batch, SnakeEnv::ACTION_COUNT}),
-           "policy_logits holds one logit per action, not the value");
-    expect(prediction.value.sizes() == torch::IntArrayRef({batch, 1}),
+    expect(
+        prediction.policy_logits.sizes() == torch::IntArrayRef({ batch, SnakeEnv::ACTION_COUNT }),
+        "policy_logits holds one logit per action, not the value");
+    expect(prediction.value.sizes() == torch::IntArrayRef({ batch, 1 }),
            "value holds one scalar per state, not the policy");
 
     // Logits, not probabilities - the evaluator applies the softmax, so a policy
@@ -161,7 +155,7 @@ void testPredictionFieldsAreTheOnesNamed()
 
     // Structured bindings still work, which is what keeps the existing call sites
     // in the trainer and the evaluator unchanged.
-    auto [policy, value] = network->forward(torch::rand({batch, SnakeEnv::PLANE_COUNT, 6, 6}));
+    auto [policy, value] = network->forward(torch::rand({ batch, SnakeEnv::PLANE_COUNT, 6, 6 }));
     expect(policy.sizes() == prediction.policy_logits.sizes() &&
                value.sizes() == prediction.value.sizes(),
            "a structured binding still destructures in policy-then-value order");
@@ -217,11 +211,69 @@ void testWeightsTransferAcrossBoardSizes()
     {
         large->eval();
         torch::NoGradGuard no_grad;
-        torch::Tensor input = torch::rand({2, SnakeEnv::PLANE_COUNT, 20, 20});
+        torch::Tensor input = torch::rand({ 2, SnakeEnv::PLANE_COUNT, 20, 20 });
         auto [policy, value] = large->forward(input);
         bool finite = policy.isfinite().all().item<bool>() && value.isfinite().all().item<bool>();
         expect(finite, "the transferred network runs on the larger board and stays finite");
     }
+}
+
+// Widening the stem is what lets a checkpoint trained before the clock plane keep
+// being used. Expected values come from the contract: the saved weights land in the
+// leading input channels and every new one is zero.
+void testWideningTheStemKeepsTheOldWeightsAndZeroesTheNew()
+{
+    // [out_channels, in_planes, kernel, kernel], filled so every element is
+    // distinguishable from every other.
+    torch::Tensor saved = torch::arange(2 * 8 * 3 * 3, torch::kFloat).reshape({ 2, 8, 3, 3 });
+    torch::Tensor target = torch::ones({ 2, 9, 3, 3 }, torch::kFloat);
+
+    torch::Tensor widened = widenStemWeight(saved, target);
+
+    expect(widened.sizes() == target.sizes(), "the widened weight has the target's shape");
+    expect(torch::equal(widened.narrow(1, 0, 8), saved),
+           "the saved planes are copied into the leading channels, unchanged and in order");
+    expect(torch::equal(widened.narrow(1, 8, 1), torch::zeros({ 2, 1, 3, 3 }, torch::kFloat)),
+           "and the new plane is zero, so it contributes nothing until training moves it");
+    // The target is not written through: it was ones, and a widening that had
+    // aliased it would read back as ones.
+    expect(torch::equal(target, torch::ones({ 2, 9, 3, 3 }, torch::kFloat)),
+           "the target is left alone - the widened weight is a new tensor");
+}
+
+void testWideningAnEqualStemChangesNothing()
+{
+    torch::Tensor saved = torch::arange(2 * 9 * 3 * 3, torch::kFloat).reshape({ 2, 9, 3, 3 });
+    torch::Tensor target = torch::zeros({ 2, 9, 3, 3 }, torch::kFloat);
+    expect(torch::equal(widenStemWeight(saved, target), saved),
+           "a stem of the same width comes back exactly as it was");
+}
+
+void testWideningRefusesWhatItCannotWiden()
+{
+    const auto refused = [](const torch::Tensor& saved, const torch::Tensor& target)
+    {
+        try
+        {
+            widenStemWeight(saved, target);
+            return false;
+        }
+        catch (const std::invalid_argument&)
+        {
+            return true;
+        }
+    };
+
+    // Wider than the network: there is nowhere to put the extra planes, and
+    // dropping them silently would be a different network wearing the same name.
+    expect(refused(torch::zeros({ 2, 10, 3, 3 }), torch::zeros({ 2, 9, 3, 3 })),
+           "a checkpoint wider than the network is refused");
+    expect(refused(torch::zeros({ 4, 8, 3, 3 }), torch::zeros({ 2, 9, 3, 3 })),
+           "a different output channel count is refused");
+    expect(refused(torch::zeros({ 2, 8, 5, 5 }), torch::zeros({ 2, 9, 3, 3 })),
+           "a different kernel size is refused");
+    expect(refused(torch::zeros({ 2, 8, 3 }), torch::zeros({ 2, 9, 3, 3 })),
+           "a weight that is not four dimensional is refused");
 }
 
 }  // namespace
@@ -235,6 +287,9 @@ int main()
     testForwardRejectsTheWrongInput();
     testPredictionFieldsAreTheOnesNamed();
     testWeightsTransferAcrossBoardSizes();
+    testWideningTheStemKeepsTheOldWeightsAndZeroesTheNew();
+    testWideningAnEqualStemChangesNothing();
+    testWideningRefusesWhatItCannotWiden();
 
     if (failures == 0)
     {

@@ -30,6 +30,17 @@ struct Prediction
     torch::Tensor value;
 };
 
+// A stem weight widened to accept more input planes, with the new ones zeroed.
+//
+// Shaped like `target`, holding `saved` in its leading input channels. Zero in the
+// rest is what makes the widened convolution compute exactly what the narrower one
+// did until training moves them.
+//
+// Throws std::invalid_argument unless `saved` has at most as many input channels as
+// `target` and agrees with it in every other dimension. Free rather than a member
+// because it is arithmetic on two tensors and needs no network to be tested.
+torch::Tensor widenStemWeight(const torch::Tensor& saved, const torch::Tensor& target);
+
 struct AlphaZeroNetImpl : torch::nn::Module
 {
     AlphaZeroNetImpl(int board_width, int board_height, int channels, int blocks);

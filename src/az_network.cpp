@@ -1,5 +1,6 @@
 #include "az_network.h"
 #include <format>
+#include <stdexcept>
 
 namespace
 {
@@ -151,6 +152,37 @@ void readNested(torch::serialize::InputArchive& archive, const std::string& dott
 
 }  // namespace
 
+torch::Tensor widenStemWeight(const torch::Tensor& saved, const torch::Tensor& target)
+{
+    if (saved.dim() != 4 || target.dim() != 4)
+    {
+        throw std::invalid_argument(std::format("a stem weight has four dimensions; got {} and {}",
+                                                saved.dim(), target.dim()));
+    }
+    if (saved.size(1) > target.size(1))
+    {
+        throw std::invalid_argument(
+            std::format("the checkpoint's stem takes {} planes, wider than this network's {}",
+                        saved.size(1), target.size(1)));
+    }
+    if (saved.size(0) != target.size(0) || saved.size(2) != target.size(2) ||
+        saved.size(3) != target.size(3))
+    {
+        throw std::invalid_argument(
+            std::format("the checkpoint's stem differs in more than its input planes: "
+                        "[{}, {}, {}, {}] against [{}, {}, {}, {}]",
+                        saved.size(0), saved.size(1), saved.size(2), saved.size(3), target.size(0),
+                        target.size(1), target.size(2), target.size(3)));
+    }
+
+    // Zeroed new channels, so the widened convolution computes exactly what the
+    // narrower one did until training moves them.
+    torch::NoGradGuard no_grad;
+    torch::Tensor widened = torch::zeros_like(target);
+    widened.narrow(1, 0, saved.size(1)).copy_(saved);
+    return widened;
+}
+
 void AlphaZeroNetImpl::loadNarrowerStem(const std::string& checkpoint_path)
 {
     // Read the checkpoint into a second network built with the stem it was saved
@@ -171,22 +203,7 @@ void AlphaZeroNetImpl::loadNarrowerStem(const std::string& checkpoint_path)
 
         if (parameter.key() == "stem_conv.weight")
         {
-            TORCH_CHECK(saved.size(1) <= parameter.value().size(1),
-                        std::format("the checkpoint's stem takes {} planes, wider than this "
-                                    "network's {}",
-                                    saved.size(1), parameter.value().size(1)));
-            TORCH_CHECK(saved.size(0) == parameter.value().size(0) &&
-                            saved.size(2) == parameter.value().size(2) &&
-                            saved.size(3) == parameter.value().size(3),
-                        std::format("the checkpoint's stem differs in more than its input planes: "
-                                    "[{}, {}, {}, {}] against [{}, {}, {}, {}]",
-                                    saved.size(0), saved.size(1), saved.size(2), saved.size(3),
-                                    parameter.value().size(0), parameter.value().size(1),
-                                    parameter.value().size(2), parameter.value().size(3)));
-            // Zeroed new channels, so the widened network computes exactly what the
-            // narrower one did until training moves them.
-            parameter.value().zero_();
-            parameter.value().narrow(1, 0, saved.size(1)).copy_(saved);
+            parameter.value().copy_(widenStemWeight(saved, parameter.value()));
             continue;
         }
 
