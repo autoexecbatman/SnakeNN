@@ -68,12 +68,13 @@ std::string describe(const trainer::Settings& settings)
     return std::format(
         "board={}\niterations={}\nstart_iteration={}\ngames_per_iteration={}\nsimulations={}\n"
         "step_limit_override={}\nchannels={}\nblocks={}\nbatch_size={}\nbatches_per_iteration={}\n"
-        "replay_bytes={}\nseed={}\ncheckpoint={}\nresume={}\n",
+        "replay_bytes={}\nseed={}\ncheckpoint={}\nresume={}\nledger_path={}\n",
         settings.board, settings.iterations, settings.start_iteration, settings.games_per_iteration,
         settings.simulations,
         settings.step_limit_override ? std::format("{}", *settings.step_limit_override) : "none",
         settings.channels, settings.blocks, settings.batch_size, settings.batches_per_iteration,
-        settings.replay_bytes, settings.seed, settings.checkpoint, settings.resume);
+        settings.replay_bytes, settings.seed, settings.checkpoint, settings.resume,
+        settings.ledger_path);
 }
 
 // Splits a description into its lines so exactly one may be required to differ.
@@ -178,6 +179,10 @@ void testEveryFlagSetsTheFieldItNames()
     expectFlagSetsOnly("--seed", "9", "seed=9");
     expectFlagSetsOnly("--checkpoint", "az10.pt", "checkpoint=az10.pt");
     expectFlagSetsOnly("--resume", "az10_iter110.pt", "resume=az10_iter110.pt");
+    // Relative to the launch directory, and the launch directory is build/Release,
+    // which git ignores. A run whose cost lands there is as lost as the ones this
+    // ledger exists to replace, so the path is given rather than assumed.
+    expectFlagSetsOnly("--ledger", "../../docs/runs.tsv", "ledger_path=../../docs/runs.tsv");
 
     // The whole command line the current run was launched with, parsed at once.
     // Each of the fourteen above is checked alone; this is the one check that a

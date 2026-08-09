@@ -42,6 +42,10 @@ struct Settings
     // simulation's food placement from one generator in lockstep across the batch,
     // so two runs at different batch sizes are not comparable.
     int batch = 64;
+    // Where this run records what it cost. Relative to the launch directory, which
+    // is build/Release and is not version controlled, so a run meant to leave a
+    // durable record passes --ledger ../../docs/runs.tsv.
+    std::string ledger_path = "runs.tsv";
 
     int cellCount() const noexcept;
     // The snake starts one segment long, so this many apples fills the board.

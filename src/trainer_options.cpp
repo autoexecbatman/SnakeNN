@@ -195,6 +195,10 @@ Settings parseArguments(std::span<const char* const> arguments)
         {
             settings.checkpoint = value;
         }
+        else if (flag == "--ledger")
+        {
+            settings.ledger_path = value;
+        }
         else if (flag == "--resume")
         {
             settings.resume = value;

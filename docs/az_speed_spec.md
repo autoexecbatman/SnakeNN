@@ -85,11 +85,20 @@ frequency, which our sampling achieves in expectation.
 Each stage names its check. A stage that does not move the win rate is recorded as
 such and the next one starts; a negative result is a result.
 
-**1. The run ledger.** `docs/runs.tsv`, appended by the trainer and the evaluator
-themselves: date, command, duration, games played, samples trained, outcome. Nothing
-after this is compared without its cost.
-*Check:* a run killed part-way still leaves a line, and the ledger's cumulative game
-count for a fresh checkpoint reconciles with its training log.
+**1. The run ledger - done, 2026-08-09.** `docs/runs.tsv`, appended by the trainer and
+the evaluator themselves: run id, start time, kind, command, outcome, seconds, games
+played, samples trained. Nothing after this is compared without its cost.
+*Check:* a run killed part-way still leaves a line, and the counts are what the run
+did rather than what its settings asked for.
+
+Both programs take **`--ledger <path>`, defaulting to `runs.tsv` in the launch
+directory**. The default is deliberately not `docs/runs.tsv`: the launch directory is
+`build/Release`, and git ignores `build/` and `*.log` alike, so a default that quietly
+wrote there would lose exactly what this exists to keep. A run meant to leave a record
+passes `--ledger ../../docs/runs.tsv`.
+
+The visual demo is not wired in. It is watched, not measured, and a row per viewing
+would bury the runs that produced numbers.
 
 **2. Steps per apple.** The evaluator records the step count between apples. Answers
 whether the waste is early, on an empty board, or late, unpicking a coiled body -

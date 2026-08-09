@@ -135,6 +135,10 @@ Settings parseArguments(std::span<const std::string> arguments)
         {
             settings.batch = flags::parseWholeInt(pair.flag, pair.value);
         }
+        else if (pair.flag == "--ledger")
+        {
+            settings.ledger_path = pair.value;
+        }
         else
         {
             // Refused rather than warned about. The previous parser printed to

@@ -773,6 +773,7 @@ add_test(NAME eval_options COMMAND EvalOptionsTest)
 
 # AlphaZero training loop.
 add_executable(AlphaZeroTrainer
+    src/run_ledger.cpp
     src/az_trainer.cpp
     src/trainer_options.cpp
     src/az_parameters.cpp
@@ -797,6 +798,7 @@ endif()
 
 # Scores a saved network on held-out seeds: greedy, no root noise, win rate.
 add_executable(AlphaZeroEvaluate
+    src/run_ledger.cpp
     src/az_evaluate.cpp
     src/eval_options.cpp
     src/az_parameters.cpp

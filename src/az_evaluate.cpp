@@ -1,4 +1,5 @@
 #include <torch/torch.h>
+#include <process.h>
 #include <algorithm>
 #include <chrono>
 #include <format>
@@ -10,6 +11,7 @@
 #include "az_network.h"
 #include "az_parameters.h"
 #include "eval_options.h"
+#include "run_ledger.h"
 #include "mcts.h"
 #include "network_evaluator.h"
 #include "seed_policy.h"
@@ -43,6 +45,18 @@ int main(int argc, char** argv)
     }
     const int step_limit = settings.stepLimit();
 
+    // Opened before any work, so a run that is killed leaves a started row and no
+    // completion - the only way a killed process records what happened to it.
+    ledger::Entry run{ledger::makeRunId(ledger::utcNow(), static_cast<unsigned int>(_getpid())),
+                      ledger::utcNow(),
+                      ledger::Kind::Evaluation,
+                      ledger::formatCommand(std::vector<std::string>(argv + 1, argv + argc)),
+                      ledger::Outcome::Started,
+                      0.0,
+                      0,
+                      0};
+    ledger::append(settings.ledger_path, run);
+
     const bool cuda = torch::cuda::is_available();
     torch::Device device = cuda ? torch::Device(torch::kCUDA) : torch::Device(torch::kCPU);
 
@@ -54,6 +68,8 @@ int main(int argc, char** argv)
     catch (const std::exception& error)
     {
         std::cerr << "could not load " << settings.checkpoint << ": " << error.what() << std::endl;
+        run.outcome = ledger::Outcome::Failed;
+        ledger::append(settings.ledger_path, run);
         return 1;
     }
     network->to(device);
@@ -173,6 +189,11 @@ int main(int argc, char** argv)
                              static_cast<double>(total_steps) / settings.games);
     std::cout << std::format("Endings: {} won, {} died, {} timed out\n", wins, deaths, timeouts);
     std::cout << std::format("Took {:.2f}s, {} evaluations\n", seconds, evaluator.evaluations());
+
+    run.outcome = ledger::Outcome::Finished;
+    run.seconds = seconds;
+    run.games = settings.games;
+    ledger::append(settings.ledger_path, run);
 
     return wins == settings.games ? 0 : 1;
 }

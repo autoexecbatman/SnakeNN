@@ -49,6 +49,10 @@ struct Settings
     unsigned int seed = 1;
     std::string checkpoint;
     std::string resume;
+    // Where this run records what it cost. Relative to the launch directory, which
+    // is build/Release and is not version controlled, so a run meant to leave a
+    // durable record passes --ledger ../../docs/runs.tsv.
+    std::string ledger_path = "runs.tsv";
 
     int cellCount() const noexcept { return board * board; }
     // The snake starts one segment long, so this many apples fills the board.

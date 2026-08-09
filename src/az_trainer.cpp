@@ -1,5 +1,6 @@
-﻿#include <torch/torch.h>
+#include <torch/torch.h>
 
+#include <process.h>
 #include <algorithm>
 #include <chrono>
 #include <deque>
@@ -8,10 +9,12 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "az_network.h"
 #include "az_parameters.h"
 #include "network_evaluator.h"
+#include "run_ledger.h"
 #include "seed_policy.h"
 #include "selfplay.h"
 #include "trainer_options.h"
@@ -77,6 +80,18 @@ int main(int argc, char** argv)
     const int step_limit = settings.stepLimit();
     torch::manual_seed(settings.seed);
 
+    // Opened before any work, so a run that is killed leaves a started row and no
+    // completion - the only way a killed process records what happened to it.
+    ledger::Entry run{ledger::makeRunId(ledger::utcNow(), static_cast<unsigned int>(_getpid())),
+                      ledger::utcNow(),
+                      ledger::Kind::Training,
+                      ledger::formatCommand(std::vector<std::string>(argv + 1, argv + argc)),
+                      ledger::Outcome::Started,
+                      0.0,
+                      0,
+                      0};
+    ledger::append(settings.ledger_path, run);
+
     const bool cuda = torch::cuda::is_available();
     torch::Device device = cuda ? torch::Device(torch::kCUDA) : torch::Device(torch::kCPU);
 
@@ -103,6 +118,8 @@ int main(int argc, char** argv)
         catch (const std::exception& error)
         {
             std::cerr << "could not load " << settings.resume << ": " << error.what() << std::endl;
+            run.outcome = ledger::Outcome::Failed;
+            ledger::append(settings.ledger_path, run);
             return 1;
         }
     }
@@ -172,6 +189,12 @@ int main(int argc, char** argv)
     std::deque<TrainingRecord> replay;
     size_t replay_bytes_used = 0;
     const int foods_to_win = settings.foodsToWin();
+
+    // Counted rather than derived from the settings: a run reports what it did, not
+    // what it was asked to do.
+    long long games_played_total = 0;
+    long long samples_trained_total = 0;
+    const auto run_started = std::chrono::high_resolution_clock::now();
 
     for (int iteration = first_iteration; iteration <= last_iteration; iteration++)
     {
@@ -338,6 +361,9 @@ int main(int argc, char** argv)
                                static_cast<long long>(evaluations / std::max(0.001, play_seconds)));
         std::cout << summary << std::endl;
 
+        games_played_total += static_cast<long long>(summaries.size());
+        samples_trained_total += static_cast<long long>(batches_run) * settings.batch_size;
+
         if (!settings.checkpoint.empty())
         {
             torch::save(network, settings.checkpoint);
@@ -345,5 +371,14 @@ int main(int argc, char** argv)
     }
 
     std::cout << std::endl << "Done." << std::endl;
+
+    run.outcome = ledger::Outcome::Finished;
+    run.seconds =
+        std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - run_started)
+            .count();
+    run.games = games_played_total;
+    run.samples = samples_trained_total;
+    ledger::append(settings.ledger_path, run);
+
     return 0;
 }

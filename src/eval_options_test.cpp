@@ -167,6 +167,10 @@ std::vector<std::string> differingFields(const evaluation::Settings& left,
     {
         names.push_back("batch");
     }
+    if (left.ledger_path != right.ledger_path)
+    {
+        names.push_back("ledger_path");
+    }
     return names;
 }
 
@@ -198,6 +202,7 @@ void defaultsAreTheOnesTheHeaderStates()
     expectEquals("default blocks", 4, settings.blocks);
     expectUnsignedEquals("default seed offset", 0u, settings.seed_offset);
     expectEquals("default batch", 64, settings.batch);
+    expectText("default ledger path", "runs.tsv", settings.ledger_path);
     if (settings.step_limit_override.has_value())
     {
         fail("default step limit", "an override is present when none was given");
@@ -214,6 +219,9 @@ void eachFlagWritesItsOwnField()
     expectOnlyFieldChanged("blocks", {"--blocks", "8"});
     expectOnlyFieldChanged("seed_offset", {"--seed", "512"});
     expectOnlyFieldChanged("batch", {"--batch", "200"});
+    // The launch directory is build/Release and git ignores it, so a run meant to
+    // leave a durable record has to be told where the ledger is.
+    expectOnlyFieldChanged("ledger_path", {"--ledger", "../../docs/runs.tsv"});
 }
 
 void derivesTheStepLimitFromTheBoard()
