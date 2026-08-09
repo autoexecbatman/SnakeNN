@@ -1,11 +1,11 @@
-#include "trainer_options.h"
-#include <cassert>
+﻿#include <cassert>
 #include <format>
-#include <functional>
 #include <iostream>
 #include <string>
 #include <type_traits>
 #include <vector>
+
+#include "trainer_options.h"
 
 // Settings is a value: it holds two std::strings and a pile of ints, nothing
 // owns a resource, and the compiler's copy is the right one. Pinned so that a
@@ -18,15 +18,7 @@ static_assert(std::is_copy_assignable<trainer::Settings>::value,
 static_assert(std::is_nothrow_move_constructible<trainer::Settings>::value,
               "Settings should move without allocating");
 
-// The paper's numbers, restated here against the header. Written out as literals
-// on purpose: comparing the constant to itself would pass forever, so the test
-// carries its own copy of what Du et al. 2022 report and fails if the header
-// drifts from it.
-static_assert(trainer::DISCOUNT == 0.98f, "the paper's discount is 0.98");
-static_assert(trainer::EXPLORATION == 0.5f, "the paper's c_puct is 0.5");
-static_assert(trainer::VISIT_TEMPERATURE == 0.5f, "the paper's visit temperature is 0.5");
-static_assert(trainer::LEARNING_RATE == 0.001f, "the paper's learning rate is 0.001");
-static_assert(trainer::STEPS_PER_CELL == 12, "1200 steps on a 10x10 board is 12 per cell");
+// The paper's constants are pinned in az_parameters_test.cpp, which owns them.
 
 namespace
 {

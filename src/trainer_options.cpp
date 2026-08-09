@@ -1,11 +1,12 @@
-#include "trainer_options.h"
 #include <algorithm>
 #include <cassert>
 #include <charconv>
-#include <cmath>
 #include <format>
 #include <stdexcept>
 #include <string>
+
+#include "az_parameters.h"
+#include "trainer_options.h"
 
 namespace trainer
 {
@@ -95,9 +96,7 @@ int Settings::stepLimit() const
         assert(*step_limit_override >= 1 && "a step limit of zero would end every game at once");
         return *step_limit_override;
     }
-    const int derived = STEPS_PER_CELL * cellCount();
-    assert(derived >= 1 && "the derived step limit overflowed or underflowed");
-    return derived;
+    return az::deriveStepLimit(board);
 }
 
 Settings parseArguments(std::span<const char* const> arguments)

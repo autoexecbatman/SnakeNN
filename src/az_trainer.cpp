@@ -1,9 +1,5 @@
-#include <torch/torch.h>
-#include "az_network.h"
-#include "network_evaluator.h"
-#include "seed_policy.h"
-#include "selfplay.h"
-#include "trainer_options.h"
+﻿#include <torch/torch.h>
+
 #include <algorithm>
 #include <chrono>
 #include <deque>
@@ -12,6 +8,13 @@
 #include <iostream>
 #include <span>
 #include <string>
+
+#include "az_network.h"
+#include "az_parameters.h"
+#include "network_evaluator.h"
+#include "seed_policy.h"
+#include "selfplay.h"
+#include "trainer_options.h"
 
 // AlphaZero training loop for Snake.
 //
@@ -107,21 +110,21 @@ int main(int argc, char** argv)
 
     NetworkEvaluator evaluator(network, device);
     torch::optim::Adam optimizer(network->parameters(),
-                                 torch::optim::AdamOptions(trainer::LEARNING_RATE));
+                                 torch::optim::AdamOptions(az::LEARNING_RATE));
 
     MonteCarloSearch::Config search_config;
     search_config.simulations = settings.simulations;
-    search_config.exploration = trainer::EXPLORATION;
-    search_config.discount = trainer::DISCOUNT;
-    search_config.root_noise_fraction = trainer::ROOT_NOISE_FRACTION;
-    search_config.root_noise_alpha = trainer::ROOT_NOISE_ALPHA;
+    search_config.exploration = az::EXPLORATION;
+    search_config.discount = az::DISCOUNT;
+    search_config.root_noise_fraction = az::ROOT_NOISE_FRACTION;
+    search_config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
     search_config.seed = settings.seed;
 
     SelfPlay::Config play_config;
     play_config.games_in_parallel = settings.games_per_iteration;
     play_config.step_limit = step_limit;
-    play_config.discount = trainer::DISCOUNT;
-    play_config.temperature = trainer::VISIT_TEMPERATURE;
+    play_config.discount = az::DISCOUNT;
+    play_config.temperature = az::VISIT_TEMPERATURE;
     play_config.temperature_moves = settings.cellCount() / 2;
     play_config.seed = settings.seed;
 

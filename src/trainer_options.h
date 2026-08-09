@@ -17,23 +17,9 @@
 namespace trainer
 {
 
-// Hyperparameters from Du, Gemp, Wu and Wu 2022 (arXiv:2211.09622), the paper
-// this stack reproduces. They live here rather than at the two call sites that
-// build the search config and the self-play config, because the discount was
-// written out twice and two copies of one number are two numbers waiting to
-// disagree. Deviating from these knowingly is allowed; deviating by accident is
-// what a single definition prevents.
-constexpr float DISCOUNT = 0.98f;
-constexpr float EXPLORATION = 0.5f;  // c_puct
-constexpr float VISIT_TEMPERATURE = 0.5f;
-constexpr float LEARNING_RATE = 0.001f;
-constexpr float ROOT_NOISE_FRACTION = 0.25f;
-constexpr float ROOT_NOISE_ALPHA = 0.3f;
-
-// The paper caps a 10x10 game at 1,200 steps, which is twelve steps per cell.
-// Scaling by area rather than fixing the number keeps "win" meaning the same
-// thing at every board size the curriculum passes through.
-constexpr int STEPS_PER_CELL = 12;
+// The paper's hyperparameters are in az_parameters.h, which the evaluator and the
+// visual also include. They were here first, which made this header a dependency
+// of two programs that are not the trainer.
 
 // Plain aggregate, so the rule of zero applies as written: no member owns a
 // resource, the compiler's copy is correct, and there is nothing to delete. That

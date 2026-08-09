@@ -570,6 +570,7 @@ endif()
 # `ctest -C Debug` from the build directory, or build and run a target directly.
 enable_testing()
 
+
 # Cycle validity test - no LibTorch, no raylib, runs anywhere
 add_executable(CycleTest
     src/cycle_test.cpp
@@ -692,10 +693,21 @@ add_test(NAME selfplay_properties COMMAND SelfPlayTest)
 add_executable(TrainerOptionsTest
     src/trainer_options_test.cpp
     src/trainer_options.cpp
+    src/az_parameters.cpp
 )
 
 set_property(TARGET TrainerOptionsTest PROPERTY CXX_STANDARD 20)
 add_test(NAME trainer_options COMMAND TrainerOptionsTest)
+
+# The paper's hyperparameters and the step limit derived from the board area.
+# No LibTorch.
+add_executable(ParametersTest
+    src/az_parameters_test.cpp
+    src/az_parameters.cpp
+)
+
+set_property(TARGET ParametersTest PROPERTY CXX_STANDARD 20)
+add_test(NAME az_parameters COMMAND ParametersTest)
 
 # Command-line number parsing, shared by the trainer, the evaluator and the
 # visual. No LibTorch, so its assertions and its throws are reachable in Debug.
@@ -711,6 +723,7 @@ add_test(NAME flag_parser COMMAND FlagParserTest)
 add_executable(AlphaZeroTrainer
     src/az_trainer.cpp
     src/trainer_options.cpp
+    src/az_parameters.cpp
     src/selfplay.cpp
     src/mcts.cpp
     src/network_evaluator.cpp
