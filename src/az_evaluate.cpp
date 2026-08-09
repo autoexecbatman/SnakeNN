@@ -1,15 +1,19 @@
 #include <torch/torch.h>
-#include "az_network.h"
-#include "mcts.h"
-#include "network_evaluator.h"
-#include "seed_policy.h"
-#include "snake_env.h"
 #include <algorithm>
 #include <chrono>
 #include <format>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
+
+#include "az_network.h"
+#include "az_parameters.h"
+#include "eval_options.h"
+#include "mcts.h"
+#include "network_evaluator.h"
+#include "seed_policy.h"
+#include "snake_env.h"
 
 // Scores a saved network on held-out seeds.
 //
@@ -23,91 +27,21 @@
 // step limit. Average score is reported next to it and must not be read as
 // partial credit toward a win.
 
-namespace
-{
-
-struct Settings
-{
-    std::string checkpoint;
-    int board = 6;
-    int games = 64;
-    int simulations = 200;
-    int step_limit = 0;
-    int channels = 64;
-    int blocks = 4;
-    // An offset within the reserved evaluation range, not an absolute seed. The
-    // old default was the absolute 900000 and it was not held out at all - see
-    // seed_policy.h.
-    unsigned int seed_offset = 0;
-    int batch = 64;
-};
-
-Settings parseArguments(int argc, char** argv)
-{
-    Settings settings;
-    for (int index = 1; index + 1 < argc; index += 2)
-    {
-        std::string flag = argv[index];
-        std::string value = argv[index + 1];
-        if (flag == "--checkpoint")
-        {
-            settings.checkpoint = value;
-        }
-        else if (flag == "--board")
-        {
-            settings.board = std::stoi(value);
-        }
-        else if (flag == "--games")
-        {
-            settings.games = std::stoi(value);
-        }
-        else if (flag == "--simulations")
-        {
-            settings.simulations = std::stoi(value);
-        }
-        else if (flag == "--step-limit")
-        {
-            settings.step_limit = std::stoi(value);
-        }
-        else if (flag == "--channels")
-        {
-            settings.channels = std::stoi(value);
-        }
-        else if (flag == "--blocks")
-        {
-            settings.blocks = std::stoi(value);
-        }
-        else if (flag == "--seed")
-        {
-            settings.seed_offset = static_cast<unsigned int>(std::stoul(value));
-        }
-        else if (flag == "--batch")
-        {
-            settings.batch = std::stoi(value);
-        }
-        else
-        {
-            std::cerr << "unknown flag: " << flag << std::endl;
-        }
-    }
-    if (settings.step_limit == 0)
-    {
-        settings.step_limit = 12 * settings.board * settings.board;
-    }
-    return settings;
-}
-
-}  // namespace
-
 int main(int argc, char** argv)
 {
-    Settings settings = parseArguments(argc, argv);
-    if (settings.checkpoint.empty())
+    evaluation::Settings settings;
+    try
     {
+        settings = evaluation::parseArguments(std::vector<std::string>(argv + 1, argv + argc));
+    }
+    catch (const std::invalid_argument& error)
+    {
+        std::cerr << error.what() << std::endl;
         std::cerr << "usage: --checkpoint <file> [--board N] [--games N] [--simulations N]"
                   << std::endl;
         return 2;
     }
+    const int step_limit = settings.stepLimit();
 
     const bool cuda = torch::cuda::is_available();
     torch::Device device = cuda ? torch::Device(torch::kCUDA) : torch::Device(torch::kCPU);
@@ -128,7 +62,7 @@ int main(int argc, char** argv)
     std::cout << "=== Evaluation ===" << std::endl;
     std::cout << std::format("{} on {}x{}, {} games, {} simulations, step limit {}\n",
                              settings.checkpoint, settings.board, settings.board, settings.games,
-                             settings.simulations, settings.step_limit);
+                             settings.simulations, step_limit);
     // The range really is reserved now, and the reservation is enforced rather
     // than asserted: seed_policy.h owns both bands, and requireTrainingSeed throws
     // before an iteration is played if a training seed ever reaches this one.
@@ -148,14 +82,16 @@ int main(int argc, char** argv)
 
     MonteCarloSearch::Config search_config;
     search_config.simulations = settings.simulations;
-    search_config.exploration = 0.5f;
-    search_config.discount = 0.98f;
+    search_config.exploration = az::EXPLORATION;
+    search_config.discount = az::DISCOUNT;
+    // Off, deliberately: noise is what makes self-play explore, and a number
+    // measured with it on describes the exploration policy rather than the agent.
     search_config.root_noise_fraction = 0.0f;
-    search_config.root_noise_alpha = 0.3f;
+    search_config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
     search_config.seed = seeds::evaluationGameSeed(settings.seed_offset, 0);
     MonteCarloSearch search(evaluator, search_config);
 
-    const int foods_to_win = settings.board * settings.board - 1;
+    const int foods_to_win = settings.foodsToWin();
     int wins = 0;
     int timeouts = 0;
     int deaths = 0;
@@ -187,7 +123,7 @@ int main(int argc, char** argv)
                 {
                     continue;
                 }
-                if (games[index].steps() >= settings.step_limit)
+                if (games[index].steps() >= step_limit)
                 {
                     timed_out[index] = true;
                     continue;

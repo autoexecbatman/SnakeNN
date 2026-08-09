@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.18)
 project(SnakeNN CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -744,6 +744,21 @@ set_property(TARGET FlagParserTest PROPERTY CXX_STANDARD 20)
 enable_strict_warnings(FlagParserTest)
 add_test(NAME flag_parser COMMAND FlagParserTest)
 
+# The evaluator's settings. Extracted from az_evaluate.cpp, whose parser warned
+# about an unknown flag and then scored the run with the default, and reached
+# std::stoi for every number. Every figure this project quotes comes out of that
+# program. No LibTorch, so its assertions and its throws are reachable in Debug.
+add_executable(EvalOptionsTest
+    src/eval_options_test.cpp
+    src/eval_options.cpp
+    src/az_parameters.cpp
+    src/flag_parser.cpp
+)
+
+set_property(TARGET EvalOptionsTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(EvalOptionsTest)
+add_test(NAME eval_options COMMAND EvalOptionsTest)
+
 # AlphaZero training loop.
 add_executable(AlphaZeroTrainer
     src/az_trainer.cpp
@@ -771,6 +786,9 @@ endif()
 # Scores a saved network on held-out seeds: greedy, no root noise, win rate.
 add_executable(AlphaZeroEvaluate
     src/az_evaluate.cpp
+    src/eval_options.cpp
+    src/az_parameters.cpp
+    src/flag_parser.cpp
     src/mcts.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
