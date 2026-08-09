@@ -35,7 +35,8 @@ constexpr unsigned int ITERATION_STRIDE = 100003u;
 // the same defect: `--resume` restored weights but not the counter, so every
 // restart regenerated the identical games and about 60 distinct seed bases were
 // all this project ever used.
-inline unsigned int trainingGameSeed(unsigned int run_seed, int iteration, int game_index)
+constexpr unsigned int trainingGameSeed(unsigned int run_seed, int iteration,
+                                        int game_index) noexcept
 {
     return run_seed + static_cast<unsigned int>(iteration) * ITERATION_STRIDE +
            static_cast<unsigned int>(game_index);
@@ -57,7 +58,7 @@ inline void requireTrainingSeed(unsigned int seed)
 }
 
 // The seed for one evaluation game. Held out by construction, not by intent.
-inline unsigned int evaluationGameSeed(unsigned int offset, int game_index)
+constexpr unsigned int evaluationGameSeed(unsigned int offset, int game_index) noexcept
 {
     return EVALUATION_BASE + offset + static_cast<unsigned int>(game_index);
 }
