@@ -96,29 +96,31 @@ def seed_band_check_is_exact(band_width):
             accepted != stays_in_band]
 
 
-def cell_count_overflows(upper_bound):
-    """Settings::cellCount computes board * board in int with no guard.
+def trainer_cell_count_is_safe(upper_bound):
+    """trainer::Settings::cellCount cannot overflow, because board is bounded.
 
-    src/trainer_options.h:53. requireUsable bounds board below at 2 and not above
-    (src/trainer_options.cpp:66), so the product is signed overflow - undefined
-    behaviour - for a board the parser accepts. The mutant supplies the bound
-    deriveStepLimit's boundary already implies.
+    src/trainer_options.h:53 squares the board in an int. requireUsable now bounds
+    it above at az::LARGEST_BOARD as well as below at 2. Until 2026-08-09 it bounded
+    only the lower end and a release build accepted board 46341, which is undefined
+    behaviour - the ceiling existed but was reached through an assert, so it was
+    absent from every build that ever trained anything.
     """
     board = Int("board")
     return [board >= 2, board <= upper_bound, board * board > INT_MAX]
 
 
-def last_iteration_overflows(upper_bound):
-    """Settings::lastIteration computes start_iteration + iterations - 1 in int.
+def last_iteration_is_safe(ceiling):
+    """trainer::Settings::lastIteration cannot overflow.
 
-    src/trainer_options.h:59. Both operands are bounded below at 1 and not above
-    (src/trainer_options.cpp:67-68).
+    src/trainer_options.h:59 computes start_iteration + iterations - 1 in an int.
+    requireUsable rejects the pair whose sum passes INT_MAX, compared in 64 bits
+    because the sum in 32 is the overflow being rejected.
     """
     start_iteration = Int("start_iteration")
     iterations = Int("iterations")
-    return [start_iteration >= 1, start_iteration <= upper_bound,
-            iterations >= 1, iterations <= upper_bound,
-            start_iteration + iterations - 1 > INT_MAX]
+    last = start_iteration + iterations - 1
+    return [start_iteration >= 1, iterations >= 1, start_iteration <= INT_MAX,
+            iterations <= INT_MAX, last <= ceiling, last > INT_MAX]
 
 
 CLAIMS = [
@@ -177,22 +179,22 @@ CLAIMS = [
         "mutant_note": "a band one seed too wide accepts the run that wraps to a training seed",
     },
     {
-        "name": "cell_count_overflows",
+        "name": "trainer_cell_count_is_safe",
         "source": "src/trainer_options.h:53",
-        "build": cell_count_overflows,
-        "expected": sat,
-        "true_value": INT_MAX,
-        "mutant_value": 13377,
-        "mutant_note": "bounding board at the step-limit boundary removes the overflow",
+        "build": trainer_cell_count_is_safe,
+        "expected": unsat,
+        "true_value": LARGEST_BOARD,
+        "mutant_value": INT_MAX,
+        "mutant_note": "without the ceiling the area overflows, as it did before 2026-08-09",
     },
     {
-        "name": "last_iteration_overflows",
+        "name": "last_iteration_is_safe",
         "source": "src/trainer_options.h:59",
-        "build": last_iteration_overflows,
-        "expected": sat,
+        "build": last_iteration_is_safe,
+        "expected": unsat,
         "true_value": INT_MAX,
-        "mutant_value": INT_MAX // 2,
-        "mutant_note": "halving both bounds makes the sum representable",
+        "mutant_value": 2 * INT_MAX,
+        "mutant_note": "a ceiling above INT_MAX admits the sum the check exists to reject",
     },
 ]
 

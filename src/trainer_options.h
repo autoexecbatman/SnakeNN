@@ -50,13 +50,13 @@ struct Settings
     std::string checkpoint;
     std::string resume;
 
-    int cellCount() const { return board * board; }
+    int cellCount() const noexcept { return board * board; }
     // The snake starts one segment long, so this many apples fills the board.
-    int foodsToWin() const { return cellCount() - 1; }
+    int foodsToWin() const noexcept { return cellCount() - 1; }
     // The override if one was given, the area-scaled default otherwise.
     int stepLimit() const;
     // Last iteration this run will play, inclusive.
-    int lastIteration() const { return start_iteration + iterations - 1; }
+    int lastIteration() const noexcept { return start_iteration + iterations - 1; }
 };
 
 // Parses the command line, or throws std::invalid_argument naming the flag.

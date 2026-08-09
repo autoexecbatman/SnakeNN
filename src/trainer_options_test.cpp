@@ -1,4 +1,4 @@
-﻿#include <cassert>
+#include <cassert>
 #include <format>
 #include <iostream>
 #include <string>
@@ -233,6 +233,16 @@ void testBadArgumentsAreRefusedRatherThanDefaulted()
                    "an explicit step limit of zero is refused rather than read as absent");
     expectRejected({"--replay-mb", "0"}, "a replay buffer of nothing is refused");
 
+    // Overflow, which the parser accepted and the derived quantities then hit as
+    // undefined behaviour. cellCount squares the board in an int, so 46341 is past
+    // the edge; the board's real ceiling is lower, at the largest whose step limit
+    // fits. lastIteration adds two ints that were each bounded below and not above.
+    expectRejected({"--board", "13378"},
+                   "a board whose step limit does not fit in an int is refused");
+    expectRejected({"--board", "46341"}, "and one whose area does not fit either");
+    expectRejected({"--start-iteration", "2147483647", "--iterations", "2"},
+                   "a last iteration past the end of an int is refused");
+
     // And the boundary on each side, so the checks are bounds and not blanket
     // rejections: a test that only feeds invalid values passes against a parser
     // that throws unconditionally.
@@ -241,6 +251,10 @@ void testBadArgumentsAreRefusedRatherThanDefaulted()
     expect(!throwsOnParse({"--batches", "0"}),
            "and an iteration that only plays, without training, is legal");
     expect(!throwsOnParse({}), "no arguments at all is legal and yields the defaults");
+    expect(!throwsOnParse({"--board", "13377"}),
+           "the largest board whose step limit fits is accepted");
+    expect(!throwsOnParse({"--start-iteration", "2147483646", "--iterations", "2"}),
+           "and a last iteration landing exactly on the end of an int is accepted");
 }
 
 void testDurationFormatting()

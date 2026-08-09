@@ -2,6 +2,7 @@
 #include <cassert>
 #include <charconv>
 #include <format>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -52,6 +53,15 @@ void requireAtLeast(const std::string& flag, int value, int floor)
     }
 }
 
+void requireAtMost(const std::string& flag, int value, int ceiling)
+{
+    if (value > ceiling)
+    {
+        throw std::invalid_argument(
+            std::format("{} must be at most {}, got {}", flag, ceiling, value));
+    }
+}
+
 // Everything that has to hold before a single game is played.
 //
 // These fire in the first millisecond of the process rather than partway into an
@@ -64,8 +74,23 @@ void requireUsable(const Settings& settings)
     // constructed - after the device, the checkpoint and the optimizer are set
     // up. Checking here means the message names the flag.
     requireAtLeast("--board", settings.board, 2);
+    // cellCount squares this in an int and stepLimit multiplies it by twelve, so
+    // the ceiling is not decoration. Enforced here rather than left to
+    // deriveStepLimit, whose throw was reached only through an assert - so a
+    // release build accepted a board that then overflowed.
+    requireAtMost("--board", settings.board, az::LARGEST_BOARD);
     requireAtLeast("--iterations", settings.iterations, 1);
     requireAtLeast("--start-iteration", settings.start_iteration, 1);
+    // lastIteration adds these two. Compared in 64 bits, since the sum in 32 is
+    // the overflow being rejected.
+    const long long last_iteration =
+        static_cast<long long>(settings.start_iteration) + settings.iterations - 1;
+    if (last_iteration > std::numeric_limits<int>::max())
+    {
+        throw std::invalid_argument(std::format(
+            "--start-iteration {} with {} iterations ends at {}, past the end of an int",
+            settings.start_iteration, settings.iterations, last_iteration));
+    }
     requireAtLeast("--games", settings.games_per_iteration, 1);
     requireAtLeast("--simulations", settings.simulations, 1);
     requireAtLeast("--channels", settings.channels, 1);
