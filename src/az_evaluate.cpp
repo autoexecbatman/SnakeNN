@@ -59,24 +59,12 @@ int main(int argc, char** argv)
     network->to(device);
     network->eval();
 
-    std::cout << "=== Evaluation ===" << std::endl;
-    std::cout << std::format("{} on {}x{}, {} games, {} simulations, step limit {}\n",
-                             settings.checkpoint, settings.board, settings.board, settings.games,
-                             settings.simulations, step_limit);
-    // The range really is reserved now, and the reservation is enforced rather
-    // than asserted: seed_policy.h owns both bands, and requireTrainingSeed throws
-    // before an iteration is played if a training seed ever reaches this one.
-    //
-    // It was not always so. Training seeds were `seed + iteration * 100003` from a
-    // default seed of 1, so iteration 9 covered 900028..900283 and overlapped the
-    // old default range here by 172 of 200 - and the comment in this spot claimed
-    // the range was held out while nothing checked it. Any figure measured before
-    // 2026-08-08 was scored partly on games the agent had trained on, and is not
-    // comparable with anything printed below. SeedPolicyTest reproduces the old
-    // arithmetic so the overlap cannot come back quietly.
-    std::cout << std::format("seeds {}..{} (reserved evaluation range), greedy, no root noise\n\n",
-                             seeds::evaluationGameSeed(settings.seed_offset, 0),
-                             seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1));
+    // The range really is reserved, and the reservation is enforced rather than
+    // asserted: seed_policy.h owns both bands, and requireTrainingSeed throws before
+    // an iteration is played if a training seed ever reaches this one. Any figure
+    // measured before 2026-08-08 was scored partly on games the agent had trained
+    // on and is not comparable with anything printed below.
+    std::cout << evaluation::formatHeader(settings);
 
     NetworkEvaluator evaluator(network, device);
 
@@ -149,18 +137,25 @@ int main(int argc, char** argv)
             total_score += game.score();
             total_steps += game.steps();
             best_score = std::max(best_score, game.score());
+
+            evaluation::Outcome outcome = evaluation::Outcome::Died;
             if (game.won())
             {
+                outcome = evaluation::Outcome::Won;
                 wins++;
             }
             else if (timed_out[index])
             {
+                outcome = evaluation::Outcome::TimedOut;
                 timeouts++;
             }
             else
             {
                 deaths++;
             }
+            std::cout << evaluation::formatGameLine(
+                seeds::evaluationGameSeed(settings.seed_offset, start + index), outcome,
+                game.score(), game.steps());
         }
 
         std::cout << std::format("  {}/{} games, wins {}\n", start + count, settings.games, wins);

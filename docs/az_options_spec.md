@@ -105,8 +105,26 @@ time rather than this time.
 - **Properties 1, 2 and 3 now pass**: the measure reads zero `std::stoi`, zero
   `step_limit == 0`, zero `12 * settings.board` and zero search literals across both
   programs, and every bad input stops before the checkpoint load.
-- Property 5 - per-game output lines and the batch recorded in the header - is the
-  only part of this spec not started, and it is the two remaining failures.
+- **Property 5 - done, 2026-08-09.** `evaluation::formatHeader` and
+  `evaluation::formatGameLine` return strings rather than printing, which is what
+  makes their content checkable at all; `az_evaluate.cpp` prints what they return.
+  The header carries the batch. Each game gets `  game seed N, won|died|timeout,
+  score N, steps N`, tagged so a parser finds it without matching the progress
+  lines, and the three outcome words are chosen so none is a substring of another.
+  Mutation 53 of 53 across the file.
+
+**The measure runs clean: 0 failures.** All five properties.
+
+**Property 4 re-measured after the output changed**, because a formatting change
+that moved the number would look exactly like one that did not: 36 wins again, and
+mean score 90.188, mean steps 1038.016 and 12,245,942 evaluations all identical to
+the run before it. The change is output-only, measured rather than assumed.
+`build/Release/acceptance_iter123_paired.log`, 64 game lines for 64 games, parsing
+to 64 distinct seeds and 36/19/9 won/timeout/died.
+
+The paired comparison the memory note asks for now needs only a second log:
+`az10_iter140.pt` has never been evaluated, and two runs over the same seed offset
+at the same batch give McNemar the per-game table the totals could not.
 
 ### Two decisions taken in the visual, which the evaluator did not force
 

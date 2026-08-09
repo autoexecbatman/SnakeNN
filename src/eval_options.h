@@ -63,6 +63,32 @@ struct Settings
 // the training range rather than an error anything would notice.
 Settings parseArguments(std::span<const std::string> arguments);
 
+// How one game ended. Exhaustive: a game that is not won and did not time out
+// died, and there is no fourth state.
+enum class Outcome
+{
+    Won,
+    Died,
+    TimedOut
+};
+
+// The header the run prints, ending in a blank line.
+//
+// Carries the batch, which is not a throughput knob: mcts.cpp draws every
+// simulation's food placement from one generator in lockstep across the batch, so
+// two runs at different batch sizes searched different futures and are not
+// comparable. Two logs that do not record it cannot be told apart afterwards, which
+// is what confounded the iter110-to-iter123 comparison.
+std::string formatHeader(const Settings& settings);
+
+// One game's outcome, one line, ending in a newline.
+//
+// Tagged with "game" so a parser finds these without matching the progress lines,
+// and keyed by seed so two runs over the same seeds can be paired. Totals alone
+// force an unpaired test on paired data, which is the wrong test and a conservative
+// one - McNemar needs these lines.
+std::string formatGameLine(unsigned int seed, Outcome outcome, int score, int steps);
+
 }  // namespace evaluation
 
 // The visual demo's settings.

@@ -148,6 +148,33 @@ Settings parseArguments(std::span<const std::string> arguments)
     return settings;
 }
 
+std::string formatHeader(const Settings& settings)
+{
+    return std::format(
+        "=== Evaluation ===\n"
+        "{} on {}x{}, {} games, {} simulations, step limit {}, batch {}\n"
+        "seeds {}..{} (reserved evaluation range), greedy, no root noise\n\n",
+        settings.checkpoint, settings.board, settings.board, settings.games, settings.simulations,
+        settings.stepLimit(), settings.batch, seeds::evaluationGameSeed(settings.seed_offset, 0),
+        seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1));
+}
+
+std::string formatGameLine(unsigned int seed, Outcome outcome, int score, int steps)
+{
+    // Three words, none a substring of another, so a parser matching on the word
+    // cannot read one outcome as another.
+    std::string_view word = "died";
+    if (outcome == Outcome::Won)
+    {
+        word = "won";
+    }
+    else if (outcome == Outcome::TimedOut)
+    {
+        word = "timeout";
+    }
+    return std::format("  game seed {}, {}, score {}, steps {}\n", seed, word, score, steps);
+}
+
 }  // namespace evaluation
 
 namespace visual

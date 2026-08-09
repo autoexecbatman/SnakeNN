@@ -51,6 +51,18 @@ $mutants = @(
   @{ name = "step_limit_always_override"; from = "return az::deriveStepLimit(board);"; to = "return 1200;" },
   @{ name = "cells_off_by_one";      from = "return board * board;"; to = "return board * board + 1;" },
   @{ name = "foods_off_by_one";      from = "return cellCount() - 1;"; to = "return cellCount();" },
+  # The two formatters. A log that drops one of these fields is a log a later
+  # comparison cannot be run from, and nothing about the run would look wrong.
+  @{ name = "header_drops_batch";    from = ", step limit {}, batch {}"; to = ", step limit {}" },
+  @{ name = "header_drops_limit";    from = "{} simulations, step limit {}"; to = "{} simulations" },
+  @{ name = "header_first_seed_is_last"; from = "seeds::evaluationGameSeed(settings.seed_offset, 0),"; to = "seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1)," },
+  @{ name = "header_no_blank_line";  from = "greedy, no root noise\n\n"; to = "greedy, no root noise\n" },
+  @{ name = "line_drops_seed";       from = '"  game seed {}, {}, score {}, steps {}\n", seed, word'; to = '"  game seed x, {}, score {}, steps {}\n", word' },
+  @{ name = "line_drops_tag";        from = '"  game seed {}'; to = '"  seed {}' },
+  @{ name = "line_no_newline";       from = 'steps {}\n", seed'; to = 'steps {}", seed' },
+  @{ name = "won_reads_as_died";     from = 'word = "won";'; to = "" },
+  @{ name = "timeout_reads_as_died"; from = 'word = "timeout";'; to = "" },
+  @{ name = "timeout_contains_won";  from = 'word = "timeout";'; to = 'word = "won-timeout";' },
   # visual. The two parsers share a body shape, so every mutant here is scoped to
   # the second namespace or it lands in the evaluator's copy.
   @{ name = "v_board_floor_gone";    scope = "namespace visual"; from = 'flags::requireAtLeast("--board", settings.board, 2);'; to = "" },

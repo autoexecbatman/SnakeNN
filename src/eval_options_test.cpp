@@ -277,6 +277,92 @@ void rejectsASeedRangeThatLeavesTheReservedBand()
     expectRejectedSaying("not negative", {"--checkpoint", "model.pt", "--seed", "-1"});
 }
 
+void expectContains(std::string_view what, std::string_view needle, std::string_view text)
+{
+    if (text.find(needle) == std::string_view::npos)
+    {
+        fail(what, std::format("'{}' is absent from: {}", needle, text));
+    }
+}
+
+// The header carries every setting that changes the number underneath it. The
+// batch is the one that was missing and the one that confounded a comparison.
+void theHeaderRecordsWhatWouldChangeTheResult()
+{
+    const evaluation::Settings settings = parseWithCheckpoint(
+        {"--board", "10", "--games", "64", "--simulations", "200", "--batch", "64"});
+    const std::string header = evaluation::formatHeader(settings);
+
+    expectContains("header checkpoint", "model.pt", header);
+    expectContains("header board", "10x10", header);
+    expectContains("header games", "64 games", header);
+    expectContains("header simulations", "200 simulations", header);
+    expectContains("header step limit", "step limit 1200", header);
+    expectContains("header batch", "batch 64", header);
+    // The first and last seed of the reserved band this run covers, written out
+    // from EVALUATION_BASE rather than read back from the header.
+    expectContains("header first seed", "3758096384", header);
+    expectContains("header last seed", "3758096447", header);
+    if (header.size() < 2 || header.substr(header.size() - 2) != "\n\n")
+    {
+        fail("header", "does not end in a blank line");
+    }
+}
+
+// A seed, an outcome and the two numbers, in a line a parser can key on.
+void eachGameGetsALineThatCanBePaired()
+{
+    const std::string won =
+        evaluation::formatGameLine(3758096384u, evaluation::Outcome::Won, 99, 1032);
+    const std::string died =
+        evaluation::formatGameLine(3758096385u, evaluation::Outcome::Died, 41, 502);
+    const std::string timed_out =
+        evaluation::formatGameLine(3758096386u, evaluation::Outcome::TimedOut, 87, 1200);
+
+    expectContains("won line seed", "3758096384", won);
+    expectContains("won line score", "score 99", won);
+    expectContains("won line steps", "steps 1032", won);
+    expectContains("died line seed", "3758096385", died);
+    expectContains("timed out line seed", "3758096386", timed_out);
+
+    // Tagged, so a parser finds these and not the progress lines.
+    expectContains("game tag", "game ", won);
+    for (const std::string& line : {won, died, timed_out})
+    {
+        if (line.empty() || line.back() != '\n')
+        {
+            fail("game line", std::format("does not end in a newline: {}", line));
+        }
+        if (line.find('\n') != line.size() - 1)
+        {
+            fail("game line", std::format("is more than one line: {}", line));
+        }
+    }
+
+    // Three outcomes, three distinct words, or a parser cannot tell them apart.
+    const std::string won_word = won.substr(0, won.find("score"));
+    const std::string died_word = died.substr(0, died.find("score"));
+    const std::string timed_out_word = timed_out.substr(0, timed_out.find("score"));
+    if (won_word.find("won") == std::string::npos)
+    {
+        fail("won outcome", std::format("does not say 'won': {}", won));
+    }
+    if (died_word.find("died") == std::string::npos)
+    {
+        fail("died outcome", std::format("does not say 'died': {}", died));
+    }
+    if (timed_out_word.find("timeout") == std::string::npos)
+    {
+        fail("timed out outcome", std::format("does not say 'timeout': {}", timed_out));
+    }
+    // "timeout" must not read as a win or a death to a parser matching substrings.
+    if (timed_out_word.find("won") != std::string::npos ||
+        timed_out_word.find("died") != std::string::npos)
+    {
+        fail("timed out outcome", std::format("also matches another outcome: {}", timed_out));
+    }
+}
+
 visual::Settings parseVisual(const std::vector<std::string>& arguments)
 {
     return visual::parseArguments(std::span<const std::string>(arguments));
@@ -452,6 +538,8 @@ int main()
     acceptsTheEdgesOfEveryRange();
     rejectsBeforeAnyWorkIsDone();
     rejectsASeedRangeThatLeavesTheReservedBand();
+    theHeaderRecordsWhatWouldChangeTheResult();
+    eachGameGetsALineThatCanBePaired();
 
     theVisualDefaultsAreTheOnesTheHeaderStates();
     eachVisualFlagWritesItsOwnField();

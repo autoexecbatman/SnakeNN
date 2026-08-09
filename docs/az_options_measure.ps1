@@ -63,14 +63,20 @@ $stoi = (Select-String -Path "$root/src/az_evaluate.cpp","$root/src/az_visual.cp
 Report "unvalidated std::stoi / std::stoul calls" 0 $stoi | Out-Null
 
 Write-Host "`n=== Property 5: per-game outcomes and a recorded batch ==="
-# One line per game, tagged so a log parser can find them without guessing at
-# the progress lines. The expected value is a constant, not a copy of the actual -
-# the first version of this compared the reading to itself and printed PASS
-# whatever the source said.
-$per_game = (Select-String -Path "$root/src/az_evaluate.cpp" -Pattern '"\s*game ').Count
-Report "per-game output lines emitted" $true ($per_game -gt 0) | Out-Null
-$batch_in_header = (Select-String -Path "$root/src/az_evaluate.cpp" -Pattern "batch \{\}").Count
+# Two checks, because the text and the call site can each be wrong on their own.
+# The strings live in eval_options.cpp, where a test pins their content; what
+# az_evaluate.cpp has to do is call the formatters, once per game and once per run.
+# Grepping the evaluator for the text would have failed on correct code the moment
+# the formatting moved, which is a check measuring where a string lives rather than
+# what the program prints.
+$per_game_text = (Select-String -Path "$root/src/eval_options.cpp" -Pattern '"\s*game ').Count
+Report "per-game line format exists" $true ($per_game_text -gt 0) | Out-Null
+$per_game_call = (Select-String -Path "$root/src/az_evaluate.cpp" -Pattern "formatGameLine\(").Count
+Report "per-game output lines emitted" $true ($per_game_call -gt 0) | Out-Null
+$batch_in_header = (Select-String -Path "$root/src/eval_options.cpp" -Pattern "batch \{\}").Count
 Report "batch recorded in the evaluation header" $true ($batch_in_header -gt 0) | Out-Null
+$header_call = (Select-String -Path "$root/src/az_evaluate.cpp" -Pattern "formatHeader\(").Count
+Report "the header the evaluator prints is that one" $true ($header_call -gt 0) | Out-Null
 
 Write-Host "`n=== Property 4: the measurement does not move ==="
 Write-Host "  baseline, read from build/Release/eval123_limit1200.log line 5:"
