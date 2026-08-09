@@ -6,6 +6,10 @@
 Language: Cpp
 BasedOnStyle: Google
 
+# Braced initialisers read as initialisation, not as a function call: int foo{ 0 },
+# not int foo{0}. Google's default is the second, so this has to be said.
+Cpp11BracedListStyle: false
+
 BreakBeforeBraces: Allman
 ColumnLimit: 100
 IndentWidth: 4
