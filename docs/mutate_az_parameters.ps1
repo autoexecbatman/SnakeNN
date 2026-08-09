@@ -11,14 +11,16 @@ $original = Get-Content "$src/az_parameters.cpp" -Raw -Encoding UTF8
 
 $mutants = @(
   @{ name = "wrong_steps_per_cell"; file = "az_parameters.h"; from = "STEPS_PER_CELL = 12"; to = "STEPS_PER_CELL = 11" },
-  @{ name = "linear_not_area";      from = "static_cast<long long>(board) * board"; to = "static_cast<long long>(board)" },
-  @{ name = "drop_overflow_guard";  from = "if (cells > largest_area)"; to = "if (false)" },
-  # Equivalent mutants, verified rather than assumed: largest_area is 178956970,
-  # neither it nor 178956971 is a perfect square, and consecutive board areas near
-  # the bound differ by 26755. No integer board observes the difference between
-  # >, >= and > +1, so these cannot be killed and are not a test gap.
-  @{ name = "guard_off_by_one";     equivalent = $true; from = "if (cells > largest_area)"; to = "if (cells > largest_area + 1)" },
-  @{ name = "guard_too_strict";     equivalent = $true; from = "if (cells > largest_area)"; to = "if (cells >= largest_area)" },
+  @{ name = "wrong_largest_board";  file = "az_parameters.h"; from = "LARGEST_BOARD = 13377"; to = "LARGEST_BOARD = 13376" },
+  @{ name = "linear_not_area";      from = "STEPS_PER_CELL) * board * board"; to = "STEPS_PER_CELL) * board" },
+  @{ name = "drop_overflow_guard";  from = "if (board > LARGEST_BOARD)"; to = "if (false)" },
+  # These two were labelled equivalent while the guard compared areas: largest_area
+  # was 178956970, no board area lands on it, so no integer observed the difference
+  # between >, >= and > +1. The guard now compares boards, where consecutive values
+  # differ by one, and both are killable. An equivalence argument is about the code
+  # it was written against and does not survive the code changing.
+  @{ name = "guard_off_by_one";     from = "if (board > LARGEST_BOARD)"; to = "if (board > LARGEST_BOARD + 1)" },
+  @{ name = "guard_too_strict";     from = "if (board > LARGEST_BOARD)"; to = "if (board >= LARGEST_BOARD)" },
   @{ name = "message_drops_board";  from = '"board {} is too large: its step limit does not fit in an int", board'; to = '"a board is too large: its step limit does not fit in an int"' }
 )
 
