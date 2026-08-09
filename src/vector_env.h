@@ -15,7 +15,7 @@
 class VectorEnv
 {
 public:
-    VectorEnv(int count, int width, int height, unsigned int base_seed);
+    VectorEnv(int count, int width, int height, unsigned int base_seed, int step_limit);
 
     void resetAll();
     void resetOne(int index);

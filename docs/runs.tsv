@@ -7,3 +7,11 @@ run_id	started_utc	kind	command	outcome	seconds	games	samples
 2026-08-09T12:26:29Z-47656	2026-08-09T12:26:29Z	training	--board 6 --iterations 1 --games 4 --simulations 8 --batches 2 --batch 8 --ledger ../../docs/runs.tsv	finished	1.25	4	16
 2026-08-09T12:37:10Z-3448	2026-08-09T12:37:10Z	evaluation	--checkpoint az10_iter140.pt --board 10 --games 64 --batch 64 --simulations 200 --step-limit 2400 --seed 0 --ledger ../../docs/runs.tsv	started	0.00	0	0
 2026-08-09T12:37:10Z-3448	2026-08-09T12:37:10Z	evaluation	--checkpoint az10_iter140.pt --board 10 --games 64 --batch 64 --simulations 200 --step-limit 2400 --seed 0 --ledger ../../docs/runs.tsv	finished	472.53	64	0
+2026-08-09T13:23:10Z-21628	2026-08-09T13:23:10Z	evaluation	--checkpoint az10_iter140.pt --board 10 --games 2 --batch 2 --simulations 8 --ledger ../../docs/runs.tsv	started	0.00	0	0
+2026-08-09T13:24:08Z-39816	2026-08-09T13:24:08Z	evaluation	--checkpoint az10_iter140.pt --board 10 --games 8 --batch 8 --simulations 200 --step-limit 1200 --seed 0 --ledger ../../docs/runs.tsv	started	0.00	0	0
+2026-08-09T13:24:08Z-39816	2026-08-09T13:24:08Z	evaluation	--checkpoint az10_iter140.pt --board 10 --games 8 --batch 8 --simulations 200 --step-limit 1200 --seed 0 --ledger ../../docs/runs.tsv	failed	0.00	0	0
+2026-08-09T13:25:07Z-40948	2026-08-09T13:25:07Z	evaluation	--checkpoint az10_iter140.pt --board 10 --games 8 --batch 8 --simulations 200 --step-limit 1200 --seed 0 --ledger ../../docs/runs.tsv	started	0.00	0	0
+2026-08-09T13:25:07Z-40948	2026-08-09T13:25:07Z	evaluation	--checkpoint az10_iter140.pt --board 10 --games 8 --batch 8 --simulations 200 --step-limit 1200 --seed 0 --ledger ../../docs/runs.tsv	finished	424.32	8	0
+2026-08-09T13:32:31Z-42400	2026-08-09T13:32:31Z	evaluation	--checkpoint az10_iter140.pt --board 10 --games 64 --batch 64 --simulations 200 --step-limit 1200 --seed 0 --ledger ../../docs/runs.tsv	started	0.00	0	0
+2026-08-09T13:32:31Z-42400	2026-08-09T13:32:31Z	evaluation	--checkpoint az10_iter140.pt --board 10 --games 64 --batch 64 --simulations 200 --step-limit 1200 --seed 0 --ledger ../../docs/runs.tsv	finished	265.53	64	0
+2026-08-09T13:37:41Z-2624	2026-08-09T13:37:41Z	training	--board 10 --iterations 1 --games 4 --simulations 8 --batches 2 --batch 8 --resume az10_iter140.pt --ledger ../../docs/runs.tsv	started	0.00	0	0

@@ -12,6 +12,11 @@
 namespace
 {
 
+// A budget no test can reach, so the clock plane is full and every assertion
+// here measures what it measured before the clock existed. The tests that are
+// about the clock set their own.
+constexpr int TEST_STEP_LIMIT = 1000000;
+
 int failures = 0;
 
 void expect(bool condition, const std::string& description)
@@ -48,8 +53,8 @@ bool insideBoard(const SnakeEnv& env, const Position& cell)
 // would land. Used to drive the environment from an absolute-cell plan.
 bool actionTowards(const SnakeEnv& env, const Position& target, SnakeEnv::Action& action_out)
 {
-    const SnakeEnv::Action actions[] = {SnakeEnv::Action::STRAIGHT, SnakeEnv::Action::LEFT,
-                                        SnakeEnv::Action::RIGHT};
+    const SnakeEnv::Action actions[] = { SnakeEnv::Action::STRAIGHT, SnakeEnv::Action::LEFT,
+                                         SnakeEnv::Action::RIGHT };
     for (SnakeEnv::Action action : actions)
     {
         if (env.headAfter(action) == target)
@@ -63,7 +68,7 @@ bool actionTowards(const SnakeEnv& env, const Position& target, SnakeEnv::Action
 
 void testResetInvariants()
 {
-    SnakeEnv env(20, 20, 7);
+    SnakeEnv env(20, 20, 7, TEST_STEP_LIMIT);
 
     expect(env.body().size() == 1, "a fresh board holds a single segment");
     expect(env.score() == 0 && env.steps() == 0, "score and step count start at zero");
@@ -74,8 +79,8 @@ void testResetInvariants()
 
 void testDeterminism()
 {
-    SnakeEnv first(12, 12, 4242);
-    SnakeEnv second(12, 12, 4242);
+    SnakeEnv first(12, 12, 4242, TEST_STEP_LIMIT);
+    SnakeEnv second(12, 12, 4242, TEST_STEP_LIMIT);
 
     bool identical = true;
     for (int step = 0; step < 400; step++)
@@ -100,7 +105,7 @@ void testDeterminism()
 
 void testTurning()
 {
-    SnakeEnv env(20, 20, 1);
+    SnakeEnv env(20, 20, 1, TEST_STEP_LIMIT);
     // reset faces RIGHT, as SnakeGame does.
     expect(env.heading() == Direction::RIGHT, "a fresh board faces right");
     expect(env.headingAfter(SnakeEnv::Action::STRAIGHT) == Direction::RIGHT,
@@ -113,8 +118,8 @@ void testTurning()
 
 void testWallDeath()
 {
-    SnakeEnv env(8, 8, 3);
-    SnakeEnv::StepResult result{0.0f, false, false};
+    SnakeEnv env(8, 8, 3, TEST_STEP_LIMIT);
+    SnakeEnv::StepResult result{ 0.0f, false, false };
     int guard = 0;
     // Facing right from the middle, straight runs into the right wall.
     while (!result.done && guard++ < 100)
@@ -127,7 +132,7 @@ void testWallDeath()
 
 void testEatingReward()
 {
-    SnakeEnv env(10, 10, 11);
+    SnakeEnv env(10, 10, 11, TEST_STEP_LIMIT);
     bool saw_food = false;
     size_t length_before = env.body().size();
 
@@ -144,8 +149,8 @@ void testEatingReward()
         Position food = env.food();
         Position head = env.body()[0];
         SnakeEnv::Action chosen = SnakeEnv::Action::STRAIGHT;
-        const SnakeEnv::Action actions[] = {SnakeEnv::Action::STRAIGHT, SnakeEnv::Action::LEFT,
-                                            SnakeEnv::Action::RIGHT};
+        const SnakeEnv::Action actions[] = { SnakeEnv::Action::STRAIGHT, SnakeEnv::Action::LEFT,
+                                             SnakeEnv::Action::RIGHT };
         int best_distance = 1 << 30;
         for (SnakeEnv::Action action : actions)
         {
@@ -173,8 +178,8 @@ void testStarvation()
     // Circle in a corner of a big board, never eating. The snake must die of
     // hunger rather than be allowed to shuffle indefinitely - stalling has to
     // cost what dying costs, or the incentives reward doing nothing.
-    SnakeEnv env(12, 12, 21);
-    SnakeEnv::StepResult result{0.0f, false, false};
+    SnakeEnv env(12, 12, 21, TEST_STEP_LIMIT);
+    SnakeEnv::StepResult result{ 0.0f, false, false };
     int steps = 0;
     int limit = env.hungerLimit();
 
@@ -210,7 +215,7 @@ void testWouldDieAgreesWithStepping()
     // steps_since_food_ + 1 against the limit, step increments and then reads -
     // and the tail-vacating rule, which only a crowded board reaches. Each of
     // those is counted, and each count is asserted non-trivial below.
-    SnakeEnv env(8, 8, 1234);
+    SnakeEnv env(8, 8, 1234, TEST_STEP_LIMIT);
     int checks = 0;
     int disagreements = 0;
     int fatal_moves = 0;
@@ -310,9 +315,9 @@ void testWouldDieAgreesWithStepping()
            "the walk saw both fatal and surviving moves, so the answer is not a constant");
     expect(tail_entries > 0, "the walk entered the cell the tail vacates, so that rule was tested");
     expect(hunger_deaths > 0, "the walk starved on open ground, so the hunger clock was tested");
-    std::cout << "        " << checks << " checks: " << fatal_moves << " fatal, "
-              << surviving_moves << " surviving, " << tail_entries << " tail entries, "
-              << hunger_deaths << " hunger deaths" << std::endl;
+    std::cout << "        " << checks << " checks: " << fatal_moves << " fatal, " << surviving_moves
+              << " surviving, " << tail_entries << " tail entries, " << hunger_deaths
+              << " hunger deaths" << std::endl;
     if (disagreements > 0)
     {
         std::cout << "        " << disagreements << " of " << checks << " disagreed" << std::endl;
@@ -359,7 +364,7 @@ void testTurnAlgebra()
 
     for (int start = 0; start < 4; start++)
     {
-        SnakeEnv env(20, 20, 1000 + start);
+        SnakeEnv env(20, 20, 1000 + start, TEST_STEP_LIMIT);
         if (!faceHeading(env, start))
         {
             setup_failed = true;
@@ -385,8 +390,8 @@ void testTurnAlgebra()
         // Two turns the same way give the reverse, and the two routes to it
         // agree. This is also how the reverse heading is named without adding a
         // function for it.
-        SnakeEnv twice_left(20, 20, 2000 + start);
-        SnakeEnv twice_right(20, 20, 3000 + start);
+        SnakeEnv twice_left(20, 20, 2000 + start, TEST_STEP_LIMIT);
+        SnakeEnv twice_right(20, 20, 3000 + start, TEST_STEP_LIMIT);
         if (!faceHeading(twice_left, start) || !faceHeading(twice_right, start))
         {
             setup_failed = true;
@@ -412,8 +417,8 @@ void testTurnAlgebra()
 
         // Four quarter turns either way return to where they started, which is
         // what makes each switch a rotation rather than an arbitrary mapping.
-        SnakeEnv lap_left(20, 20, 4000 + start);
-        SnakeEnv lap_right(20, 20, 5000 + start);
+        SnakeEnv lap_left(20, 20, 4000 + start, TEST_STEP_LIMIT);
+        SnakeEnv lap_right(20, 20, 5000 + start, TEST_STEP_LIMIT);
         if (!faceHeading(lap_left, start) || !faceHeading(lap_right, start))
         {
             setup_failed = true;
@@ -435,7 +440,7 @@ void testTurnAlgebra()
 
         // A left then a right is the identity, so the two are inverses and not
         // merely different.
-        SnakeEnv there_and_back(20, 20, 6000 + start);
+        SnakeEnv there_and_back(20, 20, 6000 + start, TEST_STEP_LIMIT);
         if (!faceHeading(there_and_back, start))
         {
             setup_failed = true;
@@ -476,7 +481,7 @@ void testHeadingAfterDependsOnlyOnTheHeading()
     Direction reference_answer[4][SnakeEnv::ACTION_COUNT];
     for (int turns = 0; turns < 4; turns++)
     {
-        SnakeEnv fresh(20, 20, 7100 + turns);
+        SnakeEnv fresh(20, 20, 7100 + turns, TEST_STEP_LIMIT);
         if (!faceHeading(fresh, turns))
         {
             expect(false, "the reference rotation never killed the snake");
@@ -490,7 +495,7 @@ void testHeadingAfterDependsOnlyOnTheHeading()
         }
     }
 
-    SnakeEnv env(8, 8, 4711);
+    SnakeEnv env(8, 8, 4711, TEST_STEP_LIMIT);
     int comparisons = 0;
     int mismatches = 0;
     int unknown_heading = 0;
@@ -577,8 +582,10 @@ void testHeadingAfterDependsOnlyOnTheHeading()
     expect(unknown_heading == 0, "every heading reached in play was one of the four");
     expect(mismatches == 0, "headingAfter answers from the heading alone, whatever the board");
     expect(comparisons > 10000, "enough positions were compared to be worth trusting");
-    expect(longest_body > 10, "the walk grew a long body, so the answer was checked away from reset");
-    expect(highest_hunger > 20, "the walk wound the hunger clock up, so that state was covered too");
+    expect(longest_body > 10,
+           "the walk grew a long body, so the answer was checked away from reset");
+    expect(highest_hunger > 20,
+           "the walk wound the hunger clock up, so that state was covered too");
     std::cout << "        " << comparisons << " comparisons, longest body " << longest_body
               << ", highest hunger " << highest_hunger << std::endl;
 }
@@ -590,7 +597,7 @@ void testHeadAfterPredictsWhereTheHeadLands()
     // occupancy_ by the cell it returns. So the claim is not merely that it
     // computes some neighbour - it is that the cell it names is the cell step()
     // actually puts the head in, for every action that does not kill.
-    SnakeEnv env(8, 8, 8675);
+    SnakeEnv env(8, 8, 8675, TEST_STEP_LIMIT);
     int predictions = 0;
     int mismatches = 0;
     int non_adjacent = 0;
@@ -700,7 +707,7 @@ void testHungerBoundaryIsExact()
     // different values and only the last two ticks before starvation tell a
     // correct pair from a shifted one. The walk above reaches this by accident;
     // this pins the exact tick.
-    SnakeEnv env(12, 12, 21);
+    SnakeEnv env(12, 12, 21, TEST_STEP_LIMIT);
     const int limit = env.hungerLimit();
 
     // A length-one snake alternating left and straight traces a 2x2 loop, so it
@@ -753,7 +760,7 @@ void testFoodNeverSitsOnTheBody()
     // environment, which compiles out of the release builds that train, so the
     // invariant it rests on is checked here over real play rather than assumed
     // from a reading of spawnFood.
-    SnakeEnv env(8, 8, 555);
+    SnakeEnv env(8, 8, 555, TEST_STEP_LIMIT);
     int positions = 0;
     int violations = 0;
     int meals = 0;
@@ -785,8 +792,7 @@ void testFoodNeverSitsOnTheBody()
                 continue;
             }
             const Position next = env.headAfter(candidate);
-            const int distance =
-                std::abs(next.x - env.food().x) + std::abs(next.y - env.food().y);
+            const int distance = std::abs(next.x - env.food().x) + std::abs(next.y - env.food().y);
             if (distance < best_distance)
             {
                 best_distance = distance;
@@ -814,7 +820,7 @@ void testFoodNeverSitsOnTheBody()
 
 void testEncoding()
 {
-    SnakeEnv env(10, 10, 5);
+    SnakeEnv env(10, 10, 5, TEST_STEP_LIMIT);
     std::vector<float> planes(env.encodedSize(), -1.0f);
     env.encode(planes.data());
 
@@ -832,8 +838,13 @@ void testEncoding()
     expect(head_sum == 1.0f, "the head plane marks exactly one cell");
     expect(food_sum == 1.0f, "the food plane marks exactly one cell");
 
+    // Planes 4 to 7 are the headings. Bounded by name rather than by PLANE_COUNT,
+    // which stopped meaning "the last plane is a heading" when the clock arrived -
+    // a full clock plane is indistinguishable from a heading plane by this test.
+    constexpr int FIRST_HEADING_PLANE = 4;
+    constexpr int CLOCK_PLANE = 8;
     int heading_planes_set = 0;
-    for (int plane = 4; plane < SnakeEnv::PLANE_COUNT; plane++)
+    for (int plane = FIRST_HEADING_PLANE; plane < CLOCK_PLANE; plane++)
     {
         float sum = 0.0f;
         for (int cell = 0; cell < cells; cell++)
@@ -850,16 +861,82 @@ void testEncoding()
         }
     }
     expect(heading_planes_set == 1, "exactly one heading plane is set, and it is constant");
+
+    // The clock, constant across the board because a convolution has no other way
+    // to be given a scalar.
+    float clock_sum = 0.0f;
+    bool clock_is_constant = true;
+    for (int cell = 0; cell < cells; cell++)
+    {
+        const float value = planes[CLOCK_PLANE * cells + cell];
+        clock_sum += value;
+        clock_is_constant = clock_is_constant && value == planes[CLOCK_PLANE * cells];
+    }
+    expect(clock_is_constant, "the clock plane holds one value everywhere");
+    expect(clock_sum == env.budgetRemaining() * (float)cells,
+           "and that value is the budget the environment reports");
 }
 
 // The strongest available check on the whole transition function: an
 // independent winner drives the environment to a full board. It exercises
 // tail-following, which is where an off-by-one in collision hides, and win
 // detection, which nothing else reaches.
+// Expected values are the fraction written out - remaining over limit - not read
+// back from the environment.
+void testTheBudgetCountsDownWithTheSteps()
+{
+    SnakeEnv env(6, 6, 1, 100);
+    expect(env.stepLimit() == 100, "the environment carries the limit it was given");
+    expect(env.budgetRemaining() == 1.0f, "a fresh game has spent none of its budget");
+
+    env.step(SnakeEnv::Action::STRAIGHT);
+    expect(env.budgetRemaining() == 0.99f, "one step of a hundred leaves 99 percent");
+
+    for (int step = 0; step < 49 && !env.done(); step++)
+    {
+        env.step(SnakeEnv::Action::STRAIGHT);
+    }
+    if (!env.done())
+    {
+        expect(env.budgetRemaining() == 0.5f, "fifty steps of a hundred leaves half");
+    }
+
+    // A caller may run an episode past its limit - the limit bounds the encoding,
+    // not termination - and the budget must not go negative when it does.
+    SnakeEnv brief(6, 6, 1, 2);
+    for (int step = 0; step < 6 && !brief.done(); step++)
+    {
+        brief.step(SnakeEnv::Action::STRAIGHT);
+    }
+    expect(brief.budgetRemaining() == 0.0f, "a spent budget reads zero, never below it");
+
+    // The snapshot carries the same number, because it outlives the environment
+    // and the replay buffer has no way back to the step limit.
+    SnakeEnv counted(6, 6, 1, 10);
+    counted.step(SnakeEnv::Action::STRAIGHT);
+    counted.step(SnakeEnv::Action::STRAIGHT);
+    expect(counted.snapshot().budget_remaining == 0.8f,
+           "the snapshot carries the budget, two steps of ten being 0.8");
+}
+
+void testStepLimitIsRequired()
+{
+    bool refused = false;
+    try
+    {
+        SnakeEnv env(6, 6, 1, 0);
+    }
+    catch (const std::invalid_argument&)
+    {
+        refused = true;
+    }
+    expect(refused, "a step limit of zero is refused - every game would start spent");
+}
+
 void testWinnableByCycle()
 {
     const int size = 6;
-    SnakeEnv env(size, size, 99);
+    SnakeEnv env(size, size, 99, TEST_STEP_LIMIT);
     HamiltonianCycle cycle(size, size);
     if (!cycle.generateCycle())
     {
@@ -921,6 +998,8 @@ int main()
     testFoodNeverSitsOnTheBody();
     testEatingReward();
     testEncoding();
+    testTheBudgetCountsDownWithTheSteps();
+    testStepLimitIsRequired();
     testWinnableByCycle();
 
     std::cout << std::endl;

@@ -118,7 +118,10 @@ int main(int argc, char** argv)
     {
         try
         {
-            torch::load(network, settings.resume);
+            // Widened rather than loaded flat, so a checkpoint saved before the
+            // clock plane resumes into a 9-plane network with the new channel
+            // zeroed - a fine-tune from where it left off rather than a retrain.
+            network->loadNarrowerStem(settings.resume);
             std::cout << "resumed from " << settings.resume << std::endl;
         }
         catch (const std::exception& error)

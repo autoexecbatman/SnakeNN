@@ -25,8 +25,8 @@ AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channe
     TORCH_CHECK(board_width >= 2 && board_height >= 2,
                 std::format("AlphaZeroNet needs a board of at least 2x2, got {}x{}", board_width,
                             board_height));
-    TORCH_CHECK(channels >= 1, std::format("AlphaZeroNet needs at least one trunk channel, got {}",
-                                           channels));
+    TORCH_CHECK(channels >= 1,
+                std::format("AlphaZeroNet needs at least one trunk channel, got {}", channels));
     TORCH_CHECK(blocks >= 0,
                 std::format("AlphaZeroNet cannot have a negative block count, got {}", blocks));
 
@@ -77,9 +77,9 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
     // the new size and copying weights into it, never by feeding a different size
     // to an existing one - so a mismatch here is a caller that encoded against the
     // wrong board, and it is worth refusing.
-    TORCH_CHECK(planes.dim() == 4,
-                std::format("forward expects [N, planes, height, width], got {} dimensions",
-                            planes.dim()));
+    TORCH_CHECK(
+        planes.dim() == 4,
+        std::format("forward expects [N, planes, height, width], got {} dimensions", planes.dim()));
     TORCH_CHECK(planes.size(1) == SnakeEnv::PLANE_COUNT,
                 std::format("forward expects {} planes per state, got {}", SnakeEnv::PLANE_COUNT,
                             planes.size(1)));
@@ -101,11 +101,11 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
     }
 
     torch::Tensor policy = torch::relu(policy_norm(policy_conv(trunk)));
-    policy = torch::adaptive_avg_pool2d(policy, {POOLED_SIDE, POOLED_SIDE});
+    policy = torch::adaptive_avg_pool2d(policy, { POOLED_SIDE, POOLED_SIDE });
     policy = policy_out(policy.flatten(1));
 
     torch::Tensor value = torch::relu(value_norm(value_conv(trunk)));
-    value = torch::adaptive_avg_pool2d(value, {POOLED_SIDE, POOLED_SIDE});
+    value = torch::adaptive_avg_pool2d(value, { POOLED_SIDE, POOLED_SIDE });
     value = torch::relu(value_hidden(value.flatten(1)));
     // Bounded, because the return it stands in for is bounded: the search
     // compares leaves, and an unbounded head lets one bad extrapolation
@@ -124,5 +124,87 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
                 std::format("the value head produced [{}] for a batch of {}, expected [{}, 1]",
                             value.dim(), planes.size(0), planes.size(0)));
 
-    return Prediction{policy, value};
+    return Prediction{ policy, value };
+}
+
+namespace
+{
+
+// Reads one dotted parameter name out of a serialized module.
+//
+// A saved module nests its submodules as sub-archives, so "stem_conv.weight" is
+// "weight" inside "stem_conv" rather than a key of its own - reading the dotted
+// name flat reports the tensor as missing.
+void readNested(torch::serialize::InputArchive& archive, const std::string& dotted_key,
+                torch::Tensor& out, bool is_buffer)
+{
+    const size_t split = dotted_key.rfind('.');
+    if (split == std::string::npos)
+    {
+        archive.read(dotted_key, out, is_buffer);
+        return;
+    }
+    torch::serialize::InputArchive nested;
+    archive.read(dotted_key.substr(0, split), nested);
+    readNested(nested, dotted_key.substr(split + 1), out, is_buffer);
+}
+
+}  // namespace
+
+void AlphaZeroNetImpl::loadNarrowerStem(const std::string& checkpoint_path)
+{
+    // Read the checkpoint into a second network built with the stem it was saved
+    // with, then copy across. Reconstructing the old shape is what lets
+    // torch::load do the parsing rather than this function reimplementing it.
+    torch::serialize::InputArchive archive;
+    archive.load_from(checkpoint_path);
+
+    // Copied entry by entry rather than replayed through load(), which refuses the
+    // whole archive on the one tensor whose shape changed. An InputArchive cannot
+    // be edited, so the widening happens here.
+    torch::NoGradGuard no_grad;
+
+    for (auto& parameter : named_parameters())
+    {
+        torch::Tensor saved;
+        readNested(archive, parameter.key(), saved, false);
+
+        if (parameter.key() == "stem_conv.weight")
+        {
+            TORCH_CHECK(saved.size(1) <= parameter.value().size(1),
+                        std::format("the checkpoint's stem takes {} planes, wider than this "
+                                    "network's {}",
+                                    saved.size(1), parameter.value().size(1)));
+            TORCH_CHECK(saved.size(0) == parameter.value().size(0) &&
+                            saved.size(2) == parameter.value().size(2) &&
+                            saved.size(3) == parameter.value().size(3),
+                        std::format("the checkpoint's stem differs in more than its input planes: "
+                                    "[{}, {}, {}, {}] against [{}, {}, {}, {}]",
+                                    saved.size(0), saved.size(1), saved.size(2), saved.size(3),
+                                    parameter.value().size(0), parameter.value().size(1),
+                                    parameter.value().size(2), parameter.value().size(3)));
+            // Zeroed new channels, so the widened network computes exactly what the
+            // narrower one did until training moves them.
+            parameter.value().zero_();
+            parameter.value().narrow(1, 0, saved.size(1)).copy_(saved);
+            continue;
+        }
+
+        TORCH_CHECK(saved.sizes() == parameter.value().sizes(),
+                    std::format("'{}' has a different shape in the checkpoint than in this network",
+                                parameter.key()));
+        parameter.value().copy_(saved);
+    }
+
+    // Batch normalisation keeps its running statistics in buffers, not parameters,
+    // and a fine-tune that dropped them would start from the wrong normalisation.
+    for (auto& buffer : named_buffers())
+    {
+        torch::Tensor saved;
+        readNested(archive, buffer.key(), saved, true);
+        TORCH_CHECK(
+            saved.sizes() == buffer.value().sizes(),
+            std::format("buffer '{}' has a different shape in the checkpoint", buffer.key()));
+        buffer.value().copy_(saved);
+    }
 }

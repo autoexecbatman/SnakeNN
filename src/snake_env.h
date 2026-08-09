@@ -82,8 +82,8 @@ public:
     };
     static constexpr int ACTION_COUNT = 3;
 
-    // body, head, food, tail timer, and one plane per heading
-    static constexpr int PLANE_COUNT = 8;
+    // body, head, food, tail timer, one plane per heading, and the clock
+    static constexpr int PLANE_COUNT = 9;
 
     // Reward scale follows Du, Gemp, Wu and Wu 2022 (arXiv:2211.09622), which
     // trained a winning Snake agent with +1 per apple, -10 for dying and +10 for
@@ -102,7 +102,18 @@ public:
         bool won;
     };
 
-    SnakeEnv(int width, int height, unsigned int seed);
+    // `step_limit` is the game's whole budget and must be at least 1.
+    //
+    // It lives here rather than in the caller's loop because the search has to see
+    // it: every simulation steps a copy of this environment, so a budget the
+    // environment does not carry is a budget the search plans as if it were
+    // infinite. The same argument put hungerLimit here.
+    //
+    // It bounds the encoding, not termination. Whether a game ends at the limit
+    // stays with the caller that owns the episode - self-play and the evaluator
+    // both already do it, and moving that here would change what `done()` means
+    // for every existing caller.
+    SnakeEnv(int width, int height, unsigned int seed, int step_limit);
 
     void reset();
     StepResult step(Action action);
@@ -125,6 +136,10 @@ public:
 
     int score() const { return score_; }
     int steps() const { return steps_; }
+    int stepLimit() const { return step_limit_; }
+    // What the clock plane holds: 1 at the start, 0 once the budget is spent, and
+    // never negative even if the caller runs the episode past its limit.
+    float budgetRemaining() const;
     int stepsSinceFood() const { return steps_since_food_; }
     bool done() const { return done_; }
     bool won() const { return won_; }
@@ -180,6 +195,13 @@ public:
         unsigned short food_cell;
         unsigned char heading;
         bool won;
+        // The clock, already normalised. Carried rather than recomputed because a
+        // snapshot outlives its environment: the replay buffer holds these for
+        // thousands of games and has no way back to the step limit they came from.
+        // Defaulted to a full clock so a hand-built snapshot - the probes construct
+        // positions directly - holds a defined value rather than whatever was on
+        // the stack.
+        float budget_remaining{ 1.0f };
     };
 
     Snapshot snapshot() const;
@@ -199,6 +221,7 @@ private:
     int score_;
     int steps_;
     int steps_since_food_;
+    int step_limit_;
     SmallRandom rng_;
     // Occupancy by cell index: 1 where a body segment sits, 0 where nothing
     // does. Keeps collision and food placement off the O(length) scan that

@@ -48,14 +48,14 @@ int main(int argc, char** argv)
 
     // Opened before any work, so a run that is killed leaves a started row and no
     // completion - the only way a killed process records what happened to it.
-    ledger::Entry run{ledger::makeRunId(ledger::utcNow(), static_cast<unsigned int>(_getpid())),
-                      ledger::utcNow(),
-                      ledger::Kind::Evaluation,
-                      ledger::formatCommand(std::vector<std::string>(argv + 1, argv + argc)),
-                      ledger::Outcome::Started,
-                      0.0,
-                      0,
-                      0};
+    ledger::Entry run{ ledger::makeRunId(ledger::utcNow(), static_cast<unsigned int>(_getpid())),
+                       ledger::utcNow(),
+                       ledger::Kind::Evaluation,
+                       ledger::formatCommand(std::vector<std::string>(argv + 1, argv + argc)),
+                       ledger::Outcome::Started,
+                       0.0,
+                       0,
+                       0 };
     ledger::append(settings.ledger_path, run);
 
     const bool cuda = torch::cuda::is_available();
@@ -64,7 +64,11 @@ int main(int argc, char** argv)
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
     try
     {
-        torch::load(network, settings.checkpoint);
+        // Widened rather than loaded flat. Checkpoints saved before the clock plane
+        // have an 8-plane stem, and torch::load on that mismatch does not throw
+        // here - it takes the process down - so the widening path is the only path
+        // rather than a fallback from a failure that cannot be caught.
+        network->loadNarrowerStem(settings.checkpoint);
     }
     catch (const std::exception& error)
     {
@@ -114,7 +118,8 @@ int main(int argc, char** argv)
         for (int index = 0; index < count; index++)
         {
             games.emplace_back(settings.board, settings.board,
-                               seeds::evaluationGameSeed(settings.seed_offset, start + index));
+                               seeds::evaluationGameSeed(settings.seed_offset, start + index),
+                               step_limit);
         }
         std::vector<bool> timed_out(count, false);
         // One per game in the batch, fed after every move it makes.

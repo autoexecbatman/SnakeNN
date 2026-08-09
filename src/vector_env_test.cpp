@@ -10,6 +10,11 @@
 namespace
 {
 
+// A budget no test can reach, so the clock plane is full and every assertion
+// here measures what it measured before the clock existed. The tests that are
+// about the clock set their own.
+constexpr int TEST_STEP_LIMIT = 1000000;
+
 int failures = 0;
 
 void expect(bool condition, const std::string& description)
@@ -31,11 +36,11 @@ void testMatchesIndividualGames()
     const int size = 8;
     const unsigned int base_seed = 2024;
 
-    VectorEnv batch(count, size, size, base_seed);
+    VectorEnv batch(count, size, size, base_seed, TEST_STEP_LIMIT);
     std::vector<SnakeEnv> singles;
     for (int index = 0; index < count; index++)
     {
-        singles.emplace_back(size, size, base_seed + index);
+        singles.emplace_back(size, size, base_seed + index, TEST_STEP_LIMIT);
     }
 
     std::vector<SnakeEnv::Action> actions(count);
@@ -76,7 +81,7 @@ void testMatchesIndividualGames()
 
 void testFinishedGamesAreNotAdvanced()
 {
-    VectorEnv batch(4, 5, 5, 77);
+    VectorEnv batch(4, 5, 5, 77, TEST_STEP_LIMIT);
     std::vector<SnakeEnv::Action> actions(4, SnakeEnv::Action::STRAIGHT);
     std::vector<SnakeEnv::StepResult> results(4);
 
@@ -103,7 +108,7 @@ void testFinishedGamesAreNotAdvanced()
 
 void testResetIsLocal()
 {
-    VectorEnv batch(8, 6, 6, 5);
+    VectorEnv batch(8, 6, 6, 5, TEST_STEP_LIMIT);
     std::vector<SnakeEnv::Action> actions(8, SnakeEnv::Action::STRAIGHT);
     std::vector<SnakeEnv::StepResult> results(8);
     for (int step = 0; step < 2; step++)
@@ -122,7 +127,7 @@ void testEncodingMatchesPerGame()
 {
     const int count = 6;
     const int size = 7;
-    VectorEnv batch(count, size, size, 31);
+    VectorEnv batch(count, size, size, 31, TEST_STEP_LIMIT);
 
     std::vector<SnakeEnv::Action> actions(count, SnakeEnv::Action::LEFT);
     std::vector<SnakeEnv::StepResult> results(count);

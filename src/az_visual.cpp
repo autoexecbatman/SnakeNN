@@ -96,7 +96,7 @@ int main(int argc, char** argv)
     MonteCarloSearch search(evaluator, search_config);
 
     unsigned int game_seed = settings.seed;
-    SnakeEnv game(settings.board, settings.board, game_seed);
+    SnakeEnv game(settings.board, settings.board, game_seed, step_limit);
     int games_played = 0;
     int wins = 0;
     float last_value = 0.0f;
@@ -107,7 +107,7 @@ int main(int argc, char** argv)
         if (finished && IsKeyPressed(KEY_SPACE))
         {
             game_seed++;
-            game = SnakeEnv(settings.board, settings.board, game_seed);
+            game = SnakeEnv(settings.board, settings.board, game_seed, step_limit);
             finished = false;
         }
 
@@ -120,7 +120,7 @@ int main(int argc, char** argv)
                 finished = true;
                 break;
             }
-            std::vector<const SnakeEnv*> roots{&game};
+            std::vector<const SnakeEnv*> roots{ &game };
             std::vector<MonteCarloSearch::Result> results = search.search(roots);
             last_value = results[0].value;
             game.step(results[0].best_action);
@@ -149,12 +149,12 @@ int main(int argc, char** argv)
         ui::drawText(fonts.mono, percent, window_width - ui::MARGIN - percent_width, panel_y - 2.0f,
                      13.0f, 0.5f, completion >= 1.0f ? ui::MINT : ui::TEXT_PRIMARY);
 
-        Rectangle track = {static_cast<float>(ui::MARGIN), panel_y + 18.0f,
-                           static_cast<float>(window_width - ui::MARGIN * 2), 6.0f};
+        Rectangle track = { static_cast<float>(ui::MARGIN), panel_y + 18.0f,
+                            static_cast<float>(window_width - ui::MARGIN * 2), 6.0f };
         DrawRectangleRounded(track, 1.0f, 6, ui::SURFACE);
         if (completion > 0.0f)
         {
-            Rectangle fill = {track.x, track.y, track.width * completion, track.height};
+            Rectangle fill = { track.x, track.y, track.width * completion, track.height };
             DrawRectangleRounded(fill, 1.0f, 6, ui::MINT);
         }
 

@@ -58,26 +58,39 @@ struct AlphaZeroNetImpl : torch::nn::Module
     int boardWidth() const { return board_width_; }
     int boardHeight() const { return board_height_; }
 
+    // Widens the stem to accept more input planes than the checkpoint was trained
+    // with, copying the old weights and zeroing the new channels.
+    //
+    // The clock plane took PLANE_COUNT from 8 to 9, which changes the stem's input
+    // channel count, so torch::load rejects every checkpoint trained before it.
+    // Zeroed new channels mean the widened network computes exactly what the old
+    // one did on the same position - the clock starts ignored and is learned from
+    // there, which is a fine-tune rather than a retrain from nothing.
+    //
+    // Throws if the checkpoint is wider than this network or differs anywhere but
+    // the stem's input channels.
+    void loadNarrowerStem(const std::string& checkpoint_path);
+
 private:
     int board_width_;
     int board_height_;
     int channels_;
 
-    torch::nn::Conv2d stem_conv{nullptr};
-    torch::nn::BatchNorm2d stem_norm{nullptr};
+    torch::nn::Conv2d stem_conv{ nullptr };
+    torch::nn::BatchNorm2d stem_norm{ nullptr };
 
     // Residual blocks, stored flat: two convolutions and two norms each.
     std::vector<torch::nn::Conv2d> block_convs;
     std::vector<torch::nn::BatchNorm2d> block_norms;
 
-    torch::nn::Conv2d policy_conv{nullptr};
-    torch::nn::BatchNorm2d policy_norm{nullptr};
-    torch::nn::Linear policy_out{nullptr};
+    torch::nn::Conv2d policy_conv{ nullptr };
+    torch::nn::BatchNorm2d policy_norm{ nullptr };
+    torch::nn::Linear policy_out{ nullptr };
 
-    torch::nn::Conv2d value_conv{nullptr};
-    torch::nn::BatchNorm2d value_norm{nullptr};
-    torch::nn::Linear value_hidden{nullptr};
-    torch::nn::Linear value_out{nullptr};
+    torch::nn::Conv2d value_conv{ nullptr };
+    torch::nn::BatchNorm2d value_norm{ nullptr };
+    torch::nn::Linear value_hidden{ nullptr };
+    torch::nn::Linear value_out{ nullptr };
 };
 
 TORCH_MODULE(AlphaZeroNet);

@@ -38,6 +38,10 @@ static_assert(std::is_copy_assignable<SnakeEnv>::value,
 namespace
 {
 
+// A budget no test can reach, so the clock plane is full and every assertion
+// here measures what it measured before the clock existed.
+constexpr int TEST_STEP_LIMIT = 1000000;
+
 int failures = 0;
 
 void expect(bool condition, const std::string& description)
@@ -161,7 +165,7 @@ int indexOfLargest(const std::vector<float>& values)
 // simulator's own rewards would be doing the work the test attributes to priors.
 SnakeEnv openBoard(unsigned int seed)
 {
-    return SnakeEnv(20, 20, seed);
+    return SnakeEnv(20, 20, seed, TEST_STEP_LIMIT);
 }
 
 void testPriorsSteerTheSearch()
@@ -190,7 +194,7 @@ void testPriorsSteerTheSearch()
         SnakeEnv env = openBoard(4242);
         PriorEvaluator evaluator(priors);
         MonteCarloSearch search(evaluator, testConfig(simulations));
-        std::vector<const SnakeEnv*> roots{&env};
+        std::vector<const SnakeEnv*> roots{ &env };
         std::vector<MonteCarloSearch::Result> results = search.search(roots);
 
         visits_when_favoured[favoured] = results[0].policy[static_cast<size_t>(favoured)];
@@ -207,9 +211,8 @@ void testPriorsSteerTheSearch()
 
     // The same quantity read three ways must actually differ, or the loop above
     // was comparing one number to itself and the priors changed nothing.
-    const bool distribution_moved =
-        !(visits_when_favoured[0] == visits_when_favoured[1] &&
-          visits_when_favoured[1] == visits_when_favoured[2]);
+    const bool distribution_moved = !(visits_when_favoured[0] == visits_when_favoured[1] &&
+                                      visits_when_favoured[1] == visits_when_favoured[2]);
     expect(distribution_moved, "moving the prior moved the visit distribution");
 }
 
@@ -225,11 +228,11 @@ void testNoActionIsStarved()
     // rather than fatal; a wall would starve them for a legitimate reason and the
     // test would be measuring the simulator instead of the selection rule.
     SnakeEnv env = openBoard(909);
-    std::vector<float> nearly_degenerate{0.98f, 0.01f, 0.01f};
+    std::vector<float> nearly_degenerate{ 0.98f, 0.01f, 0.01f };
     PriorEvaluator evaluator(nearly_degenerate);
     MonteCarloSearch search(evaluator, testConfig(96));
 
-    std::vector<const SnakeEnv*> roots{&env};
+    std::vector<const SnakeEnv*> roots{ &env };
     std::vector<MonteCarloSearch::Result> results = search.search(roots);
 
     bool all_three_survive = true;
@@ -257,7 +260,7 @@ void testDoomedPositionIsSearchedNotExpandedPastDeath()
     // The position is found rather than constructed, because building an enclosed
     // snake through the public interface takes more setup than it is worth and
     // would encode one hand-made shape instead of a real one.
-    SnakeEnv game(6, 6, 20260808);
+    SnakeEnv game(6, 6, 20260808, TEST_STEP_LIMIT);
     bool found_doomed = false;
     int positions_walked = 0;
     unsigned int cursor = 5;
@@ -322,7 +325,7 @@ void testDoomedPositionIsSearchedNotExpandedPastDeath()
 
     SilentEvaluator evaluator;
     MonteCarloSearch search(evaluator, testConfig(48));
-    std::vector<const SnakeEnv*> roots{&game};
+    std::vector<const SnakeEnv*> roots{ &game };
     std::vector<MonteCarloSearch::Result> results = search.search(roots);
 
     float total = 0.0f;
@@ -353,7 +356,7 @@ SnakeEnv boardWithDistantFood(int minimum_distance, unsigned int first_seed)
 {
     for (unsigned int seed = first_seed; seed < first_seed + 500; seed++)
     {
-        SnakeEnv candidate(20, 20, seed);
+        SnakeEnv candidate(20, 20, seed, TEST_STEP_LIMIT);
         const Position head = candidate.body()[0];
         const int distance =
             std::abs(candidate.food().x - head.x) + std::abs(candidate.food().y - head.y);
@@ -387,13 +390,13 @@ void testBackupDiscountsByEdgeLength()
     SnakeEnv one_step = boardWithDistantFood(6, 1);
     ConstantValueEvaluator first_evaluator(value);
     MonteCarloSearch first_search(first_evaluator, testConfig(1));
-    std::vector<const SnakeEnv*> first_roots{&one_step};
+    std::vector<const SnakeEnv*> first_roots{ &one_step };
     const float undiscounted = first_search.search(first_roots)[0].value;
 
     SnakeEnv two_step = boardWithDistantFood(6, 1);
     ConstantValueEvaluator second_evaluator(value);
     MonteCarloSearch second_search(second_evaluator, testConfig(2));
-    std::vector<const SnakeEnv*> second_roots{&two_step};
+    std::vector<const SnakeEnv*> second_roots{ &two_step };
     const float over_one_edge = second_search.search(second_roots)[0].value;
 
     const float expected_over_one_edge = value * (1.0f + discount) / 2.0f;
@@ -431,19 +434,19 @@ void testRootNoiseIsAppliedAndKeepsADistribution()
     SnakeEnv quiet_board = boardWithDistantFood(6, 1);
     SilentEvaluator quiet_evaluator;
     MonteCarloSearch quiet_search(quiet_evaluator, noisyConfig(64, 0.0f, 555));
-    std::vector<const SnakeEnv*> quiet_roots{&quiet_board};
+    std::vector<const SnakeEnv*> quiet_roots{ &quiet_board };
     const std::vector<float> without_noise = quiet_search.search(quiet_roots)[0].policy;
 
     SnakeEnv noisy_board = boardWithDistantFood(6, 1);
     SilentEvaluator noisy_evaluator;
     MonteCarloSearch noisy_search(noisy_evaluator, noisyConfig(64, 0.25f, 555));
-    std::vector<const SnakeEnv*> noisy_roots{&noisy_board};
+    std::vector<const SnakeEnv*> noisy_roots{ &noisy_board };
     const std::vector<float> with_noise = noisy_search.search(noisy_roots)[0].policy;
 
     SnakeEnv other_board = boardWithDistantFood(6, 1);
     SilentEvaluator other_evaluator;
     MonteCarloSearch other_search(other_evaluator, noisyConfig(64, 0.25f, 98765));
-    std::vector<const SnakeEnv*> other_roots{&other_board};
+    std::vector<const SnakeEnv*> other_roots{ &other_board };
     const std::vector<float> other_noise = other_search.search(other_roots)[0].policy;
 
     bool noise_changed_the_search = false;
@@ -474,7 +477,7 @@ void testRootNoiseIsAppliedAndKeepsADistribution()
     SnakeEnv pure_board = boardWithDistantFood(6, 1);
     SilentEvaluator pure_evaluator;
     MonteCarloSearch pure_search(pure_evaluator, noisyConfig(64, 1.0f, 4242));
-    std::vector<const SnakeEnv*> pure_roots{&pure_board};
+    std::vector<const SnakeEnv*> pure_roots{ &pure_board };
     const std::vector<float> pure_noise = pure_search.search(pure_roots)[0].policy;
     float pure_total = 0.0f;
     bool pure_non_negative = true;
@@ -529,7 +532,7 @@ void testSearchReusesBuffersWithoutLeakingState()
     SilentEvaluator first_evaluator;
     MonteCarloSearch reused(first_evaluator, testConfig(simulations));
 
-    std::vector<const SnakeEnv*> one_root{&board};
+    std::vector<const SnakeEnv*> one_root{ &board };
     const MonteCarloSearch::Result baseline = reused.search(one_root)[0];
 
     // A bigger batch in between, so the trees vector grows and the tail of it is
@@ -584,11 +587,11 @@ void testSearchReusesBuffersWithoutLeakingState()
 
 void testPolicyIsADistribution()
 {
-    SnakeEnv env(8, 8, 1);
+    SnakeEnv env(8, 8, 1, TEST_STEP_LIMIT);
     SilentEvaluator evaluator;
     MonteCarloSearch search(evaluator, testConfig(64));
 
-    std::vector<const SnakeEnv*> roots{&env};
+    std::vector<const SnakeEnv*> roots{ &env };
     auto results = search.search(roots);
 
     expect(results.size() == 1, "one result per root");
@@ -610,7 +613,7 @@ void testAvoidsAnImmediateWall()
     // Drive to the right wall, then search from one step away. Continuing
     // straight is fatal; the other two actions are not. Nothing in the
     // evaluator says so - the search has to discover it from the simulator.
-    SnakeEnv env(9, 9, 5);
+    SnakeEnv env(9, 9, 5, TEST_STEP_LIMIT);
     while (env.body()[0].x < env.width() - 2)
     {
         env.step(SnakeEnv::Action::STRAIGHT);
@@ -618,7 +621,7 @@ void testAvoidsAnImmediateWall()
 
     SilentEvaluator evaluator;
     MonteCarloSearch search(evaluator, testConfig(96));
-    std::vector<const SnakeEnv*> roots{&env};
+    std::vector<const SnakeEnv*> roots{ &env };
     auto results = search.search(roots);
 
     // Stated against the other actions rather than against a constant, so a
@@ -637,7 +640,7 @@ void testPrefersReachableFood()
 {
     // Put the search one step from food and check it takes it. The reward is
     // the simulator's; the evaluator stays silent.
-    SnakeEnv env(9, 9, 17);
+    SnakeEnv env(9, 9, 17, TEST_STEP_LIMIT);
     SilentEvaluator evaluator;
     MonteCarloSearch search(evaluator, testConfig(96));
 
@@ -660,7 +663,7 @@ void testPrefersReachableFood()
                             landing.y < env.height() - 1;
             if (landing == env.food() && interior)
             {
-                std::vector<const SnakeEnv*> roots{&env};
+                std::vector<const SnakeEnv*> roots{ &env };
                 auto results = search.search(roots);
                 // The eating action must be the argmax and must hold most of
                 // the visits. Checking the argmax alone passes by luck one time
@@ -707,7 +710,7 @@ void testBatchesEveryTreeTogether()
     std::vector<SnakeEnv> envs;
     for (int index = 0; index < games; index++)
     {
-        envs.emplace_back(8, 8, 100 + index);
+        envs.emplace_back(8, 8, 100 + index, TEST_STEP_LIMIT);
     }
     std::vector<const SnakeEnv*> roots;
     for (const SnakeEnv& env : envs)
@@ -728,13 +731,13 @@ void testBatchesEveryTreeTogether()
 
 void testDeterminism()
 {
-    SnakeEnv env(8, 8, 77);
+    SnakeEnv env(8, 8, 77, TEST_STEP_LIMIT);
     SilentEvaluator first_evaluator;
     SilentEvaluator second_evaluator;
     MonteCarloSearch first(first_evaluator, testConfig(64));
     MonteCarloSearch second(second_evaluator, testConfig(64));
 
-    std::vector<const SnakeEnv*> roots{&env};
+    std::vector<const SnakeEnv*> roots{ &env };
     auto left = first.search(roots);
     auto right = second.search(roots);
 
@@ -748,7 +751,7 @@ void testDeterminism()
 
 void testTerminalRootsAreRejected()
 {
-    SnakeEnv env(5, 5, 9);
+    SnakeEnv env(5, 5, 9, TEST_STEP_LIMIT);
     while (!env.done())
     {
         env.step(SnakeEnv::Action::STRAIGHT);
@@ -756,7 +759,7 @@ void testTerminalRootsAreRejected()
 
     SilentEvaluator evaluator;
     MonteCarloSearch search(evaluator, testConfig(16));
-    std::vector<const SnakeEnv*> roots{&env};
+    std::vector<const SnakeEnv*> roots{ &env };
 
     bool threw = false;
     try
@@ -796,7 +799,7 @@ void testForcedActionAgreesWithWouldDie()
 
     for (unsigned int seed = 1; seed <= GAMES; seed++)
     {
-        SnakeEnv game(BOARD, BOARD, seed);
+        SnakeEnv game(BOARD, BOARD, seed, TEST_STEP_LIMIT);
         for (int step = 0; step < MAX_STEPS && !game.done(); step++)
         {
             // Count survivors directly, which is the property's definition.

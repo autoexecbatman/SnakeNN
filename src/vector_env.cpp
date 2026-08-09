@@ -1,7 +1,7 @@
 #include "vector_env.h"
 #include <stdexcept>
 
-VectorEnv::VectorEnv(int count, int width, int height, unsigned int base_seed)
+VectorEnv::VectorEnv(int count, int width, int height, unsigned int base_seed, int step_limit)
 {
     if (count < 1)
     {
@@ -12,7 +12,7 @@ VectorEnv::VectorEnv(int count, int width, int height, unsigned int base_seed)
     {
         // One generator per game, offset from the base, so a run reproduces and
         // no two games share a food sequence.
-        envs_.emplace_back(width, height, base_seed + index);
+        envs_.emplace_back(width, height, base_seed + index, step_limit);
     }
 }
 
@@ -39,7 +39,7 @@ void VectorEnv::step(const SnakeEnv::Action* actions, SnakeEnv::StepResult* resu
             // Report the terminal state rather than stepping it. SnakeEnv::step
             // throws on a finished episode, and it should - a trainer that has
             // lost track of which games are live has a bug worth surfacing.
-            results_out[index] = {0.0f, true, env.won()};
+            results_out[index] = { 0.0f, true, env.won() };
             continue;
         }
         results_out[index] = env.step(actions[index]);

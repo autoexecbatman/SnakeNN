@@ -145,7 +145,7 @@ Direction turnRight(Direction heading)
 
 }  // namespace
 
-SnakeEnv::SnakeEnv(int width, int height, unsigned int seed)
+SnakeEnv::SnakeEnv(int width, int height, unsigned int seed, int step_limit)
     : width_(width),
       height_(height),
       heading_(Direction::RIGHT),
@@ -154,13 +154,24 @@ SnakeEnv::SnakeEnv(int width, int height, unsigned int seed)
       score_(0),
       steps_(0),
       steps_since_food_(0),
+      step_limit_(step_limit),
       rng_(seed)
 {
     if (width < 2 || height < 2)
     {
         throw std::invalid_argument("SnakeEnv needs a board of at least 2x2");
     }
+    if (step_limit < 1)
+    {
+        throw std::invalid_argument("SnakeEnv needs a step limit of at least 1");
+    }
     reset();
+}
+
+float SnakeEnv::budgetRemaining() const
+{
+    const int spent = std::min(steps_, step_limit_);
+    return static_cast<float>(step_limit_ - spent) / static_cast<float>(step_limit_);
 }
 
 void SnakeEnv::reset()
@@ -318,7 +329,7 @@ SnakeEnv::StepResult SnakeEnv::step(Action action)
     if (blocksHead(next, will_eat))
     {
         done_ = true;
-        return {DEATH_REWARD, true, false};
+        return { DEATH_REWARD, true, false };
     }
 
     if (will_eat)
@@ -334,11 +345,11 @@ SnakeEnv::StepResult SnakeEnv::step(Action action)
             // to be done. This is the win, and it is terminal.
             won_ = true;
             done_ = true;
-            return {WIN_REWARD, true, true};
+            return { WIN_REWARD, true, true };
         }
 
         spawnFood();
-        return {FOOD_REWARD, false, false};
+        return { FOOD_REWARD, false, false };
     }
 
     // Free the tail before occupying the new head, so a head entering the cell
@@ -354,10 +365,10 @@ SnakeEnv::StepResult SnakeEnv::step(Action action)
         // Starvation is a death and pays like one, which is what makes stalling
         // strictly worse than playing.
         done_ = true;
-        return {DEATH_REWARD, true, false};
+        return { DEATH_REWARD, true, false };
     }
 
-    return {0.0f, false, false};
+    return { 0.0f, false, false };
 }
 
 SnakeEnv::Snapshot SnakeEnv::snapshot() const
@@ -380,6 +391,7 @@ SnakeEnv::Snapshot SnakeEnv::snapshot() const
     out.food_cell = static_cast<unsigned short>(cellIndex(food_));
     out.heading = static_cast<unsigned char>(heading_);
     out.won = won_;
+    out.budget_remaining = budgetRemaining();
     return out;
 }
 
@@ -417,6 +429,17 @@ void SnakeEnv::encodeSnapshot(int width, int height, const Snapshot& snapshot, f
     for (int cell = 0; cell < cells; cell++)
     {
         heading_out[cell] = 1.0f;
+    }
+
+    // The clock, as a constant plane. A convolution has no other way to see a
+    // scalar, and the agent that cannot see its budget has no reason to abandon
+    // an apple that has already cost it sixty steps - which is where this
+    // project's losses are: the slowest tenth of apples take 39 percent of every
+    // step played.
+    float* clock_plane = planes_out + 8 * cells;
+    for (int cell = 0; cell < cells; cell++)
+    {
+        clock_plane[cell] = snapshot.budget_remaining;
     }
 }
 

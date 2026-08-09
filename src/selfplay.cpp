@@ -70,7 +70,7 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
     games.reserve(game_count);
     for (int index = 0; index < game_count; index++)
     {
-        games.emplace_back(board_width, board_height, game_seed_base + index);
+        games.emplace_back(board_width, board_height, game_seed_base + index, config_.step_limit);
     }
 
     // Per game: the positions visited so far and the reward collected leaving
