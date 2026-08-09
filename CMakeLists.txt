@@ -697,6 +697,16 @@ add_executable(TrainerOptionsTest
 set_property(TARGET TrainerOptionsTest PROPERTY CXX_STANDARD 20)
 add_test(NAME trainer_options COMMAND TrainerOptionsTest)
 
+# Command-line number parsing, shared by the trainer, the evaluator and the
+# visual. No LibTorch, so its assertions and its throws are reachable in Debug.
+add_executable(FlagParserTest
+    src/flag_parser_test.cpp
+    src/flag_parser.cpp
+)
+
+set_property(TARGET FlagParserTest PROPERTY CXX_STANDARD 20)
+add_test(NAME flag_parser COMMAND FlagParserTest)
+
 # AlphaZero training loop.
 add_executable(AlphaZeroTrainer
     src/az_trainer.cpp
