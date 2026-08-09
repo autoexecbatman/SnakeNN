@@ -1,8 +1,19 @@
-cmake_minimum_required(VERSION 3.18)
+﻿cmake_minimum_required(VERSION 3.18)
 project(SnakeNN CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# src/ holds what the project still measures with: the AlphaZero stack, and the
+# winning path (snake_logic, hamiltonian_cycle, cycle_agent) with the instruments
+# that measure it. legacy/ holds one main() per file, each the record of one past
+# run. Both directories are on the include path because the legacy programs include
+# "snake_logic.h" from their own directory, and because perfect_snake_ai.cpp still
+# includes the legacy "neural_network.h" for three comparison scorers it never
+# calls. That one dependency is the only thing crossing the boundary in that
+# direction, and nothing in the build stops a new one being added - the split is a
+# convention here, not an enforced barrier.
+include_directories(${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/legacy)
 
 # Find vcpkg packages
 find_package(raylib CONFIG REQUIRED)
@@ -67,8 +78,8 @@ target_link_libraries(SnakeGameLib raylib)
 
 # Simple trainer test - minimal version
 add_executable(SimpleTrainer
-    src/snake_trainer.cpp
-    src/network_nn.cpp
+    legacy/snake_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(SimpleTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -87,7 +98,7 @@ endif()
 
 # Test executables
 add_executable(NeuralNetworkTest
-    src/minimal_test.cpp
+    legacy/minimal_test.cpp
 )
 
 target_include_directories(NeuralNetworkTest PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -96,7 +107,7 @@ set_property(TARGET NeuralNetworkTest PROPERTY CXX_STANDARD 20)
 copy_pytorch_dlls(NeuralNetworkTest)
 
 add_executable(SnakeGame
-    src/snake_game.cpp
+    legacy/snake_game.cpp
 )
 
 target_include_directories(SnakeGame PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -105,8 +116,8 @@ set_property(TARGET SnakeGame PROPERTY CXX_STANDARD 20)
 copy_pytorch_dlls(SnakeGame)
 
 add_executable(SnakeTest
-    src/snake_test.cpp
-    src/network_nn.cpp
+    legacy/snake_test.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(SnakeTest PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -116,8 +127,8 @@ copy_pytorch_dlls(SnakeTest)
 
 # Diagnostic test executable
 add_executable(DiagnosticTest
-    src/diagnostic_test.cpp
-    src/network_nn.cpp
+    legacy/diagnostic_test.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(DiagnosticTest PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -127,7 +138,7 @@ copy_pytorch_dlls(DiagnosticTest)
 
 # Simple agent test (no neural network)
 add_executable(SimpleAgentTest
-    src/simple_agent_test.cpp
+    legacy/simple_agent_test.cpp
 )
 
 target_link_libraries(SimpleAgentTest SnakeGameLib)
@@ -135,8 +146,8 @@ set_property(TARGET SimpleAgentTest PROPERTY CXX_STANDARD 20)
 
 # Simple neural agent test
 add_executable(SimpleNeuralTest
-    src/simple_neural_test.cpp
-    src/network_nn.cpp
+    legacy/simple_neural_test.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(SimpleNeuralTest PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -146,8 +157,8 @@ copy_pytorch_dlls(SimpleNeuralTest)
 
 # Fixed trainer with all improvements
 add_executable(FixedTrainer
-    src/fixed_trainer_clean.cpp
-    src/network_nn.cpp
+    legacy/fixed_trainer_clean.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(FixedTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -157,8 +168,8 @@ copy_pytorch_dlls(FixedTrainer)
 
 # Simple fixed trainer
 add_executable(SimpleFixed
-    src/simple_fixed.cpp
-    src/network_nn.cpp
+    legacy/simple_fixed.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(SimpleFixed PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -168,8 +179,8 @@ copy_pytorch_dlls(SimpleFixed)
 
 # Model tester
 add_executable(ModelTester
-    src/model_tester.cpp
-    src/network_nn.cpp
+    legacy/model_tester.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(ModelTester PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -179,8 +190,8 @@ copy_pytorch_dlls(ModelTester)
 
 # Visual demo
 add_executable(VisualDemo
-    src/visual_demo.cpp
-    src/network_nn.cpp
+    legacy/visual_demo.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(VisualDemo PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -190,8 +201,8 @@ copy_pytorch_dlls(VisualDemo)
 
 # Enhanced trainer for 90%+ performance
 add_executable(EnhancedTrainer
-    src/enhanced_trainer.cpp
-    src/network_nn.cpp
+    legacy/enhanced_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(EnhancedTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -201,8 +212,8 @@ copy_pytorch_dlls(EnhancedTrainer)
 
 # Optimized trainer - builds on proven 96% success
 add_executable(OptimizedTrainer
-    src/optimized_trainer.cpp
-    src/network_nn.cpp
+    legacy/optimized_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(OptimizedTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -212,8 +223,8 @@ copy_pytorch_dlls(OptimizedTrainer)
 
 # Aggressive trainer for high scores (15+ foods per game)
 add_executable(AggressiveTrainer
-    src/aggressive_trainer.cpp
-    src/network_nn.cpp
+    legacy/aggressive_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(AggressiveTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -223,8 +234,8 @@ copy_pytorch_dlls(AggressiveTrainer)
 
 # Behavior analyzer to understand AI strategy
 add_executable(BehaviorAnalyzer
-    src/behavior_analyzer.cpp
-    src/network_nn.cpp
+    legacy/behavior_analyzer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(BehaviorAnalyzer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -234,8 +245,8 @@ copy_pytorch_dlls(BehaviorAnalyzer)
 
 # Self-aware trainer for collision avoidance and longer survival
 add_executable(SelfAwareTrainer
-    src/selfaware_trainer.cpp
-    src/network_nn.cpp
+    legacy/selfaware_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(SelfAwareTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -245,8 +256,8 @@ copy_pytorch_dlls(SelfAwareTrainer)
 
 # Minimal improved trainer - keeps what works, minimal changes
 add_executable(MinimalImprovedTrainer
-    src/minimal_improved_trainer.cpp
-    src/network_nn.cpp
+    legacy/minimal_improved_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(MinimalImprovedTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -256,8 +267,8 @@ copy_pytorch_dlls(MinimalImprovedTrainer)
 
 # Advanced Snake AI Trainer - Next Generation
 add_executable(AdvancedTrainer
-    src/advanced_trainer_main.cpp
-    src/advanced_snake_network.cpp
+    legacy/advanced_trainer_main.cpp
+    legacy/advanced_snake_network.cpp
 )
 
 target_include_directories(AdvancedTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -276,8 +287,8 @@ endif()
 
 # Comprehensive evaluator - proper performance metrics
 add_executable(ComprehensiveEvaluator
-    src/comprehensive_evaluator.cpp
-    src/network_nn.cpp
+    legacy/comprehensive_evaluator.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(ComprehensiveEvaluator PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -296,8 +307,8 @@ endif()
 
 # Extended Optimized trainer for longer training sessions (20K+ episodes)
 add_executable(ExtendedOptimizedTrainer
-    src/extended_optimized_trainer.cpp
-    src/network_nn.cpp
+    legacy/extended_optimized_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(ExtendedOptimizedTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -316,8 +327,8 @@ endif()
 
 # Quality trainer - optimizes for game length and score quality
 add_executable(QualityTrainer
-    src/quality_trainer.cpp
-    src/network_nn.cpp
+    legacy/quality_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(QualityTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -336,8 +347,8 @@ endif()
 
 # Resume trainer - continues training from existing model
 add_executable(ResumeTrainer
-    src/resume_trainer.cpp
-    src/network_nn.cpp
+    legacy/resume_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(ResumeTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -356,8 +367,8 @@ endif()
 
 # Research-optimized trainer with academic parameters
 add_executable(ResearchOptimizedTrainer
-    src/research_optimized_trainer.cpp
-    src/network_nn.cpp
+    legacy/research_optimized_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(ResearchOptimizedTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -376,8 +387,8 @@ endif()
 
 # Winning trainer - optimizes for high scores (15+ foods)
 add_executable(WinningTrainer
-    src/winning_trainer.cpp
-    src/network_nn.cpp
+    legacy/winning_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(WinningTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -396,8 +407,8 @@ endif()
 
 # Simplified winning trainer - proven 8 features with score rewards
 add_executable(SimplifiedWinningTrainer
-    src/simplified_winning_trainer.cpp
-    src/network_nn.cpp
+    legacy/simplified_winning_trainer.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(SimplifiedWinningTrainer PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -416,8 +427,8 @@ endif()
 
 # Model evaluator - comprehensive testing of trained models
 add_executable(ModelEvaluator
-    src/model_evaluator.cpp
-    src/network_nn.cpp
+    legacy/model_evaluator.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(ModelEvaluator PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -436,8 +447,8 @@ endif()
 
 # Hybrid AI - Neural network + pathfinding + space management
 add_executable(HybridAI
-    src/hybrid_ai.cpp
-    src/network_nn.cpp
+    legacy/hybrid_ai.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(HybridAI PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -456,8 +467,8 @@ endif()
 
 # Visual hybrid demo - watch AI play in real-time
 add_executable(VisualHybridDemo
-    src/visual_hybrid_demo.cpp
-    src/network_nn.cpp
+    legacy/visual_hybrid_demo.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(VisualHybridDemo PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -476,8 +487,8 @@ endif()
 
 # Safe Snake AI - guaranteed collision avoidance
 add_executable(SafeSnakeAI
-    src/safe_snake_ai.cpp
-    src/network_nn.cpp
+    legacy/safe_snake_ai.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(SafeSnakeAI PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -496,8 +507,8 @@ endif()
 
 # Universal Safe AI - loads any compatible model architecture
 add_executable(UniversalSafeAI
-    src/universal_safe_ai.cpp
-    src/network_nn.cpp
+    legacy/universal_safe_ai.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(UniversalSafeAI PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -516,8 +527,8 @@ endif()
 
 # Smart Safe AI - trap avoidance with flood fill
 add_executable(SmartSafeAI
-    src/smart_safe_ai.cpp
-    src/network_nn.cpp
+    legacy/smart_safe_ai.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(SmartSafeAI PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -536,8 +547,8 @@ endif()
 
 # Simple Snake AI with Fixed Collision Detection
 add_executable(SimpleSnakeAIFixed
-    src/simple_snake_ai_fixed.cpp
-    src/network_nn.cpp
+    legacy/simple_snake_ai_fixed.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(SimpleSnakeAIFixed PRIVATE ${TORCH_INCLUDE_DIRS})
@@ -791,7 +802,7 @@ add_executable(PerfectSnakeAI
     src/board_render.cpp
     src/cycle_agent.cpp
     src/hamiltonian_cycle.cpp
-    src/network_nn.cpp
+    legacy/network_nn.cpp
 )
 
 target_include_directories(PerfectSnakeAI PRIVATE ${TORCH_INCLUDE_DIRS})
