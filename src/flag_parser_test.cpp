@@ -190,6 +190,76 @@ void reportsAnOversizedUnsignedAsItsOwnMistake()
     }
 }
 
+void expectAccepted(std::string_view flag, int value, int minimum)
+{
+    try
+    {
+        flags::requireAtLeast(flag, value, minimum);
+    }
+    catch (const std::exception& error)
+    {
+        std::cout << std::format("[FAIL] {} {} >= {}: rejected: {}\n", flag, value, minimum,
+                                 error.what());
+        failures++;
+    }
+}
+
+// The message must carry all three, or it does not say what to change.
+void expectBelowBound(std::string_view flag, int value, int minimum)
+{
+    try
+    {
+        flags::requireAtLeast(flag, value, minimum);
+        std::cout << std::format("[FAIL] {} {} < {}: accepted\n", flag, value, minimum);
+        failures++;
+    }
+    catch (const std::invalid_argument& error)
+    {
+        const std::string message = error.what();
+        if (message.find(flag) == std::string::npos)
+        {
+            std::cout << std::format("[FAIL] {} {} < {}: message omits the flag: {}\n", flag, value,
+                                     minimum, message);
+            failures++;
+        }
+        // Ordered, not just present: the two numbers reversed reads as the
+        // opposite requirement and still contains both.
+        const std::string ordered = std::format("at least {}, got {}", minimum, value);
+        if (message.find(ordered) == std::string::npos)
+        {
+            std::cout << std::format("[FAIL] {} {} < {}: message does not read '{}': {}\n", flag,
+                                     value, minimum, ordered, message);
+            failures++;
+        }
+    }
+    catch (const std::exception& error)
+    {
+        std::cout << std::format("[FAIL] {} {} < {}: wrong exception type: {}\n", flag, value,
+                                 minimum, error.what());
+        failures++;
+    }
+}
+
+// Paired either side of each bound, so an off-by-one in the comparison fails.
+void acceptsAtOrAboveTheBound()
+{
+    expectAccepted("--board", 2, 2);
+    expectAccepted("--board", 3, 2);
+    expectAccepted("--batches", 0, 0);
+    expectAccepted("--offset", -10, -10);
+    expectAccepted("--offset", -9, -10);
+    expectAccepted("--seed", 2147483647, 0);
+}
+
+void rejectsBelowTheBound()
+{
+    expectBelowBound("--board", 1, 2);
+    expectBelowBound("--batches", -1, 0);
+    expectBelowBound("--offset", -11, -10);
+    expectBelowBound("--games", 0, 1);
+    expectBelowBound("--seed", -2147483648, 0);
+}
+
 }  // namespace
 
 int main()
@@ -201,6 +271,8 @@ int main()
     rejectsANegativeValueRatherThanWrappingIt();
     rejectsMalformedAndOversizedUnsigned();
     reportsAnOversizedUnsignedAsItsOwnMistake();
+    acceptsAtOrAboveTheBound();
+    rejectsBelowTheBound();
 
     if (failures == 0)
     {

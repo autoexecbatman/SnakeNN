@@ -22,4 +22,11 @@ int parseWholeInt(std::string_view flag, std::string_view text);
 // 4294967295. Accepts 0 through 4294967295.
 unsigned int parseWholeUnsigned(std::string_view flag, std::string_view text);
 
+// Throws std::invalid_argument unless value >= minimum. The message carries the
+// flag, the bound and the value.
+//
+// `minimum` is a bound the caller states, so any int is allowed including a
+// negative one; `value` is what the operator supplied.
+void requireAtLeast(std::string_view flag, int value, int minimum);
+
 }  // namespace flags

@@ -56,4 +56,15 @@ unsigned int parseWholeUnsigned(std::string_view flag, std::string_view text)
     return number;
 }
 
+void requireAtLeast(std::string_view flag, int value, int minimum)
+{
+    assert(!flag.empty() && "requireAtLeast was given no flag name to report against");
+
+    if (value < minimum)
+    {
+        throw std::invalid_argument(
+            std::format("{} must be at least {}, got {}", flag, minimum, value));
+    }
+}
+
 }  // namespace flags
