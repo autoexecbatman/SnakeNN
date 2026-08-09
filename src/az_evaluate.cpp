@@ -12,6 +12,7 @@
 #include "az_parameters.h"
 #include "eval_options.h"
 #include "run_ledger.h"
+#include "steps_per_apple.h"
 #include "mcts.h"
 #include "network_evaluator.h"
 #include "seed_policy.h"
@@ -116,6 +117,8 @@ int main(int argc, char** argv)
                                seeds::evaluationGameSeed(settings.seed_offset, start + index));
         }
         std::vector<bool> timed_out(count, false);
+        // One per game in the batch, fed after every move it makes.
+        std::vector<pace::AppleIntervals> apple_intervals(count);
 
         while (true)
         {
@@ -143,7 +146,9 @@ int main(int argc, char** argv)
             std::vector<MonteCarloSearch::Result> results = search.search(roots);
             for (size_t position = 0; position < live.size(); position++)
             {
-                games[live[position]].step(results[position].best_action);
+                const int index = live[position];
+                games[index].step(results[position].best_action);
+                apple_intervals[index].observe(games[index].score(), games[index].steps());
             }
         }
 
@@ -169,9 +174,10 @@ int main(int argc, char** argv)
             {
                 deaths++;
             }
-            std::cout << evaluation::formatGameLine(
-                seeds::evaluationGameSeed(settings.seed_offset, start + index), outcome,
-                game.score(), game.steps());
+            const unsigned int seed =
+                seeds::evaluationGameSeed(settings.seed_offset, start + index);
+            std::cout << evaluation::formatGameLine(seed, outcome, game.score(), game.steps());
+            std::cout << pace::formatPaceLine(seed, apple_intervals[index].intervals());
         }
 
         std::cout << std::format("  {}/{} games, wins {}\n", start + count, settings.games, wins);

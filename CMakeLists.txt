@@ -756,6 +756,18 @@ set_property(TARGET RunLedgerTest PROPERTY CXX_STANDARD 20)
 enable_strict_warnings(RunLedgerTest)
 add_test(NAME run_ledger COMMAND RunLedgerTest)
 
+# How long the agent takes between apples, and where in a game the time goes.
+# The agent fills the board and arrives late, and nothing measured which apples
+# are expensive. No LibTorch, so its assertions are reachable in Debug.
+add_executable(StepsPerAppleTest
+    src/steps_per_apple_test.cpp
+    src/steps_per_apple.cpp
+)
+
+set_property(TARGET StepsPerAppleTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(StepsPerAppleTest)
+add_test(NAME steps_per_apple COMMAND StepsPerAppleTest)
+
 # The evaluator's settings. Extracted from az_evaluate.cpp, whose parser warned
 # about an unknown flag and then scored the run with the default, and reached
 # std::stoi for every number. Every figure this project quotes comes out of that
@@ -798,6 +810,7 @@ endif()
 
 # Scores a saved network on held-out seeds: greedy, no root noise, win rate.
 add_executable(AlphaZeroEvaluate
+    src/steps_per_apple.cpp
     src/run_ledger.cpp
     src/az_evaluate.cpp
     src/eval_options.cpp
