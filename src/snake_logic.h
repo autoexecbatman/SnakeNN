@@ -1,4 +1,5 @@
 #pragma once
+
 #include <vector>
 #include <random>
 
@@ -45,11 +46,11 @@ public:
 private:
     std::vector<Position> snake;
     Position food;
-    Direction direction;
-    Direction pendingDirection;
-    bool gameOver;
-    bool won;
-    int score;
+    Direction direction{ Direction::RIGHT };
+    Direction pendingDirection{ Direction::RIGHT };
+    bool gameOver{ false };
+    bool won{ false };
+    int score{ 0 };
     std::mt19937 rng;
 
     void spawnFood();

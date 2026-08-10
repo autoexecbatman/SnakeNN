@@ -1,10 +1,11 @@
 #pragma once
-#include "snake_logic.h"  // Use existing Position struct
+
 #include <vector>
-#include <queue>
 #include <random>
 #include <unordered_map>
-#include <unordered_set>
+
+#include "snake_logic.h"  // Use existing Position struct
+
 
 struct PositionHash
 {
@@ -41,7 +42,8 @@ public:
     void printCycle() const;
 
 private:
-    int width_, height_;
+    int width_{ 0 };
+    int height_{ 0 };
     std::vector<std::vector<int>> cycle_index_;  // Maps position to cycle index
     std::vector<Position> cycle_path_;           // Ordered cycle positions
     std::unordered_map<Position, Position, PositionHash> next_in_cycle_;

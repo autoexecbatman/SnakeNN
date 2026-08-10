@@ -1,4 +1,5 @@
 #pragma once
+
 #include "snake_logic.h"
 #include "hamiltonian_cycle.h"
 
@@ -23,5 +24,5 @@ public:
 
 private:
     HamiltonianCycle cycle_;
-    bool cycle_ready_;
+    bool cycle_ready_{ false };
 };

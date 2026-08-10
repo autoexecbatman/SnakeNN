@@ -1,4 +1,5 @@
 #pragma once
+
 #include <optional>
 #include <span>
 #include <string>
@@ -88,12 +89,12 @@ std::string formatDuration(double seconds);
 // SelfPlay::Progress so this stays independent of the self-play layer.
 struct ProgressSnapshot
 {
-    int games_total;
-    int games_finished;
-    long long moves_played;
-    long long evaluations;
-    int step_limit;
-    double elapsed_seconds;
+    int games_total{ 0 };
+    int games_finished{ 0 };
+    long long moves_played{ 0 };
+    long long evaluations{ 0 };
+    int step_limit{ 0 };
+    double elapsed_seconds{ 0.0 };
 };
 
 // One redrawn progress line, ASCII only, with no leading carriage return and no
