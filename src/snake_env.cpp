@@ -168,8 +168,20 @@ SnakeEnv::SnakeEnv(int width, int height, unsigned int seed, int step_limit)
     reset();
 }
 
+void SnakeEnv::freezeClockForAblation(float value)
+{
+    // A fraction of the budget, so anything outside [0, 1] is a caller error and
+    // not a value the clock could ever have held.
+    assert(value >= 0.0f && value <= 1.0f);
+    frozen_clock_ = value;
+}
+
 float SnakeEnv::budgetRemaining() const
 {
+    if (frozen_clock_ >= 0.0f)
+    {
+        return frozen_clock_;
+    }
     const int spent = std::min(steps_, step_limit_);
     return static_cast<float>(step_limit_ - spent) / static_cast<float>(step_limit_);
 }

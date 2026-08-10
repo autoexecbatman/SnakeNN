@@ -919,6 +919,64 @@ void testTheBudgetCountsDownWithTheSteps()
            "the snapshot carries the budget, two steps of ten being 0.8");
 }
 
+// Freezing the clock is the whole of the ablation that measures what time
+// awareness is worth, so the properties are the ones the measurement rests on:
+// the value does not move, it reaches the encoding, and a copy carries it - the
+// search steps copies, and a freeze that stopped at the root would leave the
+// network reading a live clock everywhere the lookahead actually happens.
+void testTheClockCanBeFrozenForAnAblation()
+{
+    SnakeEnv env(6, 6, 1, 100);
+    env.freezeClockForAblation(0.5f);
+    expect(env.budgetRemaining() == 0.5f, "a frozen clock reads the value it was frozen at");
+
+    for (int step = 0; step < 10 && !env.done(); step++)
+    {
+        env.step(SnakeEnv::Action::STRAIGHT);
+    }
+    expect(env.budgetRemaining() == 0.5f, "and it does not move as the steps are spent");
+    expect(env.steps() > 0, "while the real step count still advances underneath it");
+    expect(env.stepLimit() == 100, "and the limit itself is untouched");
+
+    // Straight to the plane the network reads, because budgetRemaining() agreeing
+    // and the encoding disagreeing is exactly the failure that would make an
+    // ablation measure nothing while looking correct.
+    SnakeEnv encoded(6, 6, 1, 100);
+    encoded.freezeClockForAblation(0.25f);
+    encoded.step(SnakeEnv::Action::STRAIGHT);
+    std::vector<float> planes(encoded.encodedSize(), -1.0f);
+    encoded.encode(planes.data());
+    const int cells = encoded.cellCount();
+    bool clock_plane_is_frozen = true;
+    for (int cell = 0; cell < cells; cell++)
+    {
+        if (planes[8 * cells + cell] != 0.25f)
+        {
+            clock_plane_is_frozen = false;
+        }
+    }
+    expect(clock_plane_is_frozen, "every cell of the clock plane holds the frozen value");
+    expect(encoded.snapshot().budget_remaining == 0.25f, "and the snapshot carries it too");
+
+    // The search steps copies of the root. A freeze the copy dropped would be
+    // invisible here and would silently un-ablate the lookahead.
+    SnakeEnv copied = encoded;
+    copied.step(SnakeEnv::Action::STRAIGHT);
+    expect(copied.budgetRemaining() == 0.25f, "a copy carries the freeze");
+
+    // Zero is a legitimate freeze - "no budget left, always" - and must not be
+    // read as the absence of one.
+    SnakeEnv spent(6, 6, 1, 100);
+    spent.freezeClockForAblation(0.0f);
+    expect(spent.budgetRemaining() == 0.0f, "freezing at zero freezes at zero, not off");
+
+    // An unfrozen environment is unaffected, which is what keeps every existing
+    // measurement comparable with one taken after this was added.
+    SnakeEnv untouched(6, 6, 1, 100);
+    untouched.step(SnakeEnv::Action::STRAIGHT);
+    expect(untouched.budgetRemaining() == 0.99f, "an environment nobody froze still counts down");
+}
+
 void testStepLimitIsRequired()
 {
     bool refused = false;
@@ -999,6 +1057,7 @@ int main()
     testEatingReward();
     testEncoding();
     testTheBudgetCountsDownWithTheSteps();
+    testTheClockCanBeFrozenForAnAblation();
     testStepLimitIsRequired();
     testWinnableByCycle();
 

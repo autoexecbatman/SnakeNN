@@ -54,7 +54,7 @@ private:
     // part of the golden ratio.
     static constexpr std::uint64_t GOLDEN_GAMMA = 0x9E3779B97F4A7C15ull;
 
-    std::uint64_t state_;
+    std::uint64_t state_{ 0 };
 };
 
 // Training environment. Separate from SnakeGame on purpose:
@@ -97,9 +97,9 @@ public:
 
     struct StepResult
     {
-        float reward;
-        bool done;
-        bool won;
+        float reward{ 0.0f };
+        bool done{ false };
+        bool won{ false };
     };
 
     // `step_limit` is the game's whole budget and must be at least 1.
@@ -139,7 +139,21 @@ public:
     int stepLimit() const { return step_limit_; }
     // What the clock plane holds: 1 at the start, 0 once the budget is spent, and
     // never negative even if the caller runs the episode past its limit.
+    //
+    // Reports the frozen value instead once freezeClockForAblation has been called.
     float budgetRemaining() const;
+
+    // Makes the clock read `value` for the rest of this environment's life.
+    //
+    // Measurement only, and it is the whole of an ablation: the network sees a
+    // constant where it was trained to see time running out, so a win rate
+    // measured against a run without it is the contribution of time awareness and
+    // nothing else. The weights are untouched, so nothing else about the agent
+    // moves. Copies carry the freeze, which is what makes the search see it too.
+    //
+    // Asserts 0 <= value <= 1. The trainer must never call this - a policy trained
+    // against a frozen clock is a different agent, not an ablation of this one.
+    void freezeClockForAblation(float value);
     int stepsSinceFood() const { return steps_since_food_; }
     bool done() const { return done_; }
     bool won() const { return won_; }
@@ -192,9 +206,9 @@ public:
     struct Snapshot
     {
         std::vector<unsigned short> body_cells;  // head first
-        unsigned short food_cell;
-        unsigned char heading;
-        bool won;
+        unsigned short food_cell{ 0 };
+        unsigned char heading{ 0 };
+        bool won{ false };
         // The clock, already normalised. Carried rather than recomputed because a
         // snapshot outlives its environment: the replay buffer holds these for
         // thousands of games and has no way back to the step limit they came from.
@@ -211,17 +225,24 @@ public:
     static void encodeSnapshot(int width, int height, const Snapshot& snapshot, float* planes_out);
 
 private:
-    int width_;
-    int height_;
+    // Every one of these is assigned by the constructor and again by reset(). The
+    // initializers are here so the object is never momentarily undefined, not to
+    // supply a value anything reads.
+    int width_{ 0 };
+    int height_{ 0 };
     std::vector<Position> body_;  // index 0 is the head
-    Position food_;
-    Direction heading_;
-    bool done_;
-    bool won_;
-    int score_;
-    int steps_;
-    int steps_since_food_;
-    int step_limit_;
+    Position food_{ 0, 0 };
+    Direction heading_{ Direction::UP };
+    bool done_{ false };
+    bool won_{ false };
+    int score_{ 0 };
+    int steps_{ 0 };
+    int steps_since_food_{ 0 };
+    int step_limit_{ 0 };
+    // Set by freezeClockForAblation, and negative when the clock runs normally -
+    // one member rather than a flag and a value, since no legitimate budget is
+    // below zero.
+    float frozen_clock_{ -1.0f };
     SmallRandom rng_;
     // Occupancy by cell index: 1 where a body segment sits, 0 where nothing
     // does. Keeps collision and food placement off the O(length) scan that
