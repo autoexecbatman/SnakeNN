@@ -15,6 +15,21 @@ constexpr float LEARNING_RATE = 0.001f;
 constexpr float ROOT_NOISE_FRACTION = 0.25f;
 constexpr float ROOT_NOISE_ALPHA = 0.3f;
 
+// What a game pays for running out of steps. A deliberate deviation: the paper's
+// outcomes are a win and a death, and a truncated game is neither, so under it a
+// timeout was worth 0 - strictly better than the -10 of dying. That ranking is
+// backwards for the task. It makes stalling the safe play, and it is the reward
+// side of the reason the agent arrives at the cap with the board nearly full.
+//
+// Equal to the death reward, because both are the same outcome: the game was not
+// won. Equalising them is what stops a policy preferring a certain timeout to a
+// risky finish.
+//
+// It reaches the value target only, through the discounted return in selfplay.cpp.
+// At DISCOUNT it is visible about 200 steps back and no further, so this makes the
+// deadline real near the end of a game and does nothing about pace at the start.
+constexpr float TIMEOUT_REWARD = -10.0f;
+
 // The paper caps a 10x10 game at 1,200 steps, which is twelve steps per cell.
 // Scaling by area rather than fixing the number keeps "win" meaning the same
 // thing at every board size the curriculum passes through.

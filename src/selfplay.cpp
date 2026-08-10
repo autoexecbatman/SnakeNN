@@ -173,6 +173,14 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
     // head learns that stalling pays.
     for (int index = 0; index < game_count; index++)
     {
+        // Charged to the last move, so the backward walk discounts it into every
+        // earlier position of the game. A game that won or died reached an outcome
+        // of its own and already paid for it.
+        if (hit_limit[index] && !rewards[index].empty())
+        {
+            rewards[index].back() += config_.timeout_reward;
+        }
+
         float carried = 0.0f;
         for (int position = static_cast<int>(trajectories[index].size()); position-- > 0;)
         {

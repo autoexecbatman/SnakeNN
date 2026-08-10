@@ -105,9 +105,13 @@ int main(int argc, char** argv)
     // Printed because it is the quantity comparable with the paper's 3,000, and
     // --batches on its own is not - it says nothing about how many games those
     // batches were spread over.
-    std::cout << std::format(
-        "gradient {} batches of {} = {} samples per game (the paper: 3000)\n\n",
-        settings.batches_per_iteration, settings.batch_size, settings.samplesPerGame());
+    std::cout << std::format("gradient {} batches of {} = {} samples per game (the paper: 3000)\n",
+                             settings.batches_per_iteration, settings.batch_size,
+                             settings.samplesPerGame());
+    // A deviation from the paper that changes what the value head is trained on,
+    // so a run that did not print it could not be told apart from one before it.
+    std::cout << std::format("timeout reward {} (the paper: 0, a timeout was free)\n\n",
+                             az::TIMEOUT_REWARD);
 
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
 
@@ -150,6 +154,7 @@ int main(int argc, char** argv)
     play_config.games_in_parallel = settings.games_per_iteration;
     play_config.step_limit = step_limit;
     play_config.discount = az::DISCOUNT;
+    play_config.timeout_reward = az::TIMEOUT_REWARD;
     play_config.temperature = az::VISIT_TEMPERATURE;
     play_config.temperature_moves = settings.cellCount() / 2;
     play_config.seed = settings.seed;

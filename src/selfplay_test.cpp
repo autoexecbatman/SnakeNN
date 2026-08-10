@@ -1,5 +1,7 @@
+#include "az_parameters.h"
 #include "selfplay.h"
 #include <cmath>
+#include <format>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -56,12 +58,13 @@ MonteCarloSearch::Config searchConfig()
     return config;
 }
 
-SelfPlay::Config playConfig(int games, int step_limit)
+SelfPlay::Config playConfig(int games, int step_limit, float timeout_reward)
 {
     SelfPlay::Config config;
     config.games_in_parallel = games;
     config.step_limit = step_limit;
     config.discount = 0.98f;
+    config.timeout_reward = timeout_reward;
     config.temperature = 0.5f;  // Du et al. 2022
     config.temperature_moves = 8;
     config.seed = 99;
@@ -71,7 +74,7 @@ SelfPlay::Config playConfig(int games, int step_limit)
 void testProducesOneRecordPerMove()
 {
     SilentEvaluator evaluator;
-    SelfPlay play(evaluator, searchConfig(), playConfig(4, 60));
+    SelfPlay play(evaluator, searchConfig(), playConfig(4, 60, az::TIMEOUT_REWARD));
 
     std::vector<TrainingRecord> records;
     std::vector<GameSummary> summaries;
@@ -117,7 +120,7 @@ void testReturnsAreDiscountedBackwards()
     // the returns independently from the summary and the reward scale rather
     // than reading them back out of the thing under test.
     SilentEvaluator evaluator;
-    SelfPlay play(evaluator, searchConfig(), playConfig(1, 40));
+    SelfPlay play(evaluator, searchConfig(), playConfig(1, 40, az::TIMEOUT_REWARD));
 
     std::vector<TrainingRecord> records;
     std::vector<GameSummary> summaries;
@@ -167,7 +170,7 @@ void testStepLimitIsEnforcedAndReported()
 {
     SilentEvaluator evaluator;
     const int limit = 12;
-    SelfPlay play(evaluator, searchConfig(), playConfig(6, limit));
+    SelfPlay play(evaluator, searchConfig(), playConfig(6, limit, az::TIMEOUT_REWARD));
 
     std::vector<TrainingRecord> records;
     std::vector<GameSummary> summaries;
@@ -184,20 +187,149 @@ void testStepLimitIsEnforcedAndReported()
     expect(any_limited, "games stopped by the limit are reported as such, not as deaths");
 }
 
+// A timed-out game must cost something, or the value head learns that running out
+// the clock beats dying - which was true before this existed, since a timeout paid
+// 0 against a death's -10.
+void testATimedOutGamePaysThePenaltyAndOthersDoNot()
+{
+    SilentEvaluator evaluator;
+    const int limit = 12;
+    // Distinct from every reward the environment can pay, so a target carrying it
+    // cannot be mistaken for a death, a win, an apple or nothing.
+    const float penalty = -7.0f;
+
+    // A 12x12 board and twelve steps: the snake cannot fill it and cannot easily
+    // reach a wall, so this batch is where timeouts come from.
+    std::vector<TrainingRecord> penalised;
+    std::vector<GameSummary> penalised_summaries;
+    SelfPlay play(evaluator, searchConfig(), playConfig(6, limit, penalty));
+    play.playBatch(12, 12, 31337, penalised, penalised_summaries);
+
+    // The same batch with the penalty switched off. Identical seeds and identical
+    // config otherwise, so any difference in the targets is the penalty and nothing
+    // else - and the moves themselves must be unchanged, since a reward applied
+    // after the fact cannot alter a game that was already played.
+    std::vector<TrainingRecord> unpenalised;
+    std::vector<GameSummary> unpenalised_summaries;
+    SelfPlay reference(evaluator, searchConfig(), playConfig(6, limit, 0.0f));
+    reference.playBatch(12, 12, 31337, unpenalised, unpenalised_summaries);
+
+    expect(penalised.size() == unpenalised.size(),
+           "the penalty changes the targets and not the games played");
+
+    bool any_timed_out = false;
+    for (const GameSummary& summary : penalised_summaries)
+    {
+        any_timed_out = any_timed_out || summary.hit_step_limit;
+    }
+    expect(any_timed_out, "the batch actually contains a timed-out game to measure");
+
+    // Walk the records game by game, in the order playBatch appends them.
+    bool timeout_targets_differ_by_the_penalty = true;
+    bool finished_targets_are_untouched = true;
+    size_t cursor = 0;
+    for (size_t game = 0; game < penalised_summaries.size(); game++)
+    {
+        const size_t moves = static_cast<size_t>(penalised_summaries[game].steps);
+        if (moves == 0 || cursor + moves > penalised.size())
+        {
+            continue;
+        }
+        const size_t last = cursor + moves - 1;
+        const float difference = penalised[last].value_target - unpenalised[last].value_target;
+
+        if (penalised_summaries[game].hit_step_limit)
+        {
+            // Undiscounted at the final position: the penalty is paid there.
+            if (std::fabs(difference - penalty) > 1e-3f)
+            {
+                std::cout << std::format("        game {} timed out, last target moved by {}\n",
+                                         game, difference);
+                timeout_targets_differ_by_the_penalty = false;
+            }
+            // And discounted once per step on the way back, so the first position
+            // of the game carries penalty * discount^(moves-1).
+            const float expected_at_start =
+                penalty * std::pow(0.98f, static_cast<float>(moves - 1));
+            const float start_difference =
+                penalised[cursor].value_target - unpenalised[cursor].value_target;
+            if (std::fabs(start_difference - expected_at_start) > 1e-2f)
+            {
+                std::cout << std::format("        game {} start moved by {}, expected {}\n", game,
+                                         start_difference, expected_at_start);
+                timeout_targets_differ_by_the_penalty = false;
+            }
+        }
+        else if (std::fabs(difference) > 1e-4f)
+        {
+            std::cout << std::format("        game {} reached an outcome and still moved by {}\n",
+                                     game, difference);
+            finished_targets_are_untouched = false;
+        }
+        cursor += moves;
+    }
+
+    expect(timeout_targets_differ_by_the_penalty,
+           "a timed-out game pays the penalty at its last move and discounts it backwards");
+
+    // Every game above ran out of steps, so the check below had nothing to look at
+    // there. A small board and a generous limit is where games die instead, which
+    // is what makes "untouched" mean anything.
+    std::vector<TrainingRecord> dying;
+    std::vector<GameSummary> dying_summaries;
+    SelfPlay penalised_deaths(evaluator, searchConfig(), playConfig(6, 400, penalty));
+    penalised_deaths.playBatch(6, 6, 909, dying, dying_summaries);
+
+    std::vector<TrainingRecord> dying_reference;
+    std::vector<GameSummary> dying_reference_summaries;
+    SelfPlay unpenalised_deaths(evaluator, searchConfig(), playConfig(6, 400, 0.0f));
+    unpenalised_deaths.playBatch(6, 6, 909, dying_reference, dying_reference_summaries);
+
+    int games_that_reached_an_outcome = 0;
+    for (const GameSummary& summary : dying_summaries)
+    {
+        if (!summary.hit_step_limit)
+        {
+            games_that_reached_an_outcome++;
+        }
+    }
+    expect(games_that_reached_an_outcome > 0,
+           "the second batch contains games that ended on their own");
+
+    if (dying.size() == dying_reference.size())
+    {
+        for (size_t index = 0; index < dying.size(); index++)
+        {
+            if (std::fabs(dying[index].value_target - dying_reference[index].value_target) > 1e-4f)
+            {
+                finished_targets_are_untouched = false;
+                break;
+            }
+        }
+    }
+    else
+    {
+        finished_targets_are_untouched = false;
+    }
+
+    expect(finished_targets_are_untouched,
+           "a game that won or died is untouched - it reached an outcome of its own");
+}
+
 void testProgressIsMonotonicAndCompletes()
 {
     // A progress bar that stalls or goes backwards is worse than none: it makes
     // a working run look hung. The counts have to rise and finish at the total.
     SilentEvaluator evaluator;
     const int games = 8;
-    SelfPlay play(evaluator, searchConfig(), playConfig(games, 40));
+    SelfPlay play(evaluator, searchConfig(), playConfig(games, 40, az::TIMEOUT_REWARD));
 
     int reports = 0;
     int last_finished = -1;
     long long last_moves = -1;
     bool monotonic = true;
     int final_finished = -1;
-    SelfPlay::Progress final_progress{0, 0, 0, 0.0};
+    SelfPlay::Progress final_progress{ 0, 0, 0, 0.0 };
 
     play.setProgressCallback(
         [&](const SelfPlay::Progress& progress)
@@ -236,6 +368,7 @@ int main()
     testProducesOneRecordPerMove();
     testReturnsAreDiscountedBackwards();
     testStepLimitIsEnforcedAndReported();
+    testATimedOutGamePaysThePenaltyAndOthersDoNot();
     testProgressIsMonotonicAndCompletes();
 
     std::cout << std::endl;
