@@ -17,6 +17,7 @@
 #include "run_ledger.h"
 #include "seed_policy.h"
 #include "selfplay.h"
+#include "snake_env.h"
 #include "trainer_options.h"
 
 // AlphaZero training loop for Snake.
@@ -110,8 +111,10 @@ int main(int argc, char** argv)
                              settings.samplesPerGame());
     // A deviation from the paper that changes what the value head is trained on,
     // so a run that did not print it could not be told apart from one before it.
-    std::cout << std::format("timeout reward {} (the paper: 0, a timeout was free)\n\n",
+    std::cout << std::format("timeout reward {} (the paper: 0, a timeout was free)\n",
                              az::TIMEOUT_REWARD);
+    std::cout << std::format("step reward {} per tick, steps head weight {}, tie-break {}\n\n",
+                             az::STEP_REWARD, az::STEPS_LOSS_WEIGHT, az::STEPS_TIEBREAK_MARGIN);
 
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
 
@@ -125,8 +128,14 @@ int main(int argc, char** argv)
             // Widened rather than loaded flat, so a checkpoint saved before the
             // clock plane resumes into a 9-plane network with the new channel
             // zeroed - a fine-tune from where it left off rather than a retrain.
-            network->loadNarrowerStem(settings.resume);
+            const std::vector<std::string> missing = network->loadNarrowerStem(settings.resume);
             std::cout << "resumed from " << settings.resume << std::endl;
+            // Printed rather than swallowed: a head added since the checkpoint was
+            // written looks exactly like a mistyped module name from here.
+            for (const std::string& name : missing)
+            {
+                std::cout << std::format("  fresh, absent from the checkpoint: {}\n", name);
+            }
         }
         catch (const std::exception& error)
         {
@@ -146,6 +155,9 @@ int main(int argc, char** argv)
     search_config.simulations = settings.simulations;
     search_config.exploration = az::EXPLORATION;
     search_config.discount = az::DISCOUNT;
+    search_config.step_reward = az::STEP_REWARD;
+    search_config.steps_tiebreak_margin = az::STEPS_TIEBREAK_MARGIN;
+    search_config.trap_guard = az::TRAP_GUARD;
     search_config.root_noise_fraction = az::ROOT_NOISE_FRACTION;
     search_config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
     search_config.seed = settings.seed;
@@ -155,6 +167,7 @@ int main(int argc, char** argv)
     play_config.step_limit = step_limit;
     play_config.discount = az::DISCOUNT;
     play_config.timeout_reward = az::TIMEOUT_REWARD;
+    play_config.step_reward = az::STEP_REWARD;
     play_config.temperature = az::VISIT_TEMPERATURE;
     play_config.temperature_moves = settings.cellCount() / 2;
     play_config.seed = settings.seed;
@@ -289,6 +302,7 @@ int main(int argc, char** argv)
             std::vector<float> policies(static_cast<size_t>(settings.batch_size) *
                                         SnakeEnv::ACTION_COUNT);
             std::vector<float> values(settings.batch_size);
+            std::vector<float> steps(settings.batch_size);
 
             for (int batch = 0; batch < settings.batches_per_iteration; batch++)
             {
@@ -307,6 +321,7 @@ int main(int argc, char** argv)
                             record.policy[action];
                     }
                     values[item] = record.value_target;
+                    steps[item] = record.steps_target;
                 }
 
                 torch::Tensor input =
@@ -319,6 +334,8 @@ int main(int argc, char** argv)
                         .to(device);
                 torch::Tensor value_target =
                     torch::from_blob(values.data(), { settings.batch_size, 1 }).to(device);
+                torch::Tensor steps_target =
+                    torch::from_blob(steps.data(), { settings.batch_size, 1 }).to(device);
 
                 // The value head is a tanh, so its targets have to live in the
                 // same range. Rewards run to +/-10, so returns are scaled by the
@@ -326,11 +343,14 @@ int main(int argc, char** argv)
                 // sufficiently good and sufficiently bad position look alike.
                 value_target = torch::tanh(value_target / SnakeEnv::WIN_REWARD);
 
-                auto [policy_logits, value] = network->forward(input);
-                torch::Tensor log_policy = torch::log_softmax(policy_logits, 1);
+                const Prediction prediction = network->forward(input);
+                torch::Tensor log_policy = torch::log_softmax(prediction.policy_logits, 1);
                 torch::Tensor policy_loss = -(policy_target * log_policy).sum(1).mean();
-                torch::Tensor value_loss = torch::mse_loss(value, value_target);
-                torch::Tensor loss = policy_loss + value_loss;
+                torch::Tensor value_loss = torch::mse_loss(prediction.value, value_target);
+                // Undiscounted, unlike the value: this is the only estimate here
+                // that can see as far as the deadline.
+                torch::Tensor steps_loss = torch::mse_loss(prediction.steps_to_go, steps_target);
+                torch::Tensor loss = policy_loss + value_loss + az::STEPS_LOSS_WEIGHT * steps_loss;
 
                 // A non-finite loss trains every weight into NaN and the run
                 // continues printing plausible-looking iterations afterwards, so
@@ -339,7 +359,8 @@ int main(int argc, char** argv)
                 // them dies before reaching any assertion.
                 TORCH_CHECK(std::isfinite(loss.item<double>()), "loss is not finite at iteration ",
                             iteration, " batch ", batch, " - policy ", policy_loss.item<double>(),
-                            " value ", value_loss.item<double>());
+                            " value ", value_loss.item<double>(), " steps ",
+                            steps_loss.item<double>());
 
                 optimizer.zero_grad();
                 loss.backward();

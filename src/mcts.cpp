@@ -1,9 +1,10 @@
-#include "mcts.h"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <optional>
 #include <stdexcept>
+
+#include "mcts.h"
 
 namespace
 {
@@ -264,7 +265,7 @@ void MonteCarloSearch::expand(Tree& tree, int node_index, std::span<const float>
            "the children this expansion created are not the last block in the arena");
 }
 
-void MonteCarloSearch::backup(Tree& tree, float leaf_value)
+void MonteCarloSearch::backup(Tree& tree, float leaf_value, float leaf_steps)
 {
     // A NaN here would be added into value_sum at every node on the path and then
     // into every ancestor on every later simulation, and NaN survives addition -
@@ -279,6 +280,10 @@ void MonteCarloSearch::backup(Tree& tree, float leaf_value)
     assert(!tree.path.empty() && "backup on an empty path - the simulation would vanish");
 
     float carried = leaf_value;
+    // Steps still needed from the node being backed into, as a fraction of the
+    // budget. Unlike the return this is not discounted: a step costs a step
+    // however far away it is, which is the whole reason it is tracked apart.
+    float carried_steps = leaf_steps;
     for (int position = static_cast<int>(tree.path.size()) - 1; position >= 0; position--)
     {
         assert(tree.path[position] >= 0 &&
@@ -288,6 +293,7 @@ void MonteCarloSearch::backup(Tree& tree, float leaf_value)
         Node& node = tree.nodes[tree.path[position]];
         node.visit_count++;
         node.value_sum += carried;
+        node.steps_sum += carried_steps;
 
         // Every node on a path has a real edge count: children are created at one
         // and the descent only raises them, and the root now keeps the same
@@ -301,8 +307,11 @@ void MonteCarloSearch::backup(Tree& tree, float leaf_value)
         // factor as gamma^(t(s') - t(s)); edge_steps is that exponent, and it is
         // greater than one exactly where forced moves were simulated through
         // rather than given nodes of their own.
-        carried = node.reward +
-                  std::pow(config_.discount, static_cast<float>(node.edge_steps)) * carried;
+        carried =
+            node.reward + std::pow(config_.discount, static_cast<float>(node.edge_steps)) * carried;
+        // The ticks this edge spans, added undiscounted. steps_budget_ is the whole
+        // game's budget, so the running total stays a comparable fraction of it.
+        carried_steps += static_cast<float>(node.edge_steps) / steps_budget_;
 
         assert(std::isfinite(carried) && "the carried return stopped being a finite number");
     }
@@ -319,7 +328,8 @@ void MonteCarloSearch::addRootNoise(Tree& tree)
     // negative, so a child could bid negatively for attention and expand's
     // sum-to-one check cannot see it - the noise is mixed in after that check has
     // already run.
-    assert(config_.root_noise_fraction <= 1.0f && "root noise fraction above one inverts the prior");
+    assert(config_.root_noise_fraction <= 1.0f &&
+           "root noise fraction above one inverts the prior");
     // std::gamma_distribution is undefined for a non-positive shape.
     assert(config_.root_noise_alpha > 0.0f && "Dirichlet concentration must be positive");
 
@@ -409,6 +419,18 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
     assert(static_cast<int>(trees_.size()) >= tree_count &&
            "fewer trees than games - some root would go unsearched");
 
+    // The budget every steps figure is a fraction of. Taken from the roots because
+    // the search is not told the limit any other way, and every root in one batch
+    // is the same game size. At least one, so the division cannot blow up on an
+    // environment built with no budget at all.
+    //
+    // Guarded: searching no roots is legal and returns no results, and reading a
+    // step limit off the first of them is not.
+    if (!roots.empty())
+    {
+        steps_budget_ = static_cast<float>(std::max(1, roots.front()->stepLimit()));
+    }
+
     // Reset by index rather than by range, because trees_ may be longer than this
     // call needs and the tail belongs to a previous, larger batch. Nothing past
     // tree_count is read, but nothing past it may be reset either - resetting it
@@ -478,7 +500,9 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
                 int child_index = tree.nodes[node_index].first_child.value() + action;
 
                 SnakeEnv::StepResult outcome = state.step(static_cast<SnakeEnv::Action>(action));
-                float edge_reward = outcome.reward;
+                // The per-step cost is paid on every tick the edge covers, so the
+                // search prices delay the same way the training target does.
+                float edge_reward = outcome.reward + config_.step_reward;
                 int edge_steps = 1;
 
                 // Where only one move is survivable there is no decision to
@@ -494,8 +518,8 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
                         break;
                     }
                     outcome = state.step(forced.value());
-                    edge_reward +=
-                        std::pow(config_.discount, static_cast<float>(edge_steps)) * outcome.reward;
+                    edge_reward += std::pow(config_.discount, static_cast<float>(edge_steps)) *
+                                   (outcome.reward + config_.step_reward);
                     edge_steps++;
                 }
 
@@ -530,7 +554,8 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         {
             priors_.assign(batch_.size() * SnakeEnv::ACTION_COUNT, 0.0f);
             values_.assign(batch_.size(), 0.0f);
-            evaluator_.evaluate(batch_, priors_.data(), values_.data());
+            steps_.assign(batch_.size(), 1.0f);
+            evaluator_.evaluate(batch_, priors_.data(), values_.data(), steps_.data());
         }
 
         // Expansion and backup.
@@ -544,19 +569,26 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
             // the network's. The optional is the only thing that decides which, so
             // the two cases cannot both be taken or both be missed.
             float leaf_value = 0.0f;
+            // Steps still needed from the leaf. A terminal leaf is either a filled
+            // board, which needs none, or a death, which needs more than the game
+            // has - the whole budget stands in for that, matching how a lost game
+            // is labelled in self-play.
+            float leaf_steps = 0.0f;
             if (tree.known_leaf_value.has_value())
             {
                 leaf_value = tree.known_leaf_value.value();
+                leaf_steps = tree.replay.front().won() ? 0.0f : 1.0f;
             }
             else
             {
                 assert(batch_position < values_.size() &&
                        "a tree is owed an evaluation the batch does not contain");
                 leaf_value = values_[batch_position];
+                leaf_steps = steps_[batch_position];
+                tree.nodes[tree.path.back()].steps_to_go = steps_[batch_position];
 
-                const std::span<const float> leaf_priors =
-                    std::span<const float>(priors_).subspan(
-                        batch_position * SnakeEnv::ACTION_COUNT, SnakeEnv::ACTION_COUNT);
+                const std::span<const float> leaf_priors = std::span<const float>(priors_).subspan(
+                    batch_position * SnakeEnv::ACTION_COUNT, SnakeEnv::ACTION_COUNT);
                 expand(tree, tree.path.back(), leaf_priors);
 
                 if (tree.path.size() == 1)
@@ -568,7 +600,7 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
                 batch_position++;
             }
 
-            backup(tree, leaf_value);
+            backup(tree, leaf_value, leaf_steps);
         }
 
         // The batch is consumed in tree order, so every leaf queued during
@@ -595,7 +627,7 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         // report, so the policy falls back to uniform. That is a real case rather
         // than a defensive one - a caller may legitimately ask for no search - and
         // it is the only reason the visits array can be all zeros.
-        int visits[SnakeEnv::ACTION_COUNT] = {0, 0, 0};
+        int visits[SnakeEnv::ACTION_COUNT] = { 0, 0, 0 };
         int total_visits = 0;
         if (tree.nodes[0].first_child.has_value())
         {
@@ -616,6 +648,75 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
             if (visits[action] > visits[best_action])
             {
                 best_action = action;
+            }
+        }
+
+        // Among actions the search rates as near-equals, take the one that expects
+        // to finish sooner. The margin is a fraction of the winner's visit count,
+        // so this only ever moves a choice the search was close to indifferent
+        // about - it cannot overrule a clear preference, and with the margin at
+        // zero it does nothing at all.
+        //
+        // The visit counts still go out as the policy target unchanged: this is a
+        // choice about which move to play, not a claim about what the search found.
+        if (config_.steps_tiebreak_margin > 0.0f && tree.nodes[0].first_child.has_value())
+        {
+            const int first_child = tree.nodes[0].first_child.value();
+            const float floor_visits =
+                static_cast<float>(visits[best_action]) * (1.0f - config_.steps_tiebreak_margin);
+            const auto meanSteps = [&tree, first_child](int action)
+            {
+                const Node& child = tree.nodes[first_child + action];
+                // Search-derived where the search actually went, and the network's
+                // raw guess only where it did not.
+                return child.visit_count > 0
+                           ? child.steps_sum / static_cast<float>(child.visit_count)
+                           : child.steps_to_go;
+            };
+            float best_steps = meanSteps(best_action);
+            for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+            {
+                if (action == best_action || visits[action] == 0)
+                {
+                    continue;
+                }
+                if (static_cast<float>(visits[action]) >= floor_visits &&
+                    meanSteps(action) < best_steps)
+                {
+                    best_steps = meanSteps(action);
+                    best_action = action;
+                }
+            }
+        }
+
+        // The trap guard, last, so it overrules everything above it. A region that
+        // cannot hold the snake kills it a long way past what the search can see,
+        // and no amount of value estimation substitutes for counting the cells.
+        if (config_.trap_guard)
+        {
+            const SnakeEnv& root_state = *roots[index];
+            const int body_length = static_cast<int>(root_state.body().size());
+            const int chosen_room =
+                root_state.reachableCells(static_cast<SnakeEnv::Action>(best_action));
+            if (chosen_room < body_length)
+            {
+                int roomiest = best_action;
+                int roomiest_cells = chosen_room;
+                for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+                {
+                    const int room =
+                        root_state.reachableCells(static_cast<SnakeEnv::Action>(action));
+                    if (room > roomiest_cells)
+                    {
+                        roomiest_cells = room;
+                        roomiest = action;
+                    }
+                }
+                if (roomiest != best_action)
+                {
+                    best_action = roomiest;
+                    trap_guard_fires_++;
+                }
             }
         }
 

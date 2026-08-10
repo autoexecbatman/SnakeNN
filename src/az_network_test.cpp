@@ -1,12 +1,13 @@
-#include "az_network.h"
-#include "snake_env.h"
 #include <torch/torch.h>
-#include <cmath>
+
 #include <format>
 #include <functional>
 #include <iostream>
 #include <string>
 #include <type_traits>
+
+#include "az_network.h"
+#include "snake_env.h"
 
 // The curriculum trains on small boards and moves up, so the property that
 // matters most about this architecture is that its weights do not depend on
@@ -61,12 +62,19 @@ void testOutputShapes()
 
     const int batch = 5;
     torch::Tensor input = torch::zeros({ batch, SnakeEnv::PLANE_COUNT, 8, 8 });
-    auto [policy, value] = network->forward(input);
+    auto [policy, value, steps] = network->forward(input);
 
     expect(policy.sizes() == torch::IntArrayRef({ batch, SnakeEnv::ACTION_COUNT }),
            "the policy head emits one logit per relative action");
     expect(value.sizes() == torch::IntArrayRef({ batch, 1 }), "the value head emits one scalar");
     expect(value.abs().max().item<float>() <= 1.0f, "value stays inside the bounded range");
+
+    // Steps-to-go is a fraction of the step budget, so anything outside [0, 1] is
+    // not a duration and would be compared against the clock plane as if it were.
+    expect(steps.sizes() == torch::IntArrayRef({ batch, 1 }),
+           "the steps head emits one scalar per state");
+    expect(steps.min().item<float>() >= 0.0f && steps.max().item<float>() <= 1.0f,
+           "steps-to-go stays a fraction of the budget");
 }
 
 // Whether calling `action` throws. The checks in this network are TORCH_CHECK
@@ -155,7 +163,8 @@ void testPredictionFieldsAreTheOnesNamed()
 
     // Structured bindings still work, which is what keeps the existing call sites
     // in the trainer and the evaluator unchanged.
-    auto [policy, value] = network->forward(torch::rand({ batch, SnakeEnv::PLANE_COUNT, 6, 6 }));
+    auto [policy, value, steps] =
+        network->forward(torch::rand({ batch, SnakeEnv::PLANE_COUNT, 6, 6 }));
     expect(policy.sizes() == prediction.policy_logits.sizes() &&
                value.sizes() == prediction.value.sizes(),
            "a structured binding still destructures in policy-then-value order");
@@ -212,7 +221,7 @@ void testWeightsTransferAcrossBoardSizes()
         large->eval();
         torch::NoGradGuard no_grad;
         torch::Tensor input = torch::rand({ 2, SnakeEnv::PLANE_COUNT, 20, 20 });
-        auto [policy, value] = large->forward(input);
+        auto [policy, value, steps] = large->forward(input);
         bool finite = policy.isfinite().all().item<bool>() && value.isfinite().all().item<bool>();
         expect(finite, "the transferred network runs on the larger board and stays finite");
     }

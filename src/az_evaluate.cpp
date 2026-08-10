@@ -1,4 +1,5 @@
 #include <torch/torch.h>
+
 #include <process.h>
 #include <algorithm>
 #include <chrono>
@@ -68,7 +69,11 @@ int main(int argc, char** argv)
         // have an 8-plane stem, and torch::load on that mismatch does not throw
         // here - it takes the process down - so the widening path is the only path
         // rather than a fallback from a failure that cannot be caught.
-        network->loadNarrowerStem(settings.checkpoint);
+        const std::vector<std::string> missing = network->loadNarrowerStem(settings.checkpoint);
+        for (const std::string& name : missing)
+        {
+            std::cout << std::format("  fresh, absent from the checkpoint: {}\n", name);
+        }
     }
     catch (const std::exception& error)
     {
@@ -93,6 +98,9 @@ int main(int argc, char** argv)
     search_config.simulations = settings.simulations;
     search_config.exploration = az::EXPLORATION;
     search_config.discount = az::DISCOUNT;
+    search_config.step_reward = az::STEP_REWARD;
+    search_config.steps_tiebreak_margin = az::STEPS_TIEBREAK_MARGIN;
+    search_config.trap_guard = az::TRAP_GUARD;
     // Off, deliberately: noise is what makes self-play explore, and a number
     // measured with it on describes the exploration policy rather than the agent.
     search_config.root_noise_fraction = 0.0f;
@@ -207,6 +215,7 @@ int main(int argc, char** argv)
                              static_cast<double>(total_steps) / settings.games);
     std::cout << std::format("Endings: {} won, {} died, {} timed out\n", wins, deaths, timeouts);
     std::cout << std::format("Took {:.2f}s, {} evaluations\n", seconds, evaluator.evaluations());
+    std::cout << std::format("Trap guard overruled the search {} times\n", search.trapGuardFires());
 
     run.outcome = ledger::Outcome::Finished;
     run.seconds = seconds;

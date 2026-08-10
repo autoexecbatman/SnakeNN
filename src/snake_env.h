@@ -1,7 +1,9 @@
 #pragma once
-#include "snake_logic.h"  // Direction, Position
+
 #include <cstdint>
 #include <vector>
+
+#include "snake_logic.h"  // Direction, Position
 
 // Eight bytes of generator, because the search copies a whole environment once
 // per simulation and then reseeds it.
@@ -142,6 +144,23 @@ public:
     //
     // Reports the frozen value instead once freezeClockForAblation has been called.
     float budgetRemaining() const;
+
+    // How many free cells the head could still reach after taking `action`.
+    //
+    // Zero when the action kills. Otherwise a flood fill from where the head lands,
+    // over cells the body does not occupy, counting the landing cell itself. The
+    // tail cell is treated as free because it moves out of the way on the same
+    // tick, which is what makes a snake able to follow its own tail.
+    //
+    // This is the safety question a Hamiltonian cycle answers by construction and
+    // that a learned agent has no way to answer at all: a region smaller than the
+    // snake cannot hold the snake, so entering one is fatal however good the
+    // position looks to a value head. `HamiltonianCycle::isShortcutSafe` cannot
+    // stand in - it compares cycle indices, which is only a safety argument when
+    // the body already lies along the cycle.
+    //
+    // O(cells), so it is affordable per root move and not per node of a search.
+    int reachableCells(Action action) const;
 
     // Makes the clock read `value` for the rest of this environment's life.
     //

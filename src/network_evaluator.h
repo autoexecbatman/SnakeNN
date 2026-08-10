@@ -1,5 +1,7 @@
 #pragma once
+
 #include <torch/torch.h>
+
 #include "az_network.h"
 #include "evaluator.h"
 
@@ -14,8 +16,8 @@ class NetworkEvaluator : public Evaluator
 public:
     NetworkEvaluator(AlphaZeroNet network, torch::Device device);
 
-    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
-                  float* values_out) override;
+    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
+                  float* steps_out) override;
 
     // Positions scored since construction. The search is evaluation-bound, so
     // this is the meaningful unit of work done.
@@ -27,5 +29,5 @@ private:
     AlphaZeroNet network_;
     torch::Device device_;
     std::vector<float> staging_;
-    long long evaluations_;
+    long long evaluations_{ 0 };
 };

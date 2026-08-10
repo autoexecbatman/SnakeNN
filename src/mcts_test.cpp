@@ -1,10 +1,11 @@
-#include "mcts.h"
-#include "snake_env.h"
 #include <cmath>
 #include <iostream>
 #include <string>
 #include <type_traits>
 #include <vector>
+
+#include "mcts.h"
+#include "snake_env.h"
 
 // The search is checked against hand-written evaluators with known answers, so
 // that a failure here is a failure of selection, backup or terminal handling
@@ -62,8 +63,8 @@ void expect(bool condition, const std::string& description)
 class SilentEvaluator : public Evaluator
 {
 public:
-    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
-                  float* values_out) override
+    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
+                  float* steps_out) override
     {
         calls++;
         largest_batch = std::max(largest_batch, (int)states.size());
@@ -74,6 +75,7 @@ public:
                 priors_out[index * SnakeEnv::ACTION_COUNT + action] = 1.0f / SnakeEnv::ACTION_COUNT;
             }
             values_out[index] = 0.0f;
+            steps_out[index] = 1.0f;
         }
     }
 
@@ -89,8 +91,8 @@ class PriorEvaluator : public Evaluator
 public:
     explicit PriorEvaluator(const std::vector<float>& priors) : priors_(priors) {}
 
-    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
-                  float* values_out) override
+    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
+                  float* steps_out) override
     {
         for (size_t index = 0; index < states.size(); index++)
         {
@@ -100,6 +102,7 @@ public:
                     priors_[static_cast<size_t>(action)];
             }
             values_out[index] = 0.0f;
+            steps_out[index] = 1.0f;
         }
     }
 
@@ -116,8 +119,8 @@ class ConstantValueEvaluator : public Evaluator
 public:
     explicit ConstantValueEvaluator(float value) : value_(value) {}
 
-    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
-                  float* values_out) override
+    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
+                  float* steps_out) override
     {
         for (size_t index = 0; index < states.size(); index++)
         {
@@ -127,6 +130,7 @@ public:
                     1.0f / static_cast<float>(SnakeEnv::ACTION_COUNT);
             }
             values_out[index] = value_;
+            steps_out[index] = 1.0f;
         }
     }
 

@@ -168,6 +168,57 @@ SnakeEnv::SnakeEnv(int width, int height, unsigned int seed, int step_limit)
     reset();
 }
 
+int SnakeEnv::reachableCells(Action action) const
+{
+    if (wouldDie(action))
+    {
+        return 0;
+    }
+
+    const Position landing = headAfter(action);
+    // The tail vacates as the head arrives, so it is not an obstacle. Nothing else
+    // about the body moves within this tick.
+    const Position vacated = body_.back();
+
+    std::vector<char> seen(static_cast<size_t>(cellCount()), 0);
+    std::vector<int> frontier;
+    frontier.push_back(cellIndex(landing));
+    seen[static_cast<size_t>(cellIndex(landing))] = 1;
+
+    int reached = 0;
+    while (!frontier.empty())
+    {
+        const int cell = frontier.back();
+        frontier.pop_back();
+        reached++;
+
+        const Position at{ cell % width_, cell / width_ };
+        const Position neighbours[4] = {
+            { at.x + 1, at.y }, { at.x - 1, at.y }, { at.x, at.y + 1 }, { at.x, at.y - 1 }
+        };
+        for (const Position& next : neighbours)
+        {
+            if (!insideGrid(next))
+            {
+                continue;
+            }
+            const int index = cellIndex(next);
+            if (seen[static_cast<size_t>(index)])
+            {
+                continue;
+            }
+            const bool blocked = occupancy_[static_cast<size_t>(index)] != 0 && !(next == vacated);
+            if (blocked)
+            {
+                continue;
+            }
+            seen[static_cast<size_t>(index)] = 1;
+            frontier.push_back(index);
+        }
+    }
+    return reached;
+}
+
 void SnakeEnv::freezeClockForAblation(float value)
 {
     // A fraction of the budget, so anything outside [0, 1] is a caller error and

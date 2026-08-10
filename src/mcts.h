@@ -1,10 +1,12 @@
 #pragma once
-#include "evaluator.h"
-#include "snake_env.h"
+
 #include <optional>
 #include <random>
 #include <span>
 #include <vector>
+
+#include "evaluator.h"
+#include "snake_env.h"
 
 // The move the position leaves no choice about, if there is one.
 //
@@ -43,6 +45,20 @@ public:
         int simulations{ 0 };
         float exploration{ 0.0f };  // c_puct
         float discount{ 0.0f };
+        // Paid on every tick, so the search prices delay the same way the training
+        // target does. Zero reproduces the behaviour before it existed, in which a
+        // slow route to an apple scored the same as a fast one.
+        float step_reward{ 0.0f };
+        // How far below the best visit count an action may sit and still be taken
+        // when it finishes sooner. Zero disables the tie-break entirely.
+        float steps_tiebreak_margin{ 0.0f };
+        // Whether to refuse a root move that seals the snake into a region too
+        // small to hold it. Off reproduces the search as it was.
+        //
+        // This is knowledge the search cannot reach on its own: the region only
+        // proves fatal tens of moves later, past any horizon 200 simulations buy.
+        // It vetoes, never suggests - the search still chooses among what is left.
+        bool trap_guard{ false };
         // Dirichlet noise on root priors, the standard device for keeping
         // self-play from collapsing onto one line. Set fraction to zero when
         // evaluating rather than training.
@@ -87,6 +103,13 @@ public:
     // a finished game has nothing to search and is the caller's to filter.
     std::vector<Result> search(const std::vector<const SnakeEnv*>& roots);
 
+    // How many times the trap guard has overruled the search since construction.
+    //
+    // Reported rather than kept internal, because a guard that fires silently is
+    // indistinguishable from one that never fires - and the number falling over a
+    // run is the evidence the network is learning what the guard knows.
+    long long trapGuardFires() const { return trap_guard_fires_; }
+
 private:
     struct Node
     {
@@ -101,6 +124,11 @@ private:
         // through rather than given their own node, so it can span several.
         float reward{ 0.0f };
         float value_sum{ 0.0f };
+        // Steps still needed from this node, summed over visits, as a fraction of
+        // the game's budget. The mean of this is a search-derived estimate: the
+        // ticks along the descent are real, and only the leaf is predicted, so it
+        // is strictly better informed than the network's own steps_to_go.
+        float steps_sum{ 0.0f };
         int visit_count{ 0 };
         // Arena index of action 0's child, once this node has children. Empty
         // until then, and empty is the whole answer - there is no -1 standing in
@@ -118,6 +146,11 @@ private:
         // default - backup computes a return across the root and discards it.
         int edge_steps{ 1 };
         bool terminal{ false };
+        // The network's steps-to-go for this node, as a fraction of the budget,
+        // stored when the node was expanded. One is the pessimistic default and
+        // is what an unexpanded node keeps, so a node the search never looked at
+        // never wins the tie-break.
+        float steps_to_go{ 1.0f };
     };
 
     struct Tree
@@ -157,6 +190,7 @@ private:
     std::vector<const SnakeEnv*> batch_;
     std::vector<float> priors_;
     std::vector<float> values_;
+    std::vector<float> steps_;
 
     // The PUCT score for one child, given how much attention the parent has to
     // distribute. Separated from the argmax so that the formula and the choosing
@@ -168,6 +202,10 @@ private:
     // caller's intent and nowhere else, so the callee could not check it. Now it
     // can, and does.
     void expand(Tree& tree, int node_index, std::span<const float> priors);
-    void backup(Tree& tree, float leaf_value);
+    void backup(Tree& tree, float leaf_value, float leaf_steps);
+
+    // The budget the steps accumulator is a fraction of, taken from the roots.
+    float steps_budget_{ 1.0f };
+    long long trap_guard_fires_{ 0 };
     void addRootNoise(Tree& tree);
 };

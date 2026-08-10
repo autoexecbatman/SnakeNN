@@ -1,10 +1,12 @@
 #pragma once
-#include "evaluator.h"
-#include "mcts.h"
-#include "snake_env.h"
+
 #include <functional>
 #include <random>
 #include <vector>
+
+#include "evaluator.h"
+#include "mcts.h"
+#include "snake_env.h"
 
 // One training record: what the network saw, what the search concluded, and
 // what actually happened afterwards.
@@ -16,6 +18,11 @@ struct TrainingRecord
     SnakeEnv::Snapshot position;
     float policy[SnakeEnv::ACTION_COUNT]{};
     float value_target{ 0.0f };  // discounted return from this position onward
+    // Steps still needed from this position to fill the board, as a fraction of
+    // the step budget. Undiscounted and taken from what the game actually did, so
+    // unlike the value target it carries information about the deadline.
+    // One when the game never finished - it needed at least the whole budget.
+    float steps_target{ 1.0f };
 
     // Roughly what this record costs, for a buffer that is capped by memory
     // rather than by a record count that means different things per board.
@@ -72,6 +79,9 @@ public:
         // more than a death and stalling was therefore the safe play. A game that
         // won or died is untouched - it reached an outcome of its own.
         float timeout_reward{ 0.0f };
+        // Paid on every step. Prices a slow route to an apple against a fast one,
+        // locally, where the discount can still see it.
+        float step_reward{ 0.0f };
         // Visit counts are sampled at this temperature for the first moves and
         // greedily after, which is how self-play stays varied early without
         // throwing away the endgame.

@@ -1,6 +1,10 @@
-#include "az_network.h"
+#include <torch/torch.h>
+
 #include <format>
 #include <stdexcept>
+
+#include "az_network.h"
+#include "snake_env.h"
 
 namespace
 {
@@ -67,6 +71,16 @@ AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channe
     value_hidden = register_module(
         "value_hidden", torch::nn::Linear(VALUE_HEAD_CHANNELS * POOLED_CELLS, VALUE_HIDDEN));
     value_out = register_module("value_out", torch::nn::Linear(VALUE_HIDDEN, 1));
+
+    // Same shape as the value head and pooled the same way, so nothing it holds
+    // depends on board size either and the curriculum still transfers.
+    steps_conv = register_module(
+        "steps_conv",
+        torch::nn::Conv2d(torch::nn::Conv2dOptions(channels_, VALUE_HEAD_CHANNELS, 1).bias(false)));
+    steps_norm = register_module("steps_norm", torch::nn::BatchNorm2d(VALUE_HEAD_CHANNELS));
+    steps_hidden = register_module(
+        "steps_hidden", torch::nn::Linear(VALUE_HEAD_CHANNELS * POOLED_CELLS, VALUE_HIDDEN));
+    steps_out = register_module("steps_out", torch::nn::Linear(VALUE_HIDDEN, 1));
 }
 
 Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
@@ -113,6 +127,13 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
     // dominate every comparison it appears in.
     value = torch::tanh(value_out(value));
 
+    torch::Tensor steps = torch::relu(steps_norm(steps_conv(trunk)));
+    steps = torch::adaptive_avg_pool2d(steps, { POOLED_SIDE, POOLED_SIDE });
+    steps = torch::relu(steps_hidden(steps.flatten(1)));
+    // Bounded to (0, 1) because the target is a fraction of the step budget, and
+    // a fraction is what makes the estimate mean the same thing on every board.
+    steps = torch::sigmoid(steps_out(steps));
+
     // The two shapes every consumer indexes without checking: the evaluator reads
     // ACTION_COUNT priors per state and one value, and the trainer builds its loss
     // against both. A wrong batch dimension here would misalign policy targets with
@@ -124,8 +145,11 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
     TORCH_CHECK(value.dim() == 2 && value.size(0) == planes.size(0) && value.size(1) == 1,
                 std::format("the value head produced [{}] for a batch of {}, expected [{}, 1]",
                             value.dim(), planes.size(0), planes.size(0)));
+    TORCH_CHECK(steps.dim() == 2 && steps.size(0) == planes.size(0) && steps.size(1) == 1,
+                std::format("the steps head produced [{}] for a batch of {}, expected [{}, 1]",
+                            steps.dim(), planes.size(0), planes.size(0)));
 
-    return Prediction{ policy, value };
+    return Prediction{ policy, value, steps };
 }
 
 namespace
@@ -183,7 +207,27 @@ torch::Tensor widenStemWeight(const torch::Tensor& saved, const torch::Tensor& t
     return widened;
 }
 
-void AlphaZeroNetImpl::loadNarrowerStem(const std::string& checkpoint_path)
+namespace
+{
+
+// Whether the archive held the key, leaving `out` untouched when it did not.
+bool tryReadNested(torch::serialize::InputArchive& archive, const std::string& dotted_key,
+                   torch::Tensor& out, bool is_buffer)
+{
+    try
+    {
+        readNested(archive, dotted_key, out, is_buffer);
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+}  // namespace
+
+std::vector<std::string> AlphaZeroNetImpl::loadNarrowerStem(const std::string& checkpoint_path)
 {
     // Read the checkpoint into a second network built with the stem it was saved
     // with, then copy across. Reconstructing the old shape is what lets
@@ -195,11 +239,16 @@ void AlphaZeroNetImpl::loadNarrowerStem(const std::string& checkpoint_path)
     // whole archive on the one tensor whose shape changed. An InputArchive cannot
     // be edited, so the widening happens here.
     torch::NoGradGuard no_grad;
+    std::vector<std::string> missing;
 
     for (auto& parameter : named_parameters())
     {
         torch::Tensor saved;
-        readNested(archive, parameter.key(), saved, false);
+        if (!tryReadNested(archive, parameter.key(), saved, false))
+        {
+            missing.push_back(parameter.key());
+            continue;
+        }
 
         if (parameter.key() == "stem_conv.weight")
         {
@@ -218,10 +267,16 @@ void AlphaZeroNetImpl::loadNarrowerStem(const std::string& checkpoint_path)
     for (auto& buffer : named_buffers())
     {
         torch::Tensor saved;
-        readNested(archive, buffer.key(), saved, true);
+        if (!tryReadNested(archive, buffer.key(), saved, true))
+        {
+            missing.push_back(buffer.key());
+            continue;
+        }
         TORCH_CHECK(
             saved.sizes() == buffer.value().sizes(),
             std::format("buffer '{}' has a different shape in the checkpoint", buffer.key()));
         buffer.value().copy_(saved);
     }
+
+    return missing;
 }

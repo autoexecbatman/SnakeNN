@@ -1,6 +1,9 @@
 #pragma once
+
 #include <torch/torch.h>
-#include "snake_env.h"
+
+#include <string>
+#include <vector>
 
 // Policy and value network for the search.
 //
@@ -28,6 +31,15 @@ struct Prediction
     // [N, 1] in (-1, 1), from a tanh. Stands in for the discounted return from
     // this position onward.
     torch::Tensor value;
+    // [N, 1] in (0, 1), from a sigmoid. The steps still needed to fill the board,
+    // as a fraction of the game's step budget.
+    //
+    // Its own head rather than part of the value because the two are trained on
+    // incomparable targets: the value regresses a discounted return, which at
+    // 0.98 cannot see past about 200 steps, and this regresses a raw count over
+    // the whole game. Supervised and undiscounted, so it is the only estimate
+    // here that reaches the deadline.
+    torch::Tensor steps_to_go;
 };
 
 // A stem weight widened to accept more input planes, with the new ones zeroed.
@@ -80,12 +92,19 @@ struct AlphaZeroNetImpl : torch::nn::Module
     //
     // Throws if the checkpoint is wider than this network or differs anywhere but
     // the stem's input channels.
-    void loadNarrowerStem(const std::string& checkpoint_path);
+    //
+    // Returns the names of parameters and buffers the checkpoint did not contain;
+    // those keep the values they were constructed with. That is what lets a head
+    // added after a checkpoint was written start from its initialization instead
+    // of refusing the whole file. The names are returned rather than swallowed
+    // because a mistyped module name looks exactly like a new head from here, and
+    // only the caller printing the list makes the difference visible.
+    std::vector<std::string> loadNarrowerStem(const std::string& checkpoint_path);
 
 private:
-    int board_width_;
-    int board_height_;
-    int channels_;
+    int board_width_{ 0 };
+    int board_height_{ 0 };
+    int channels_{ 0 };
 
     torch::nn::Conv2d stem_conv{ nullptr };
     torch::nn::BatchNorm2d stem_norm{ nullptr };
@@ -102,6 +121,11 @@ private:
     torch::nn::BatchNorm2d value_norm{ nullptr };
     torch::nn::Linear value_hidden{ nullptr };
     torch::nn::Linear value_out{ nullptr };
+
+    torch::nn::Conv2d steps_conv{ nullptr };
+    torch::nn::BatchNorm2d steps_norm{ nullptr };
+    torch::nn::Linear steps_hidden{ nullptr };
+    torch::nn::Linear steps_out{ nullptr };
 };
 
 TORCH_MODULE(AlphaZeroNet);

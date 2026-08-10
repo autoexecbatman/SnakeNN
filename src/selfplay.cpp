@@ -1,7 +1,9 @@
-#include "selfplay.h"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <stdexcept>
+
+#include "selfplay.h"
 
 SelfPlay::SelfPlay(Evaluator& evaluator, const MonteCarloSearch::Config& search_config,
                    const Config& config)
@@ -131,7 +133,7 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
             SnakeEnv::StepResult outcome = game.step(static_cast<SnakeEnv::Action>(action));
 
             trajectories[index].push_back(std::move(record));
-            rewards[index].push_back(outcome.reward);
+            rewards[index].push_back(outcome.reward + config_.step_reward);
             moves_played[index]++;
             moves_played_total++;
         }
@@ -186,6 +188,20 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
         {
             carried = rewards[index][position] + config_.discount * carried;
             trajectories[index][position].value_target = carried;
+        }
+
+        // Steps-to-go, counted forward from each position to the end of the game
+        // and scaled by the budget. A game that did not win never reached the end
+        // of the task, so its positions are labelled with the whole budget rather
+        // than with the steps it happened to survive - the alternative teaches
+        // that dying early means very little work remained.
+        const int moves = static_cast<int>(trajectories[index].size());
+        const float budget = static_cast<float>(config_.step_limit);
+        for (int position = 0; position < moves; position++)
+        {
+            const float remaining =
+                games[index].won() ? static_cast<float>(moves - position) : budget;
+            trajectories[index][position].steps_target = std::min(remaining / budget, 1.0f);
         }
 
         for (TrainingRecord& record : trajectories[index])

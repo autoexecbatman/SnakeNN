@@ -1,10 +1,11 @@
-#include "az_parameters.h"
-#include "selfplay.h"
 #include <cmath>
 #include <format>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include "az_parameters.h"
+#include "selfplay.h"
 
 // Self-play's job is to turn games into supervised targets. The target it
 // computes is the one thing here no later stage can check: a wrong discount or
@@ -32,8 +33,8 @@ void expect(bool condition, const std::string& description)
 class SilentEvaluator : public Evaluator
 {
 public:
-    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
-                  float* values_out) override
+    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
+                  float* steps_out) override
     {
         for (size_t index = 0; index < states.size(); index++)
         {
@@ -42,6 +43,7 @@ public:
                 priors_out[index * SnakeEnv::ACTION_COUNT + action] = 1.0f / SnakeEnv::ACTION_COUNT;
             }
             values_out[index] = 0.0f;
+            steps_out[index] = 1.0f;
         }
     }
 };
