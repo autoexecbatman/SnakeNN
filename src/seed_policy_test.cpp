@@ -1,8 +1,9 @@
-#include "seed_policy.h"
 #include <format>
 #include <iostream>
 #include <set>
 #include <string>
+
+#include "seed_policy.h"
 
 // The property that was asserted in a comment and checked nowhere.
 //

@@ -1,5 +1,6 @@
 #include <torch/torch.h>
 #include <raylib.h>
+
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>

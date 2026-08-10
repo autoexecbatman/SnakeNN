@@ -1,8 +1,8 @@
-#include "hamiltonian_cycle.h"
 #include <iostream>
 #include <string>
 #include <vector>
-#include <cstdlib>
+
+#include "hamiltonian_cycle.h"
 
 // Validity test for the grid ordering that a winning agent depends on.
 // No LibTorch, no raylib - this links against hamiltonian_cycle.cpp alone.

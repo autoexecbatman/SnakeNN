@@ -1,6 +1,7 @@
-#include "board_render.h"
 #include <cmath>
 #include <iostream>
+
+#include "board_render.h"
 
 namespace ui {
 

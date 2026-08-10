@@ -1,13 +1,14 @@
+#include <raylib.h>
+
+#include <iostream>
+#include <vector>
+#include <memory>
+#include <cmath>
+
 #include "neural_network.h"
 #include "snake_logic.h"
 #include "cycle_agent.h"
 #include "board_render.h"
-#include <iostream>
-#include <raylib.h>
-#include <vector>
-#include <algorithm>
-#include <memory>
-#include <cmath>
 
 // Presentation constants. The board is the only thing whose size is dictated by
 // the game; everything else is laid out around it on a single spacing scale so

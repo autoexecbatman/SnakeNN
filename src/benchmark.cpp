@@ -1,10 +1,10 @@
-#include "cycle_agent.h"
-#include "snake_logic.h"
 #include <iostream>
 #include <string>
 #include <vector>
 #include <algorithm>
-#include <numeric>
+
+#include "cycle_agent.h"
+#include "snake_logic.h"
 
 // Headless benchmark over seeded games.
 //

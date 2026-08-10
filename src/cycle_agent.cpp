@@ -1,5 +1,6 @@
-#include "cycle_agent.h"
 #include <stdexcept>
+
+#include "cycle_agent.h"
 
 CycleAgent::CycleAgent(int grid_width, int grid_height)
     : cycle_(grid_width, grid_height), cycle_ready_(false) {

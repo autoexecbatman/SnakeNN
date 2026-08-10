@@ -1,12 +1,13 @@
 #include <torch/torch.h>
-#include "az_network.h"
-#include "snake_env.h"
+
 #include <algorithm>
 #include <format>
-#include <cmath>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include "az_network.h"
+#include "snake_env.h"
 
 // Can the network see one cell?
 //

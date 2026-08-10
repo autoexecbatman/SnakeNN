@@ -1,6 +1,7 @@
-#include "snake_logic.h"
-#include <algorithm>
 #include <cmath>
+
+#include "snake_logic.h"
+
 
 SnakeGame::SnakeGame() : rng(std::random_device{}()) {
     reset();

@@ -1,7 +1,10 @@
 #pragma once
+
 #include <raylib.h>
-#include "snake_logic.h"  // Direction, Position
+
 #include <vector>
+
+#include "snake_logic.h"  // Direction, Position
 
 // Shared presentation for anything that draws a snake board.
 //

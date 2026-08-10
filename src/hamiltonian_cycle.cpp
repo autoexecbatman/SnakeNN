@@ -1,7 +1,6 @@
-#include "hamiltonian_cycle.h"
 #include <iostream>
-#include <algorithm>
-#include <stack>
+
+#include "hamiltonian_cycle.h"
 
 HamiltonianCycle::HamiltonianCycle(int width, int height) 
     : width_(width), height_(height), rng_(std::random_device{}()) {

@@ -1,9 +1,10 @@
-#include "snake_env.h"
-#include "hamiltonian_cycle.h"
-#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include "snake_env.h"
+#include "hamiltonian_cycle.h"
+#include "snake_logic.h"  // Position, Direction
 
 // Properties the training environment has to hold before anything is trained
 // against it. A learner cannot report a bug in its own simulator - it will
@@ -977,6 +978,67 @@ void testTheClockCanBeFrozenForAnAblation()
     expect(untouched.budgetRemaining() == 0.99f, "an environment nobody froze still counts down");
 }
 
+// The trap check is what lets a fast route be taken safely, so a wrong answer
+// here is either a needless veto or a snake walking into a pocket it cannot fit
+// in. Expected values come from the geometry, not from what the function returns.
+void testReachableCellsCountsTheRoomAMoveLeaves()
+{
+    SnakeEnv env(6, 6, 7, TEST_STEP_LIMIT);
+
+    // A length-one snake blocks only the cell it stands on, and that cell is also
+    // its tail, which vacates as the head arrives - so nothing is blocked at all
+    // and the whole board stays reachable.
+    for (int index = 0; index < SnakeEnv::ACTION_COUNT; index++)
+    {
+        const SnakeEnv::Action action = static_cast<SnakeEnv::Action>(index);
+        if (env.wouldDie(action))
+        {
+            continue;
+        }
+        expect(env.reachableCells(action) == env.cellCount(),
+               "on an empty board every free cell is still reachable");
+    }
+
+    // A fatal move has no room by definition, and that is the value the guard
+    // compares against - a wall move reporting a large count would read as safe.
+    SnakeEnv cornered(6, 6, 3, TEST_STEP_LIMIT);
+    int guard = 0;
+    while (!cornered.wouldDie(SnakeEnv::Action::STRAIGHT) && guard++ < 20)
+    {
+        cornered.step(SnakeEnv::Action::STRAIGHT);
+    }
+    expect(cornered.wouldDie(SnakeEnv::Action::STRAIGHT),
+           "the walk reached a wall, so there is a fatal move to check");
+    expect(cornered.reachableCells(SnakeEnv::Action::STRAIGHT) == 0,
+           "a move that kills leaves no room");
+
+    // And over a long walk the count stays a count: never negative, never larger
+    // than the board, and never zero for a move that survives.
+    SnakeEnv walker(8, 8, 99, TEST_STEP_LIMIT);
+    bool bounded = true;
+    bool survivor_has_room = true;
+    for (int step = 0; step < 300 && !walker.done(); step++)
+    {
+        for (int index = 0; index < SnakeEnv::ACTION_COUNT; index++)
+        {
+            const SnakeEnv::Action action = static_cast<SnakeEnv::Action>(index);
+            const int room = walker.reachableCells(action);
+            bounded = bounded && room >= 0 && room <= walker.cellCount();
+            if (!walker.wouldDie(action))
+            {
+                survivor_has_room = survivor_has_room && room >= 1;
+            }
+        }
+        walker.step(SnakeEnv::Action::LEFT);
+        if (walker.done())
+        {
+            walker.reset();
+        }
+    }
+    expect(bounded, "the room a move leaves is never negative and never off the board");
+    expect(survivor_has_room, "a move that survives always leaves at least the cell it lands on");
+}
+
 void testStepLimitIsRequired()
 {
     bool refused = false;
@@ -1058,6 +1120,7 @@ int main()
     testEncoding();
     testTheBudgetCountsDownWithTheSteps();
     testTheClockCanBeFrozenForAnAblation();
+    testReachableCellsCountsTheRoomAMoveLeaves();
     testStepLimitIsRequired();
     testWinnableByCycle();
 

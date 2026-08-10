@@ -1,10 +1,13 @@
-#include "az_network.h"
-#include "vector_env.h"
-#include "hamiltonian_cycle.h"
 #include <torch/torch.h>
+
 #include <chrono>
 #include <iostream>
 #include <vector>
+
+#include "az_network.h"
+#include "snake_env.h"
+#include "vector_env.h"
+#include "hamiltonian_cycle.h"
 
 // Measures the two rates that decide the training schedule: how fast the
 // simulator produces positions, and how fast the network scores them. Every

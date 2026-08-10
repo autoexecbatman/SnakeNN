@@ -1,6 +1,8 @@
 #pragma once
-#include "snake_env.h"
+
 #include <vector>
+
+#include "snake_env.h"
 
 // A block of independent games stepped together.
 //

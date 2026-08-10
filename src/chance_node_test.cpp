@@ -1,8 +1,9 @@
-#include "snake_env.h"
 #include <format>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include "snake_env.h"
 
 // Does the search ever see more than one food placement for the same path?
 //

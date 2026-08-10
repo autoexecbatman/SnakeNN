@@ -1,7 +1,8 @@
-#include "vector_env.h"
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include "vector_env.h"
 
 // The batch has one job: be indistinguishable from stepping each game on its
 // own. Everything the learner concludes rests on that, and a divergence here

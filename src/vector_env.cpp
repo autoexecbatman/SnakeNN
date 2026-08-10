@@ -1,5 +1,6 @@
-#include "vector_env.h"
 #include <stdexcept>
+
+#include "vector_env.h"
 
 VectorEnv::VectorEnv(int count, int width, int height, unsigned int base_seed, int step_limit)
 {
