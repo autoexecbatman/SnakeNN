@@ -25,27 +25,33 @@ struct Settings
     // Required. There is no default worth guessing and an empty one is a rejection,
     // not a fallback.
     std::string checkpoint;
-    int board = 6;
-    int games = 64;
-    int simulations = 200;
+    int board{ 6 };
+    int games{ 64 };
+    int simulations{ 200 };
     // Empty means derive it from the board. The field it replaces was an int whose
     // zero meant "not given", resolved by overwriting itself during parsing, so no
     // caller could tell which of the two things it was holding.
     std::optional<int> step_limit_override;
-    int channels = 64;
-    int blocks = 4;
+    int channels{ 64 };
+    int blocks{ 4 };
     // An offset within the reserved evaluation band, not an absolute seed. See
     // seed_policy.h: the absolute default this replaced was 900000, which was a
     // training seed for 172 games of every 200.
-    unsigned int seed_offset = 0;
+    unsigned int seed_offset{ 0 };
     // Games searched together. Not a throughput knob - mcts.cpp draws every
     // simulation's food placement from one generator in lockstep across the batch,
     // so two runs at different batch sizes are not comparable.
-    int batch = 64;
+    int batch{ 64 };
     // Where this run records what it cost. Relative to the launch directory, which
     // is build/Release and is not version controlled, so a run meant to leave a
     // durable record passes --ledger ../../docs/runs.tsv.
-    std::string ledger_path = "runs.tsv";
+    std::string ledger_path{ "runs.tsv" };
+    // Empty means the clock runs. A value freezes it there for every game, which
+    // measures what time awareness is worth by removing it from a trained agent
+    // without touching a weight. Whole percent of the budget, 0 to 100 - a percent
+    // rather than a fraction so it goes through the same integer parser as every
+    // other flag, and the ablation has never wanted finer.
+    std::optional<int> freeze_clock_percent;
 
     int cellCount() const noexcept;
     // The snake starts one segment long, so this many apples fills the board.
@@ -109,19 +115,19 @@ struct Settings
 {
     // Required, as in evaluation.
     std::string checkpoint;
-    int board = 6;
-    int simulations = 200;
+    int board{ 6 };
+    int simulations{ 200 };
     std::optional<int> step_limit_override;
-    int channels = 64;
-    int blocks = 4;
+    int channels{ 64 };
+    int blocks{ 4 };
     // An absolute seed, unlike evaluation's offset, and 900000 is a training seed
     // - see seed_policy.h. So the default shows a game the agent may have learned
     // rather than one held out. Preserved as it was; changing what the demo shows
     // is a decision, not a hardening pass.
-    unsigned int seed = 900000;
+    unsigned int seed{ 900000 };
     // Search steps per rendered frame. At 1 the search runs once per frame, so the
     // demo advances at the frame rate.
-    int moves_per_frame = 1;
+    int moves_per_frame{ 1 };
 
     int cellCount() const noexcept;
     int foodsToWin() const noexcept;

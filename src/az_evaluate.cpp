@@ -120,6 +120,13 @@ int main(int argc, char** argv)
             games.emplace_back(settings.board, settings.board,
                                seeds::evaluationGameSeed(settings.seed_offset, start + index),
                                step_limit);
+            if (settings.freeze_clock_percent)
+            {
+                // Before the first move, so no search ever sees the live clock.
+                // The search steps copies of these, and a copy carries the freeze.
+                games.back().freezeClockForAblation(
+                    static_cast<float>(*settings.freeze_clock_percent) / 100.0f);
+            }
         }
         std::vector<bool> timed_out(count, false);
         // One per game in the batch, fed after every move it makes.

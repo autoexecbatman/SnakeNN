@@ -54,7 +54,7 @@ evaluation::Settings parse(const std::vector<std::string>& arguments)
 // A checkpoint is required, so every accepting case carries one.
 evaluation::Settings parseWithCheckpoint(const std::vector<std::string>& arguments)
 {
-    std::vector<std::string> full{"--checkpoint", "model.pt"};
+    std::vector<std::string> full{ "--checkpoint", "model.pt" };
     full.insert(full.end(), arguments.begin(), arguments.end());
     return parse(full);
 }
@@ -171,6 +171,10 @@ std::vector<std::string> differingFields(const evaluation::Settings& left,
     {
         names.push_back("ledger_path");
     }
+    if (left.freeze_clock_percent != right.freeze_clock_percent)
+    {
+        names.push_back("freeze_clock_percent");
+    }
     return names;
 }
 
@@ -211,63 +215,64 @@ void defaultsAreTheOnesTheHeaderStates()
 
 void eachFlagWritesItsOwnField()
 {
-    expectOnlyFieldChanged("board", {"--board", "10"});
-    expectOnlyFieldChanged("games", {"--games", "200"});
-    expectOnlyFieldChanged("simulations", {"--simulations", "800"});
-    expectOnlyFieldChanged("step_limit_override", {"--step-limit", "1200"});
-    expectOnlyFieldChanged("channels", {"--channels", "128"});
-    expectOnlyFieldChanged("blocks", {"--blocks", "8"});
-    expectOnlyFieldChanged("seed_offset", {"--seed", "512"});
-    expectOnlyFieldChanged("batch", {"--batch", "200"});
+    expectOnlyFieldChanged("board", { "--board", "10" });
+    expectOnlyFieldChanged("games", { "--games", "200" });
+    expectOnlyFieldChanged("simulations", { "--simulations", "800" });
+    expectOnlyFieldChanged("step_limit_override", { "--step-limit", "1200" });
+    expectOnlyFieldChanged("channels", { "--channels", "128" });
+    expectOnlyFieldChanged("blocks", { "--blocks", "8" });
+    expectOnlyFieldChanged("seed_offset", { "--seed", "512" });
+    expectOnlyFieldChanged("batch", { "--batch", "200" });
     // The launch directory is build/Release and git ignores it, so a run meant to
     // leave a durable record has to be told where the ledger is.
-    expectOnlyFieldChanged("ledger_path", {"--ledger", "../../docs/runs.tsv"});
+    expectOnlyFieldChanged("ledger_path", { "--ledger", "../../docs/runs.tsv" });
+    expectOnlyFieldChanged("freeze_clock_percent", { "--freeze-clock-percent", "50" });
 }
 
 void derivesTheStepLimitFromTheBoard()
 {
     // 12 steps per cell, written out rather than taken from the constant.
     expectEquals("10x10 gets the paper's limit", 1200,
-                 parseWithCheckpoint({"--board", "10"}).stepLimit());
+                 parseWithCheckpoint({ "--board", "10" }).stepLimit());
     expectEquals("20x20 gets four times it, since cost is area", 4800,
-                 parseWithCheckpoint({"--board", "20"}).stepLimit());
+                 parseWithCheckpoint({ "--board", "20" }).stepLimit());
     expectEquals("an override is used verbatim", 2400,
-                 parseWithCheckpoint({"--board", "10", "--step-limit", "2400"}).stepLimit());
-    expectEquals("cells", 100, parseWithCheckpoint({"--board", "10"}).cellCount());
+                 parseWithCheckpoint({ "--board", "10", "--step-limit", "2400" }).stepLimit());
+    expectEquals("cells", 100, parseWithCheckpoint({ "--board", "10" }).cellCount());
     // One segment at the start, so one cell is already filled.
-    expectEquals("foods to win", 99, parseWithCheckpoint({"--board", "10"}).foodsToWin());
+    expectEquals("foods to win", 99, parseWithCheckpoint({ "--board", "10" }).foodsToWin());
 }
 
 void acceptsTheEdgesOfEveryRange()
 {
-    expectEquals("the smallest board", 2, parseWithCheckpoint({"--board", "2"}).board);
+    expectEquals("the smallest board", 2, parseWithCheckpoint({ "--board", "2" }).board);
     // The largest board whose step limit fits in an int, machine-checked in
     // docs/prove_arithmetic.py.
-    expectEquals("the largest board", 13377, parseWithCheckpoint({"--board", "13377"}).board);
+    expectEquals("the largest board", 13377, parseWithCheckpoint({ "--board", "13377" }).board);
     expectEquals("a trunk with no residual blocks", 0,
-                 parseWithCheckpoint({"--blocks", "0"}).blocks);
-    expectEquals("one game", 1, parseWithCheckpoint({"--games", "1"}).games);
+                 parseWithCheckpoint({ "--blocks", "0" }).blocks);
+    expectEquals("one game", 1, parseWithCheckpoint({ "--games", "1" }).games);
     // The reserved band is 0x20000000 wide, so this offset ends on its last seed.
     expectUnsignedEquals("the last offset that fits the band", 536870848u,
-                         parseWithCheckpoint({"--seed", "536870848"}).seed_offset);
+                         parseWithCheckpoint({ "--seed", "536870848" }).seed_offset);
 }
 
 void rejectsBeforeAnyWorkIsDone()
 {
-    expectRejectedNaming("--board", {"--checkpoint", "model.pt", "--board", "1"});
-    expectRejectedNaming("--board", {"--checkpoint", "model.pt", "--board", "0"});
-    expectRejectedNaming("--board", {"--checkpoint", "model.pt", "--board", "13378"});
-    expectRejectedNaming("--board", {"--checkpoint", "model.pt", "--board", "10x10"});
-    expectRejectedNaming("--games", {"--checkpoint", "model.pt", "--games", "0"});
-    expectRejectedNaming("--simulations", {"--checkpoint", "model.pt", "--simulations", "0"});
-    expectRejectedNaming("--batch", {"--checkpoint", "model.pt", "--batch", "0"});
-    expectRejectedNaming("--channels", {"--checkpoint", "model.pt", "--channels", "0"});
-    expectRejectedNaming("--blocks", {"--checkpoint", "model.pt", "--blocks", "-1"});
-    expectRejectedNaming("--step-limit", {"--checkpoint", "model.pt", "--step-limit", "0"});
-    expectRejectedNaming("--bord", {"--checkpoint", "model.pt", "--bord", "12"});
-    expectRejectedNaming("--board", {"--checkpoint", "model.pt", "--board"});
-    expectRejected("no checkpoint at all", {"--board", "10"});
-    expectRejectedNaming("--checkpoint", {"--checkpoint", ""});
+    expectRejectedNaming("--board", { "--checkpoint", "model.pt", "--board", "1" });
+    expectRejectedNaming("--board", { "--checkpoint", "model.pt", "--board", "0" });
+    expectRejectedNaming("--board", { "--checkpoint", "model.pt", "--board", "13378" });
+    expectRejectedNaming("--board", { "--checkpoint", "model.pt", "--board", "10x10" });
+    expectRejectedNaming("--games", { "--checkpoint", "model.pt", "--games", "0" });
+    expectRejectedNaming("--simulations", { "--checkpoint", "model.pt", "--simulations", "0" });
+    expectRejectedNaming("--batch", { "--checkpoint", "model.pt", "--batch", "0" });
+    expectRejectedNaming("--channels", { "--checkpoint", "model.pt", "--channels", "0" });
+    expectRejectedNaming("--blocks", { "--checkpoint", "model.pt", "--blocks", "-1" });
+    expectRejectedNaming("--step-limit", { "--checkpoint", "model.pt", "--step-limit", "0" });
+    expectRejectedNaming("--bord", { "--checkpoint", "model.pt", "--bord", "12" });
+    expectRejectedNaming("--board", { "--checkpoint", "model.pt", "--board" });
+    expectRejected("no checkpoint at all", { "--board", "10" });
+    expectRejectedNaming("--checkpoint", { "--checkpoint", "" });
 }
 
 void rejectsASeedRangeThatLeavesTheReservedBand()
@@ -276,13 +281,13 @@ void rejectsASeedRangeThatLeavesTheReservedBand()
     // touch is offset + games - 1, so 536870849 with 64 games runs one past the
     // end and wraps into the training range without erroring.
     expectRejectedNaming("--seed",
-                         {"--checkpoint", "model.pt", "--seed", "536870849", "--games", "64"});
-    expectRejectedNaming("--seed", {"--checkpoint", "model.pt", "--seed", "536870912"});
-    expectRejectedNaming("--seed", {"--checkpoint", "model.pt", "--seed", "-1"});
+                         { "--checkpoint", "model.pt", "--seed", "536870849", "--games", "64" });
+    expectRejectedNaming("--seed", { "--checkpoint", "model.pt", "--seed", "536870912" });
+    expectRejectedNaming("--seed", { "--checkpoint", "model.pt", "--seed", "-1" });
     // A negative seed casts to a value the band check also refuses, so without
     // this the parser could reach that check and report an overrun the operator
     // did not cause.
-    expectRejectedSaying("not negative", {"--checkpoint", "model.pt", "--seed", "-1"});
+    expectRejectedSaying("not negative", { "--checkpoint", "model.pt", "--seed", "-1" });
 }
 
 void expectContains(std::string_view what, std::string_view needle, std::string_view text)
@@ -298,7 +303,7 @@ void expectContains(std::string_view what, std::string_view needle, std::string_
 void theHeaderRecordsWhatWouldChangeTheResult()
 {
     const evaluation::Settings settings = parseWithCheckpoint(
-        {"--board", "10", "--games", "64", "--simulations", "200", "--batch", "64"});
+        { "--board", "10", "--games", "64", "--simulations", "200", "--batch", "64" });
     const std::string header = evaluation::formatHeader(settings);
 
     expectContains("header checkpoint", "model.pt", header);
@@ -315,6 +320,54 @@ void theHeaderRecordsWhatWouldChangeTheResult()
     {
         fail("header", "does not end in a blank line");
     }
+}
+
+// The clock ablation, which is the one setting that changes what the network sees
+// rather than how the run is scored. A log that did not say so would be compared
+// against an ordinary run as though the two measured the same agent.
+void theClockAblationIsRecordedAndRangeChecked()
+{
+    const evaluation::Settings ordinary = parseWithCheckpoint({ "--board", "10" });
+    if (ordinary.freeze_clock_percent.has_value())
+    {
+        fail("freeze clock default", "a run nobody ablated has the clock frozen");
+    }
+    const std::string plain = evaluation::formatHeader(ordinary);
+    if (plain.find("ABLATED") != std::string::npos)
+    {
+        fail("freeze clock default", "an ordinary run is announced as ablated");
+    }
+
+    const evaluation::Settings frozen =
+        parseWithCheckpoint({ "--board", "10", "--freeze-clock-percent", "50" });
+    if (frozen.freeze_clock_percent != 50)
+    {
+        fail("freeze clock parse", "--freeze-clock-percent 50 did not reach the settings");
+    }
+    const std::string header = evaluation::formatHeader(frozen);
+    expectContains("ablation announced", "ABLATED", header);
+    expectContains("ablation value", "50 percent", header);
+    if (header.size() < 2 || header.substr(header.size() - 2) != "\n\n")
+    {
+        fail("ablated header", "does not end in a blank line");
+    }
+
+    // Zero is a legitimate freeze - "always out of time" - and rejecting it would
+    // remove one of the two ends the ablation is for.
+    const evaluation::Settings spent =
+        parseWithCheckpoint({ "--board", "10", "--freeze-clock-percent", "0" });
+    if (spent.freeze_clock_percent != 0)
+    {
+        fail("freeze clock zero", "zero was read as absent rather than as a freeze");
+    }
+
+    // The checkpoint is supplied and the message is pinned to the bound, because
+    // expectRejected without one is satisfied by "--checkpoint is required" and
+    // would pass against any ceiling at all.
+    expectRejectedSaying("at least 0",
+                         { "--checkpoint", "model.pt", "--freeze-clock-percent", "-1" });
+    expectRejectedSaying("at most 100",
+                         { "--checkpoint", "model.pt", "--freeze-clock-percent", "101" });
 }
 
 // A seed, an outcome and the two numbers, in a line a parser can key on.
@@ -335,7 +388,7 @@ void eachGameGetsALineThatCanBePaired()
 
     // Tagged, so a parser finds these and not the progress lines.
     expectContains("game tag", "game ", won);
-    for (const std::string& line : {won, died, timed_out})
+    for (const std::string& line : { won, died, timed_out })
     {
         if (line.empty() || line.back() != '\n')
         {
@@ -378,7 +431,7 @@ visual::Settings parseVisual(const std::vector<std::string>& arguments)
 
 visual::Settings parseVisualWithCheckpoint(const std::vector<std::string>& arguments)
 {
-    std::vector<std::string> full{"--checkpoint", "model.pt"};
+    std::vector<std::string> full{ "--checkpoint", "model.pt" };
     full.insert(full.end(), arguments.begin(), arguments.end());
     return parseVisual(full);
 }
@@ -479,61 +532,63 @@ void theVisualDefaultsAreTheOnesTheHeaderStates()
 
 void eachVisualFlagWritesItsOwnField()
 {
-    expectOnlyVisualFieldChanged("board", {"--board", "10"});
-    expectOnlyVisualFieldChanged("simulations", {"--simulations", "800"});
-    expectOnlyVisualFieldChanged("step_limit_override", {"--step-limit", "1200"});
-    expectOnlyVisualFieldChanged("channels", {"--channels", "128"});
-    expectOnlyVisualFieldChanged("blocks", {"--blocks", "8"});
-    expectOnlyVisualFieldChanged("seed", {"--seed", "4294967295"});
-    expectOnlyVisualFieldChanged("moves_per_frame", {"--speed", "25"});
+    expectOnlyVisualFieldChanged("board", { "--board", "10" });
+    expectOnlyVisualFieldChanged("simulations", { "--simulations", "800" });
+    expectOnlyVisualFieldChanged("step_limit_override", { "--step-limit", "1200" });
+    expectOnlyVisualFieldChanged("channels", { "--channels", "128" });
+    expectOnlyVisualFieldChanged("blocks", { "--blocks", "8" });
+    expectOnlyVisualFieldChanged("seed", { "--seed", "4294967295" });
+    expectOnlyVisualFieldChanged("moves_per_frame", { "--speed", "25" });
 }
 
 void theVisualDerivesTheSameStepLimit()
 {
     expectEquals("visual 10x10 step limit", 1200,
-                 parseVisualWithCheckpoint({"--board", "10"}).stepLimit());
+                 parseVisualWithCheckpoint({ "--board", "10" }).stepLimit());
     expectEquals("visual 20x20 step limit", 4800,
-                 parseVisualWithCheckpoint({"--board", "20"}).stepLimit());
-    expectEquals("visual override used verbatim", 2400,
-                 parseVisualWithCheckpoint({"--board", "10", "--step-limit", "2400"}).stepLimit());
-    expectEquals("visual cells", 100, parseVisualWithCheckpoint({"--board", "10"}).cellCount());
+                 parseVisualWithCheckpoint({ "--board", "20" }).stepLimit());
+    expectEquals(
+        "visual override used verbatim", 2400,
+        parseVisualWithCheckpoint({ "--board", "10", "--step-limit", "2400" }).stepLimit());
+    expectEquals("visual cells", 100, parseVisualWithCheckpoint({ "--board", "10" }).cellCount());
     expectEquals("visual foods to win", 99,
-                 parseVisualWithCheckpoint({"--board", "10"}).foodsToWin());
+                 parseVisualWithCheckpoint({ "--board", "10" }).foodsToWin());
 }
 
 void theVisualAcceptsTheEdgesOfEveryRange()
 {
-    expectEquals("visual smallest board", 2, parseVisualWithCheckpoint({"--board", "2"}).board);
+    expectEquals("visual smallest board", 2, parseVisualWithCheckpoint({ "--board", "2" }).board);
     expectEquals("visual largest board", 13377,
-                 parseVisualWithCheckpoint({"--board", "13377"}).board);
+                 parseVisualWithCheckpoint({ "--board", "13377" }).board);
     expectEquals("visual no residual blocks", 0,
-                 parseVisualWithCheckpoint({"--blocks", "0"}).blocks);
+                 parseVisualWithCheckpoint({ "--blocks", "0" }).blocks);
     expectEquals("visual slowest speed", 1,
-                 parseVisualWithCheckpoint({"--speed", "1"}).moves_per_frame);
+                 parseVisualWithCheckpoint({ "--speed", "1" }).moves_per_frame);
     // Every unsigned value names a game, so neither end is rejected.
-    expectUnsignedEquals("visual seed zero", 0u, parseVisualWithCheckpoint({"--seed", "0"}).seed);
+    expectUnsignedEquals("visual seed zero", 0u, parseVisualWithCheckpoint({ "--seed", "0" }).seed);
     expectUnsignedEquals("visual largest seed", 4294967295u,
-                         parseVisualWithCheckpoint({"--seed", "4294967295"}).seed);
+                         parseVisualWithCheckpoint({ "--seed", "4294967295" }).seed);
 }
 
 void theVisualRejectsBeforeAnyWorkIsDone()
 {
-    expectVisualRejectedNaming("--board", {"--checkpoint", "model.pt", "--board", "1"});
-    expectVisualRejectedNaming("--board", {"--checkpoint", "model.pt", "--board", "13378"});
-    expectVisualRejectedNaming("--board", {"--checkpoint", "model.pt", "--board", "10x10"});
-    expectVisualRejectedNaming("--simulations", {"--checkpoint", "model.pt", "--simulations", "0"});
-    expectVisualRejectedNaming("--channels", {"--checkpoint", "model.pt", "--channels", "0"});
-    expectVisualRejectedNaming("--blocks", {"--checkpoint", "model.pt", "--blocks", "-1"});
-    expectVisualRejectedNaming("--speed", {"--checkpoint", "model.pt", "--speed", "0"});
-    expectVisualRejectedNaming("--step-limit", {"--checkpoint", "model.pt", "--step-limit", "0"});
-    expectVisualRejectedNaming("--bord", {"--checkpoint", "model.pt", "--bord", "12"});
-    expectVisualRejectedNaming("--board", {"--checkpoint", "model.pt", "--board"});
-    expectVisualRejectedNaming("--checkpoint", {"--checkpoint", ""});
-    expectVisualRejectedNaming("--seed", {"--checkpoint", "model.pt", "--seed", "-1"});
+    expectVisualRejectedNaming("--board", { "--checkpoint", "model.pt", "--board", "1" });
+    expectVisualRejectedNaming("--board", { "--checkpoint", "model.pt", "--board", "13378" });
+    expectVisualRejectedNaming("--board", { "--checkpoint", "model.pt", "--board", "10x10" });
+    expectVisualRejectedNaming("--simulations",
+                               { "--checkpoint", "model.pt", "--simulations", "0" });
+    expectVisualRejectedNaming("--channels", { "--checkpoint", "model.pt", "--channels", "0" });
+    expectVisualRejectedNaming("--blocks", { "--checkpoint", "model.pt", "--blocks", "-1" });
+    expectVisualRejectedNaming("--speed", { "--checkpoint", "model.pt", "--speed", "0" });
+    expectVisualRejectedNaming("--step-limit", { "--checkpoint", "model.pt", "--step-limit", "0" });
+    expectVisualRejectedNaming("--bord", { "--checkpoint", "model.pt", "--bord", "12" });
+    expectVisualRejectedNaming("--board", { "--checkpoint", "model.pt", "--board" });
+    expectVisualRejectedNaming("--checkpoint", { "--checkpoint", "" });
+    expectVisualRejectedNaming("--seed", { "--checkpoint", "model.pt", "--seed", "-1" });
     // The evaluator's flags are not this program's, and silently ignoring one
     // would start a run configured differently from what was typed.
-    expectVisualRejectedNaming("--games", {"--checkpoint", "model.pt", "--games", "64"});
-    expectVisualRejectedNaming("--batch", {"--checkpoint", "model.pt", "--batch", "64"});
+    expectVisualRejectedNaming("--games", { "--checkpoint", "model.pt", "--games", "64" });
+    expectVisualRejectedNaming("--batch", { "--checkpoint", "model.pt", "--batch", "64" });
 }
 
 }  // namespace
@@ -547,6 +602,7 @@ int main()
     rejectsBeforeAnyWorkIsDone();
     rejectsASeedRangeThatLeavesTheReservedBand();
     theHeaderRecordsWhatWouldChangeTheResult();
+    theClockAblationIsRecordedAndRangeChecked();
     eachGameGetsALineThatCanBePaired();
 
     theVisualDefaultsAreTheOnesTheHeaderStates();

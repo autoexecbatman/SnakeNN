@@ -57,6 +57,13 @@ void requireUsable(const Settings& settings)
     {
         flags::requireAtLeast("--step-limit", *settings.step_limit_override, 1);
     }
+    if (settings.freeze_clock_percent)
+    {
+        // Zero is legal and means "always out of time", which is one of the two ends
+        // the ablation wants; the range is what the clock plane can hold.
+        flags::requireAtLeast("--freeze-clock-percent", *settings.freeze_clock_percent, 0);
+        requireAtMost("--freeze-clock-percent", *settings.freeze_clock_percent, 100);
+    }
     // Compared in 64 bits, since the sum in 32 is the wraparound being rejected.
     const long long last_seed_index =
         static_cast<long long>(settings.seed_offset) + settings.games - 1;
@@ -139,6 +146,10 @@ Settings parseArguments(std::span<const std::string> arguments)
         {
             settings.ledger_path = pair.value;
         }
+        else if (pair.flag == "--freeze-clock-percent")
+        {
+            settings.freeze_clock_percent = flags::parseWholeInt(pair.flag, pair.value);
+        }
         else
         {
             // Refused rather than warned about. The previous parser printed to
@@ -154,13 +165,23 @@ Settings parseArguments(std::span<const std::string> arguments)
 
 std::string formatHeader(const Settings& settings)
 {
+    // An ablated run and an ordinary one differ in nothing else a log records, so
+    // this line is the only thing that would stop the two being compared as if they
+    // were the same measurement.
+    std::string ablation;
+    if (settings.freeze_clock_percent)
+    {
+        ablation = std::format("ABLATED: clock frozen at {} percent of the budget\n",
+                               *settings.freeze_clock_percent);
+    }
+
     return std::format(
         "=== Evaluation ===\n"
         "{} on {}x{}, {} games, {} simulations, step limit {}, batch {}\n"
-        "seeds {}..{} (reserved evaluation range), greedy, no root noise\n\n",
+        "seeds {}..{} (reserved evaluation range), greedy, no root noise\n{}\n",
         settings.checkpoint, settings.board, settings.board, settings.games, settings.simulations,
         settings.stepLimit(), settings.batch, seeds::evaluationGameSeed(settings.seed_offset, 0),
-        seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1));
+        seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1), ablation);
 }
 
 std::string formatGameLine(unsigned int seed, Outcome outcome, int score, int steps)
