@@ -27,37 +27,37 @@ namespace trainer
 // settings are a value, a search is not.
 struct Settings
 {
-    int board = 6;
-    int iterations = 20;
+    int board{ 6 };
+    int iterations{ 20 };
     // Absolute index of the first iteration. A resumed run must be given the
     // number the previous run stopped at, or it replays that run's games: the
     // seed for a game is derived from the iteration index, and `--resume`
     // restores weights only.
-    int start_iteration = 1;
-    int games_per_iteration = 32;
-    int simulations = 64;
+    int start_iteration{ 1 };
+    int games_per_iteration{ 32 };
+    int simulations{ 64 };
     // Empty means derive it from the board. This used to be a zero standing in
     // for "not given", resolved by overwriting the field during parsing - so the
     // resolved value and the sentinel occupied one variable and no caller could
     // tell which it was holding.
     std::optional<int> step_limit_override;
-    int channels = 64;
-    int blocks = 4;
-    int batch_size = 128;
-    int batches_per_iteration = 64;
+    int channels{ 64 };
+    int blocks{ 4 };
+    int batch_size{ 128 };
+    int batches_per_iteration{ 64 };
     // Given instead of --batches, this sets it: batches = samples * games / batch.
     // The paper trains 30 batches of 100 states after every game, so 3,000 per
     // game; the equivalent --batches depends on the game count and the batch size
     // and is therefore the wrong thing to write down. Giving both is refused.
     std::optional<int> samples_per_game_override;
-    size_t replay_bytes = 1024u * 1024u * 1024u;  // 1 GiB, measured not guessed
-    unsigned int seed = 1;
+    size_t replay_bytes{ 1024u * 1024u * 1024u };  // 1 GiB, measured not guessed
+    unsigned int seed{ 1 };
     std::string checkpoint;
     std::string resume;
     // Where this run records what it cost. Relative to the launch directory, which
     // is build/Release and is not version controlled, so a run meant to leave a
     // durable record passes --ledger ../../docs/runs.tsv.
-    std::string ledger_path = "runs.tsv";
+    std::string ledger_path{ "runs.tsv" };
 
     int cellCount() const noexcept { return board * board; }
     // The snake starts one segment long, so this many apples fills the board.

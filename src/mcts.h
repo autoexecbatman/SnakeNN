@@ -35,17 +35,20 @@ std::optional<SnakeEnv::Action> forcedAction(const SnakeEnv& state);
 class MonteCarloSearch
 {
 public:
+    // Every field is set explicitly by the caller. The initializers exist so that
+    // forgetting one is a wrong number rather than undefined behaviour - a garbage
+    // exploration constant reads as a plausible run that cannot be reproduced.
     struct Config
     {
-        int simulations;
-        float exploration;  // c_puct
-        float discount;
+        int simulations{ 0 };
+        float exploration{ 0.0f };  // c_puct
+        float discount{ 0.0f };
         // Dirichlet noise on root priors, the standard device for keeping
         // self-play from collapsing onto one line. Set fraction to zero when
         // evaluating rather than training.
-        float root_noise_fraction;
-        float root_noise_alpha;
-        unsigned int seed;
+        float root_noise_fraction{ 0.0f };
+        float root_noise_alpha{ 0.0f };
+        unsigned int seed{ 0 };
     };
 
     struct Result
@@ -53,8 +56,8 @@ public:
         // Visit distribution over actions, the search's improved policy.
         std::vector<float> policy;
         // Root value estimate after search.
-        float value;
-        SnakeEnv::Action best_action;
+        float value{ 0.0f };
+        SnakeEnv::Action best_action{ SnakeEnv::Action::STRAIGHT };
     };
 
     MonteCarloSearch(Evaluator& evaluator, const Config& config);
@@ -92,13 +95,13 @@ private:
         // separate sites - expand() for children and search() for the root - and
         // those two had already drifted apart on edge_steps. A field added later
         // would have had to be remembered in both.
-        float prior = 0.0f;
+        float prior{ 0.0f };
         // Discounted sum of every reward collected on the edge entering this
         // node. An edge usually spans one tick, but forced moves are simulated
         // through rather than given their own node, so it can span several.
-        float reward = 0.0f;
-        float value_sum = 0.0f;
-        int visit_count = 0;
+        float reward{ 0.0f };
+        float value_sum{ 0.0f };
+        int visit_count{ 0 };
         // Arena index of action 0's child, once this node has children. Empty
         // until then, and empty is the whole answer - there is no -1 standing in
         // for it that could be added to an action and used as an index.
@@ -113,8 +116,8 @@ private:
         // is the floor for any real edge. The root has no entering edge at all,
         // and rather than marking that with a zero nothing reads, it keeps the
         // default - backup computes a return across the root and discards it.
-        int edge_steps = 1;
-        bool terminal = false;
+        int edge_steps{ 1 };
+        bool terminal{ false };
     };
 
     struct Tree

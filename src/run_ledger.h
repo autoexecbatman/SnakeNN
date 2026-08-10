@@ -43,12 +43,12 @@ struct Entry
 {
     std::string run_id;
     std::string started_utc;
-    Kind kind;
+    Kind kind{ Kind::Training };
     std::string command;
-    Outcome outcome;
-    double seconds;
-    long long games;
-    long long samples;
+    Outcome outcome{ Outcome::Started };
+    double seconds{ 0.0 };
+    long long games{ 0 };
+    long long samples{ 0 };
 };
 
 // A run identifier from the start time and the process id, in that order so a
