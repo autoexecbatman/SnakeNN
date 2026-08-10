@@ -25,6 +25,9 @@ constexpr int BOARD = 10;
 constexpr unsigned int SEED = 12345;
 // Long enough that a greedy walk to the apple always finds one.
 constexpr int MAX_PATH_STEPS = 200;
+// The paper's cap for a 10x10 board. It bounds the clock plane, not termination,
+// and no walk here comes near it - what this test measures is apple placement.
+constexpr int STEP_LIMIT = 1200;
 // Streams sampled when checking that a reseeded copy diverges.
 constexpr unsigned int RESEED_STREAMS = 12;
 // Seeds sampled for the control that apple placement varies at all.
@@ -105,7 +108,7 @@ std::vector<SnakeEnv::Action> pathThatEats(SnakeEnv environment, int max_steps)
 
 int main()
 {
-    SnakeEnv root(BOARD, BOARD, SEED);
+    SnakeEnv root(BOARD, BOARD, SEED, STEP_LIMIT);
     // Move off the opening position so the test is not a special case of it.
     for (int step = 0; step < 3 && !root.done(); step++)
     {
@@ -172,7 +175,7 @@ int main()
     std::vector<int> placements;
     for (unsigned int other_seed = SEED; other_seed < SEED + CONTROL_SEEDS; other_seed++)
     {
-        SnakeEnv other(BOARD, BOARD, other_seed);
+        SnakeEnv other(BOARD, BOARD, other_seed, STEP_LIMIT);
         std::vector<SnakeEnv::Action> path = pathThatEats(other, MAX_PATH_STEPS);
         int cell = foodAfter(other, path);
         if (cell >= 0)
