@@ -162,6 +162,24 @@ public:
     // O(cells), so it is affordable per root move and not per node of a search.
     int reachableCells(Action action) const;
 
+    // Whether the head can still reach its own tail after taking `action`.
+    //
+    // False when the action kills. Otherwise the same flood fill, asking a
+    // different question: a snake that can reach its tail can follow it, and the
+    // region it is in opens up behind it every tick, so it is not sealed. A snake
+    // cut off from its tail is in a pocket and dies once the pocket fills,
+    // whatever the pocket's size.
+    //
+    // This is the test a trap guard wants, and a cell count is not: past the
+    // halfway mark a board has fewer free cells than the snake has segments, so
+    // "region smaller than the snake" is true of every move in every endgame.
+    //
+    // Approximate in one direction, and it is the same approximation
+    // reachableCells makes: an action that eats leaves the tail in place for a
+    // tick, and this counts it as vacating. It therefore calls a move safe
+    // slightly more often than it should, never less.
+    bool tailReachable(Action action) const;
+
     // Makes the clock read `value` for the rest of this environment's life.
     //
     // Measurement only, and it is the whole of an ablation: the network sees a
@@ -273,6 +291,16 @@ private:
 
     int cellIndex(const Position& cell) const { return cell.y * width_ + cell.x; }
     bool insideGrid(const Position& cell) const;
+
+    // What one flood fill from where `action` lands finds. Both public trap
+    // queries read it, so they can never disagree about what is connected.
+    // Zero cells and an unreached tail when the action kills.
+    struct Region
+    {
+        int cells{ 0 };
+        bool holds_tail{ false };
+    };
+    Region floodAfter(Action action) const;
 
     // Whether a head arriving at `next` collides - the wall, or a body segment
     // that is still there when it arrives.

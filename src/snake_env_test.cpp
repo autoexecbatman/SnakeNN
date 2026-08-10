@@ -1039,6 +1039,85 @@ void testReachableCellsCountsTheRoomAMoveLeaves()
     expect(survivor_has_room, "a move that survives always leaves at least the cell it lands on");
 }
 
+// The question a trap guard has to ask. A cell count answered it wrongly: past
+// the halfway mark the free cells are fewer than the snake is long, so "the
+// region is smaller than the snake" is true of every move in every endgame and
+// vetoing on it vetoes the whole endgame.
+void testTailReachableSeparatesAPocketFromACrowdedBoard()
+{
+    SnakeEnv env(6, 6, 7, TEST_STEP_LIMIT);
+
+    // A length-one snake stands on its own tail, which vacates as the head
+    // arrives, so every cell including the one behind it stays connected.
+    for (int index = 0; index < SnakeEnv::ACTION_COUNT; index++)
+    {
+        const SnakeEnv::Action action = static_cast<SnakeEnv::Action>(index);
+        if (env.wouldDie(action))
+        {
+            continue;
+        }
+        expect(env.tailReachable(action), "on an empty board the tail is always reachable");
+    }
+
+    SnakeEnv cornered(6, 6, 3, TEST_STEP_LIMIT);
+    int guard = 0;
+    while (!cornered.wouldDie(SnakeEnv::Action::STRAIGHT) && guard++ < 20)
+    {
+        cornered.step(SnakeEnv::Action::STRAIGHT);
+    }
+    expect(cornered.wouldDie(SnakeEnv::Action::STRAIGHT),
+           "the walk reached a wall, so there is a fatal move to check");
+    expect(!cornered.tailReachable(SnakeEnv::Action::STRAIGHT),
+           "a move that kills reaches nothing, tail included");
+
+    // The endgame case, driven by the one policy known to survive it. A snake
+    // following a Hamiltonian cycle lies along that cycle, so its tail is always
+    // the far end of the corridor it is in and never sealed off - at every step
+    // of a won game, including the last, when the board is full.
+    const int size = 6;
+    SnakeEnv filling(size, size, 99, TEST_STEP_LIMIT);
+    HamiltonianCycle cycle(size, size);
+    if (!cycle.generateCycle())
+    {
+        expect(false, "cycle generation for the trap test");
+        return;
+    }
+    int alignment_steps = 0;
+    SnakeEnv::Action entry = SnakeEnv::Action::STRAIGHT;
+    while (!actionTowards(filling, cycle.getNext(filling.body()[0]), entry) && alignment_steps < 4)
+    {
+        filling.step(SnakeEnv::Action::LEFT);
+        alignment_steps++;
+    }
+
+    bool tail_always_reachable = true;
+    int crowded_moves = 0;
+    int walk_guard = 0;
+    const int walk_limit = 40 * filling.cellCount() * filling.foodsToWin();
+    while (!filling.done() && walk_guard++ < walk_limit)
+    {
+        SnakeEnv::Action action = SnakeEnv::Action::STRAIGHT;
+        if (!actionTowards(filling, cycle.getNext(filling.body()[0]), action))
+        {
+            break;
+        }
+        tail_always_reachable = tail_always_reachable && filling.tailReachable(action);
+        // The moves the old cell-count condition would have vetoed: room short of
+        // the snake's own length, and safe all the same.
+        if (filling.reachableCells(action) < static_cast<int>(filling.body().size()))
+        {
+            crowded_moves++;
+        }
+        filling.step(action);
+    }
+
+    expect(filling.won(), "the cycle walk reached a full board, so the endgame was covered");
+    expect(tail_always_reachable, "a snake following a cycle can always reach its own tail");
+    // Without this the test above passes on a board that never got crowded, and
+    // the condition it is meant to separate was never exercised.
+    expect(crowded_moves > 0, "the walk passed through states a cell count would have vetoed");
+}
+
 void testStepLimitIsRequired()
 {
     bool refused = false;
@@ -1121,6 +1200,7 @@ int main()
     testTheBudgetCountsDownWithTheSteps();
     testTheClockCanBeFrozenForAnAblation();
     testReachableCellsCountsTheRoomAMoveLeaves();
+    testTailReachableSeparatesAPocketFromACrowdedBoard();
     testStepLimitIsRequired();
     testWinnableByCycle();
 

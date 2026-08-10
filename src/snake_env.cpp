@@ -170,9 +170,19 @@ SnakeEnv::SnakeEnv(int width, int height, unsigned int seed, int step_limit)
 
 int SnakeEnv::reachableCells(Action action) const
 {
+    return floodAfter(action).cells;
+}
+
+bool SnakeEnv::tailReachable(Action action) const
+{
+    return floodAfter(action).holds_tail;
+}
+
+SnakeEnv::Region SnakeEnv::floodAfter(Action action) const
+{
     if (wouldDie(action))
     {
-        return 0;
+        return Region{};
     }
 
     const Position landing = headAfter(action);
@@ -216,7 +226,10 @@ int SnakeEnv::reachableCells(Action action) const
             frontier.push_back(index);
         }
     }
-    return reached;
+    // The landing cell counts as reaching the tail when the snake is short enough
+    // to be standing on it, which is why this is asked of `seen` rather than of
+    // the cells the walk stepped out of.
+    return Region{ reached, seen[static_cast<size_t>(cellIndex(vacated))] != 0 };
 }
 
 void SnakeEnv::freezeClockForAblation(float value)
