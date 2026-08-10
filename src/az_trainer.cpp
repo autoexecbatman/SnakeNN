@@ -158,6 +158,7 @@ int main(int argc, char** argv)
     search_config.step_reward = az::STEP_REWARD;
     search_config.steps_tiebreak_margin = az::STEPS_TIEBREAK_MARGIN;
     search_config.trap_guard = az::TRAP_GUARD;
+    search_config.trap_report = az::TRAP_REPORT;
     search_config.root_noise_fraction = az::ROOT_NOISE_FRACTION;
     search_config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
     search_config.seed = settings.seed;
@@ -385,9 +386,11 @@ int main(int argc, char** argv)
         // Precisions are fixed rather than left to the default so the line keeps
         // a stable shape across runs - these summaries get parsed out of the log.
         std::string summary = std::format(
-            "iter {}  score {:.4f}/{}  best {}  wins {}/{}  timeouts {}  buffer {} ({}MB)",
+            "iter {}  score {:.4f}/{}  best {}  wins {}/{}  timeouts {}  sealed {}  buffer {} "
+            "({}MB)",
             iteration, total_score / summaries.size(), foods_to_win, best_score, wins,
-            summaries.size(), limited, replay.size(), replay_bytes_used / (1024 * 1024));
+            summaries.size(), limited, play.sealedChoices(), replay.size(),
+            replay_bytes_used / (1024 * 1024));
         if (batches_run > 0)
         {
             summary += std::format("  loss p {:.6f} v {:.6f}", policy_loss_total / batches_run,

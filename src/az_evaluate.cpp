@@ -101,6 +101,7 @@ int main(int argc, char** argv)
     search_config.step_reward = az::STEP_REWARD;
     search_config.steps_tiebreak_margin = az::STEPS_TIEBREAK_MARGIN;
     search_config.trap_guard = az::TRAP_GUARD;
+    search_config.trap_report = az::TRAP_REPORT;
     // Off, deliberately: noise is what makes self-play explore, and a number
     // measured with it on describes the exploration policy rather than the agent.
     search_config.root_noise_fraction = 0.0f;
@@ -215,7 +216,8 @@ int main(int argc, char** argv)
                              static_cast<double>(total_steps) / settings.games);
     std::cout << std::format("Endings: {} won, {} died, {} timed out\n", wins, deaths, timeouts);
     std::cout << std::format("Took {:.2f}s, {} evaluations\n", seconds, evaluator.evaluations());
-    std::cout << std::format("Trap guard overruled the search {} times\n", search.trapGuardFires());
+    std::cout << std::format("Sealed choices {}, of which the guard overruled {}\n",
+                             search.sealedChoices(), search.trapGuardFires());
 
     run.outcome = ledger::Outcome::Finished;
     run.seconds = seconds;

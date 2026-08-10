@@ -52,13 +52,18 @@ public:
         // How far below the best visit count an action may sit and still be taken
         // when it finishes sooner. Zero disables the tie-break entirely.
         float steps_tiebreak_margin{ 0.0f };
-        // Whether to refuse a root move that seals the snake into a region too
-        // small to hold it. Off reproduces the search as it was.
+        // Whether to refuse a root move that seals the head away from its own
+        // tail. Off reproduces the search as it was.
         //
-        // This is knowledge the search cannot reach on its own: the region only
+        // This is knowledge the search cannot reach on its own: the seal only
         // proves fatal tens of moves later, past any horizon 200 simulations buy.
         // It vetoes, never suggests - the search still chooses among what is left.
         bool trap_guard{ false };
+        // Whether to count the seals without acting on them. Independent of the
+        // veto, because the count is the measurement of whether the network has
+        // learned to avoid them and the veto is what stops that being measurable:
+        // a guard that corrects the move erases the evidence it was needed.
+        bool trap_report{ false };
         // Dirichlet noise on root priors, the standard device for keeping
         // self-play from collapsing onto one line. Set fraction to zero when
         // evaluating rather than training.
@@ -109,6 +114,12 @@ public:
     // indistinguishable from one that never fires - and the number falling over a
     // run is the evidence the network is learning what the guard knows.
     long long trapGuardFires() const { return trap_guard_fires_; }
+
+    // How many root moves the search chose that would seal the head away from its
+    // tail, counted whether or not the guard was there to refuse them. This is
+    // the quantity that falls as the network learns; trapGuardFires is only the
+    // subset the guard managed to do something about.
+    long long sealedChoices() const { return sealed_choices_; }
 
 private:
     struct Node
@@ -207,5 +218,6 @@ private:
     // The budget the steps accumulator is a fraction of, taken from the roots.
     float steps_budget_{ 1.0f };
     long long trap_guard_fires_{ 0 };
+    long long sealed_choices_{ 0 };
     void addRootNoise(Tree& tree);
 };

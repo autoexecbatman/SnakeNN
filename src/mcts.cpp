@@ -689,32 +689,45 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
             }
         }
 
-        // The trap guard, last, so it overrules everything above it. A region that
-        // cannot hold the snake kills it a long way past what the search can see,
-        // and no amount of value estimation substitutes for counting the cells.
-        if (config_.trap_guard)
+        // The trap guard, last, so it overrules everything above it. A move that
+        // seals the head away from its own tail kills a long way past what the
+        // search can see, and no amount of value estimation substitutes for
+        // walking the region.
+        //
+        // The veto is tail reachability, not a cell count. Counting cells vetoes
+        // every endgame move there is: past the halfway mark a board has fewer
+        // free cells than the snake has segments.
+        if (config_.trap_guard || config_.trap_report)
         {
             const SnakeEnv& root_state = *roots[index];
-            const int body_length = static_cast<int>(root_state.body().size());
-            const int chosen_room =
-                root_state.reachableCells(static_cast<SnakeEnv::Action>(best_action));
-            if (chosen_room < body_length)
+            const bool sealed =
+                !root_state.tailReachable(static_cast<SnakeEnv::Action>(best_action));
+            if (sealed)
             {
-                int roomiest = best_action;
-                int roomiest_cells = chosen_room;
+                sealed_choices_++;
+            }
+            if (sealed && config_.trap_guard)
+            {
+                // Among the moves that keep the tail reachable, the search's own
+                // preference decides. The guard says which moves are available,
+                // never which of them is good.
+                int rescue = best_action;
+                int rescue_visits = -1;
                 for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
                 {
-                    const int room =
-                        root_state.reachableCells(static_cast<SnakeEnv::Action>(action));
-                    if (room > roomiest_cells)
+                    if (root_state.tailReachable(static_cast<SnakeEnv::Action>(action)) &&
+                        visits[action] > rescue_visits)
                     {
-                        roomiest_cells = room;
-                        roomiest = action;
+                        rescue_visits = visits[action];
+                        rescue = action;
                     }
                 }
-                if (roomiest != best_action)
+                // With every move sealed there is nothing to veto, so the search
+                // keeps its choice. Overriding here would trade a judged move for
+                // an arbitrary one at the moment judgement is all that is left.
+                if (rescue != best_action)
                 {
-                    best_action = roomiest;
+                    best_action = rescue;
                     trap_guard_fires_++;
                 }
             }

@@ -56,14 +56,34 @@ constexpr float STEPS_TIEBREAK_MARGIN = 0.05f;
 // a trunk pulled hard toward predicting duration is a trunk not learning to play.
 constexpr float STEPS_LOSS_WEIGHT = 0.25f;
 
-// Whether the search refuses a root move that seals the snake into a region too
-// small to hold it. Algorithmic assistance rather than a learned skill: the region
-// proves fatal tens of moves later, past any horizon 200 simulations reach.
+// Whether the search refuses a root move that seals the head away from its own
+// tail. Algorithmic assistance rather than a learned skill: the seal proves fatal
+// tens of moves later, past any horizon 200 simulations reach.
+//
+// The test is reachability of the tail, not the size of the region. A cell count
+// vetoes every endgame move there is, and measured 0 of 64 games won against 47
+// with the guard switched off.
+//
+// Off, on the measurement. On the same weights and the same 64 held-out seeds:
+// 56 wins with no guard, 44 with this one, 0 with the cell count. The corrected
+// veto costs twelve games and turns them into timeouts, because following the
+// tail is the slow way out of a position the search can already play. Search at
+// 200 simulations is better at this than the heuristic, which is the outcome
+// AlphaZero predicts and the reason the veto is not the assistance to keep.
 //
 // It is a veto, not a fallback - the search still picks among what survives it -
 // and how often it fires is printed, so a network that has learned the pattern
 // shows up as the count falling rather than as nothing at all.
-constexpr bool TRAP_GUARD = true;
+constexpr bool TRAP_GUARD = false;
+
+// Whether to count the seals anyway. On: the veto is what costs win rate, and
+// counting costs one flood fill per played move.
+//
+// Without this, switching the veto off would take the measurement with it, and
+// the measurement is the point - a network that has learned to keep its tail
+// reachable shows up as this number falling, and nothing else in the run reports
+// it. A guard that corrects the move erases its own evidence.
+constexpr bool TRAP_REPORT = true;
 
 // The paper caps a 10x10 game at 1,200 steps, which is twelve steps per cell.
 // Scaling by area rather than fixing the number keeps "win" meaning the same

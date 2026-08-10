@@ -221,4 +221,6 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
         }
         summaries_out.push_back(summary);
     }
+
+    sealed_choices_ = search.sealedChoices();
 }

@@ -102,12 +102,19 @@ public:
                    std::vector<TrainingRecord>& records_out,
                    std::vector<GameSummary>& summaries_out);
 
+    // Root moves in the last batch that sealed the head away from its own tail.
+    // Zero before the first batch, and zero always unless the search was
+    // configured to count them. The search is built per batch, so this is the
+    // only way the number reaches the caller.
+    long long sealedChoices() const { return sealed_choices_; }
+
 private:
     Evaluator& evaluator_;
     MonteCarloSearch::Config search_config_;
     Config config_;
     std::mt19937 rng_;
     std::function<void(const Progress&)> progress_callback_;
+    long long sealed_choices_{ 0 };
 
     int sampleAction(const std::vector<float>& policy, int moves_played);
 };
