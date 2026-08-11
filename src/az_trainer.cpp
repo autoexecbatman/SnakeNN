@@ -338,16 +338,20 @@ int main(int argc, char** argv)
                 torch::Tensor steps_target =
                     torch::from_blob(steps.data(), { settings.batch_size, 1 }).to(device);
 
-                // The value head is a tanh, so its targets have to live in the
-                // same range. Rewards run to +/-10, so returns are scaled by the
-                // win reward rather than clipped - clipping would make every
-                // sufficiently good and sufficiently bad position look alike.
-                value_target = torch::tanh(value_target / SnakeEnv::WIN_REWARD);
+                // The target is the return itself. The head is bounded at
+                // VALUE_SCALE rather than at 1, so no squashing is needed to make
+                // the two comparable, and the search receives a value in the same
+                // units as the rewards it adds to it.
 
                 const Prediction prediction = network->forward(input);
                 torch::Tensor log_policy = torch::log_softmax(prediction.policy_logits, 1);
                 torch::Tensor policy_loss = -(policy_target * log_policy).sum(1).mean();
-                torch::Tensor value_loss = torch::mse_loss(prediction.value, value_target);
+                // Measured on the normalised scale, which is the same loss the
+                // squashed version produced up to a constant - so the balance
+                // against the policy loss, and every learning rate chosen under
+                // it, carries over unchanged.
+                torch::Tensor value_loss = torch::mse_loss(prediction.value / az::VALUE_SCALE,
+                                                           value_target / az::VALUE_SCALE);
                 // Undiscounted, unlike the value: this is the only estimate here
                 // that can see as far as the deadline.
                 torch::Tensor steps_loss = torch::mse_loss(prediction.steps_to_go, steps_target);

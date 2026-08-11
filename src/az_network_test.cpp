@@ -7,6 +7,7 @@
 #include <type_traits>
 
 #include "az_network.h"
+#include "az_parameters.h"
 #include "snake_env.h"
 
 // The curriculum trains on small boards and moves up, so the property that
@@ -67,7 +68,17 @@ void testOutputShapes()
     expect(policy.sizes() == torch::IntArrayRef({ batch, SnakeEnv::ACTION_COUNT }),
            "the policy head emits one logit per relative action");
     expect(value.sizes() == torch::IntArrayRef({ batch, 1 }), "the value head emits one scalar");
-    expect(value.abs().max().item<float>() <= 1.0f, "value stays inside the bounded range");
+    expect(value.abs().max().item<float>() <= az::VALUE_SCALE,
+           "value stays inside the bounded range");
+
+    // The bound is in reward units, not in fractions of one. MonteCarloSearch
+    // adds this value to a raw edge reward, so a head bounded at 1 cannot express
+    // a position worth a win or a death and the search silently discounts
+    // everything past its own edges. This is the assertion whose absence let the
+    // two live in different units.
+    expect(az::VALUE_SCALE > SnakeEnv::WIN_REWARD,
+           "the value bound can express a win, so a leaf competes with a terminal reward");
+    expect(az::VALUE_SCALE > -SnakeEnv::DEATH_REWARD, "the value bound can express a death");
 
     // Steps-to-go is a fraction of the step budget, so anything outside [0, 1] is
     // not a duration and would be compared against the clock plane as if it were.

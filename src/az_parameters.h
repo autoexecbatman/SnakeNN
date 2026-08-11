@@ -85,6 +85,22 @@ constexpr bool TRAP_GUARD = false;
 // it. A guard that corrects the move erases its own evidence.
 constexpr bool TRAP_REPORT = true;
 
+// The bound on the value head, in the same units as a reward.
+//
+// The head is bounded because the search compares leaves and one bad
+// extrapolation would otherwise dominate every comparison it appears in. What it
+// must not do is change the units: `MonteCarloSearch::backup` adds `node.reward`
+// - a raw +1 apple or -10 death - to the leaf value, so a head that reports
+// return/10 makes the search undervalue everything past its own edges tenfold.
+//
+// 40 rather than the 16.433 measured as the largest return over 1000 evaluation
+// games (docs/measure_value_squashing.py), because tanh has to stay in the part
+// of its range that resolves: at 40 the extremes land at 0.41, which keeps 83
+// percent of the resolution an unbounded head would have. At 16.5 they would
+// land at 1.0 and keep 42 percent. Re-run that script if the reward scale or the
+// board changes; a scale below the largest return silently flattens the endgame.
+constexpr float VALUE_SCALE = 40.0f;
+
 // The paper caps a 10x10 game at 1,200 steps, which is twelve steps per cell.
 // Scaling by area rather than fixing the number keeps "win" meaning the same
 // thing at every board size the curriculum passes through.

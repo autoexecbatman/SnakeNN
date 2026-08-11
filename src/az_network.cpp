@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 #include "az_network.h"
+#include "az_parameters.h"
 #include "snake_env.h"
 
 namespace
@@ -122,10 +123,10 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
     torch::Tensor value = torch::relu(value_norm(value_conv(trunk)));
     value = torch::adaptive_avg_pool2d(value, { POOLED_SIDE, POOLED_SIDE });
     value = torch::relu(value_hidden(value.flatten(1)));
-    // Bounded, because the return it stands in for is bounded: the search
-    // compares leaves, and an unbounded head lets one bad extrapolation
-    // dominate every comparison it appears in.
-    value = torch::tanh(value_out(value));
+    // Bounded, because the search compares leaves and an unbounded head lets one
+    // bad extrapolation dominate every comparison it appears in - but bounded in
+    // the units a reward is quoted in, since backup adds the two together.
+    value = az::VALUE_SCALE * torch::tanh(value_out(value));
 
     torch::Tensor steps = torch::relu(steps_norm(steps_conv(trunk)));
     steps = torch::adaptive_avg_pool2d(steps, { POOLED_SIDE, POOLED_SIDE });

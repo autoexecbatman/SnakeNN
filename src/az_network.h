@@ -28,8 +28,9 @@ struct Prediction
     // [N, ACTION_COUNT]. Logits, not probabilities - no softmax has been applied,
     // and the search's evaluator is what normalises them.
     torch::Tensor policy_logits;
-    // [N, 1] in (-1, 1), from a tanh. Stands in for the discounted return from
-    // this position onward.
+    // [N, 1] in (-VALUE_SCALE, VALUE_SCALE), from a scaled tanh. The discounted
+    // return from this position onward, in the units a reward is quoted in - the
+    // search adds this to raw edge rewards, so it cannot be a squashed fraction.
     torch::Tensor value;
     // [N, 1] in (0, 1), from a sigmoid. The steps still needed to fill the board,
     // as a fraction of the game's step budget.

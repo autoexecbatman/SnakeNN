@@ -636,6 +636,7 @@ add_test(NAME search_properties COMMAND SearchTest)
 add_executable(NetworkTest
     src/az_network_test.cpp
     src/az_network.cpp
+    src/az_parameters.cpp
     src/snake_env.cpp
 )
 
