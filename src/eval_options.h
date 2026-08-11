@@ -53,6 +53,16 @@ struct Settings
     // rather than a fraction so it goes through the same integer parser as every
     // other flag, and the ablation has never wanted finer.
     std::optional<int> freeze_clock_percent;
+    // The stream the search draws its imagined apples from, independent of which
+    // games are played. Empty means derive it from the seed offset, which is what
+    // every run before this did.
+    //
+    // Two runs that differ only here play the identical games with the identical
+    // weights and differ only in what the search guessed about food it cannot see.
+    // That difference is the noise floor of this whole measurement, and until it is
+    // known, a paired comparison between two checkpoints cannot say how much of its
+    // churn is learning.
+    std::optional<unsigned int> search_seed;
 
     int cellCount() const noexcept;
     // The snake starts one segment long, so this many apples fills the board.

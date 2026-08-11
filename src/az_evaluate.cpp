@@ -106,7 +106,11 @@ int main(int argc, char** argv)
     // measured with it on describes the exploration policy rather than the agent.
     search_config.root_noise_fraction = 0.0f;
     search_config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
-    search_config.seed = seeds::evaluationGameSeed(settings.seed_offset, 0);
+    // The stream the search imagines apples from. Derived from the offset unless
+    // asked otherwise, so two runs can play identical games and differ only in
+    // what the search guessed about food it cannot see.
+    search_config.seed = settings.search_seed ? *settings.search_seed
+                                              : seeds::evaluationGameSeed(settings.seed_offset, 0);
     MonteCarloSearch search(evaluator, search_config);
 
     const int foods_to_win = settings.foodsToWin();

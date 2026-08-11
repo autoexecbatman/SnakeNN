@@ -150,6 +150,10 @@ Settings parseArguments(std::span<const std::string> arguments)
         {
             settings.freeze_clock_percent = flags::parseWholeInt(pair.flag, pair.value);
         }
+        else if (pair.flag == "--search-seed")
+        {
+            settings.search_seed = flags::parseWholeUnsigned(pair.flag, pair.value);
+        }
         else
         {
             // Refused rather than warned about. The previous parser printed to
@@ -175,13 +179,22 @@ std::string formatHeader(const Settings& settings)
                                *settings.freeze_clock_percent);
     }
 
+    // Two runs differing only in the search stream play the same games and are
+    // otherwise indistinguishable in a log, so the line has to say which stream.
+    std::string stream;
+    if (settings.search_seed)
+    {
+        stream = std::format("search seed {} (not the default derived from the offset)\n",
+                             *settings.search_seed);
+    }
+
     return std::format(
         "=== Evaluation ===\n"
         "{} on {}x{}, {} games, {} simulations, step limit {}, batch {}\n"
-        "seeds {}..{} (reserved evaluation range), greedy, no root noise\n{}\n",
+        "seeds {}..{} (reserved evaluation range), greedy, no root noise\n{}{}\n",
         settings.checkpoint, settings.board, settings.board, settings.games, settings.simulations,
         settings.stepLimit(), settings.batch, seeds::evaluationGameSeed(settings.seed_offset, 0),
-        seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1), ablation);
+        seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1), stream, ablation);
 }
 
 std::string formatGameLine(unsigned int seed, Outcome outcome, int score, int steps)

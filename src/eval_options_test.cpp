@@ -370,6 +370,45 @@ void theClockAblationIsRecordedAndRangeChecked()
                          { "--checkpoint", "model.pt", "--freeze-clock-percent", "101" });
 }
 
+// The search's stream is separable from the game's, which is what lets one
+// checkpoint be measured twice on identical games and the difference attributed
+// to the food the search imagined.
+void theSearchStreamIsSeparableFromTheGames()
+{
+    const evaluation::Settings ordinary = parseWithCheckpoint({ "--board", "10" });
+    if (ordinary.search_seed.has_value())
+    {
+        fail("search seed default", "a run nobody asked has a search seed of its own");
+    }
+
+    const evaluation::Settings reseeded =
+        parseWithCheckpoint({ "--board", "10", "--search-seed", "7" });
+    if (reseeded.search_seed != 7u)
+    {
+        fail("search seed parse", "--search-seed 7 did not reach the settings");
+    }
+    // Zero is a stream like any other, and reading it as absent would silently
+    // return the run to the derived seed it was asked to replace.
+    const evaluation::Settings zero =
+        parseWithCheckpoint({ "--board", "10", "--search-seed", "0" });
+    if (zero.search_seed != 0u)
+    {
+        fail("search seed zero", "zero was read as absent rather than as a stream");
+    }
+    // The games must not move with it, or the two runs are not paired and the
+    // number they produce is not a noise floor.
+    if (reseeded.seed_offset != ordinary.seed_offset)
+    {
+        fail("search seed independence", "--search-seed moved the games as well");
+    }
+
+    const std::string header = evaluation::formatHeader(reseeded);
+    expectContains("search seed announced", "search seed 7", header);
+
+    expectRejectedSaying("--search-seed", { "--checkpoint", "model.pt", "--search-seed" });
+    expectRejectedSaying("--search-seed", { "--checkpoint", "model.pt", "--search-seed", "eight" });
+}
+
 // A seed, an outcome and the two numbers, in a line a parser can key on.
 void eachGameGetsALineThatCanBePaired()
 {
@@ -603,6 +642,7 @@ int main()
     rejectsASeedRangeThatLeavesTheReservedBand();
     theHeaderRecordsWhatWouldChangeTheResult();
     theClockAblationIsRecordedAndRangeChecked();
+    theSearchStreamIsSeparableFromTheGames();
     eachGameGetsALineThatCanBePaired();
 
     theVisualDefaultsAreTheOnesTheHeaderStates();
