@@ -24,6 +24,22 @@ void requireAtMost(std::string_view flag, int value, int maximum)
     }
 }
 
+// Exactly "on" or "off". Anything else throws rather than resolving to false,
+// because a run scored with the guard the operator did not ask for is a result
+// nothing about the log would contradict.
+bool parseOnOff(std::string_view flag, std::string_view text)
+{
+    if (text == "on")
+    {
+        return true;
+    }
+    if (text == "off")
+    {
+        return false;
+    }
+    throw std::invalid_argument(std::format("{} must be 'on' or 'off', got '{}'", flag, text));
+}
+
 }  // namespace
 
 namespace evaluation
@@ -150,6 +166,10 @@ Settings parseArguments(std::span<const std::string> arguments)
         {
             settings.freeze_clock_percent = flags::parseWholeInt(pair.flag, pair.value);
         }
+        else if (pair.flag == "--trap-guard")
+        {
+            settings.trap_guard = parseOnOff(pair.flag, pair.value);
+        }
         else if (pair.flag == "--search-seed")
         {
             settings.search_seed = flags::parseWholeUnsigned(pair.flag, pair.value);
@@ -167,8 +187,9 @@ Settings parseArguments(std::span<const std::string> arguments)
     return settings;
 }
 
-std::string formatHeader(const Settings& settings, bool trap_guard)
+std::string formatHeader(const Settings& settings)
 {
+    const bool trap_guard = settings.trap_guard;
     // An ablated run and an ordinary one differ in nothing else a log records, so
     // this line is the only thing that would stop the two being compared as if they
     // were the same measurement.

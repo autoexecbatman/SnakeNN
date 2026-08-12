@@ -90,7 +90,7 @@ int main(int argc, char** argv)
     // an iteration is played if a training seed ever reaches this one. Any figure
     // measured before 2026-08-08 was scored partly on games the agent had trained
     // on and is not comparable with anything printed below.
-    std::cout << evaluation::formatHeader(settings, az::TRAP_GUARD);
+    std::cout << evaluation::formatHeader(settings);
 
     NetworkEvaluator evaluator(network, device);
 
@@ -100,7 +100,7 @@ int main(int argc, char** argv)
     search_config.discount = az::DISCOUNT;
     search_config.step_reward = az::STEP_REWARD;
     search_config.steps_tiebreak_margin = az::STEPS_TIEBREAK_MARGIN;
-    search_config.trap_guard = az::TRAP_GUARD;
+    search_config.trap_guard = settings.trap_guard;
     search_config.trap_report = az::TRAP_REPORT;
     // Off, deliberately: noise is what makes self-play explore, and a number
     // measured with it on describes the exploration policy rather than the agent.

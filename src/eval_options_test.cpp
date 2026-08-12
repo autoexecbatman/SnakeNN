@@ -175,6 +175,10 @@ std::vector<std::string> differingFields(const evaluation::Settings& left,
     {
         names.push_back("freeze_clock_percent");
     }
+    if (left.trap_guard != right.trap_guard)
+    {
+        names.push_back("trap_guard");
+    }
     return names;
 }
 
@@ -227,6 +231,7 @@ void eachFlagWritesItsOwnField()
     // leave a durable record has to be told where the ledger is.
     expectOnlyFieldChanged("ledger_path", { "--ledger", "../../docs/runs.tsv" });
     expectOnlyFieldChanged("freeze_clock_percent", { "--freeze-clock-percent", "50" });
+    expectOnlyFieldChanged("trap_guard", { "--trap-guard", "on" });
 }
 
 void derivesTheStepLimitFromTheBoard()
@@ -304,7 +309,7 @@ void theHeaderRecordsWhatWouldChangeTheResult()
 {
     const evaluation::Settings settings = parseWithCheckpoint(
         { "--board", "10", "--games", "64", "--simulations", "200", "--batch", "64" });
-    const std::string header = evaluation::formatHeader(settings, false);
+    const std::string header = evaluation::formatHeader(settings);
 
     expectContains("header checkpoint", "model.pt", header);
     expectContains("header board", "10x10", header);
@@ -322,27 +327,53 @@ void theHeaderRecordsWhatWouldChangeTheResult()
     }
 }
 
-// The trap guard is a build constant, so nothing on the command line records it and
-// two runs that differ only in it are otherwise identical in a log. Both states are
-// named, and the two headers must differ - a rendering that ignores the argument
-// satisfies either check alone.
-void theHeaderRecordsTheTrapGuardInBothStates()
+// The guard changes which move is played, so it is a setting rather than a build
+// constant, and the header names both states. The two headers must differ - a
+// rendering that ignores the field satisfies either check alone.
+void theTrapGuardIsASettingAndIsRecordedInBothStates()
 {
-    const evaluation::Settings settings = parseWithCheckpoint({ "--board", "10" });
+    const evaluation::Settings defaulted = parseWithCheckpoint({ "--board", "10" });
+    if (defaulted.trap_guard != az::TRAP_GUARD)
+    {
+        fail("trap guard default", "the default does not come from az::TRAP_GUARD");
+    }
 
-    const std::string guarded = evaluation::formatHeader(settings, true);
-    const std::string unguarded = evaluation::formatHeader(settings, false);
+    const evaluation::Settings guarded =
+        parseWithCheckpoint({ "--board", "10", "--trap-guard", "on" });
+    const evaluation::Settings unguarded =
+        parseWithCheckpoint({ "--board", "10", "--trap-guard", "off" });
 
-    expectContains("guard on announced", "trap guard on", guarded);
-    expectContains("guard off announced", "trap guard off", unguarded);
-    if (guarded == unguarded)
+    if (!guarded.trap_guard)
+    {
+        fail("trap guard on", "--trap-guard on did not reach the settings");
+    }
+    if (unguarded.trap_guard)
+    {
+        fail("trap guard off", "--trap-guard off did not reach the settings");
+    }
+
+    const std::string on_header = evaluation::formatHeader(guarded);
+    const std::string off_header = evaluation::formatHeader(unguarded);
+
+    expectContains("guard on announced", "trap guard on", on_header);
+    expectContains("guard off announced", "trap guard off", off_header);
+    if (on_header == off_header)
     {
         fail("trap guard", "the two guard states render the same header");
     }
-    if (guarded.size() < 2 || guarded.substr(guarded.size() - 2) != "\n\n")
+    if (on_header.size() < 2 || on_header.substr(on_header.size() - 2) != "\n\n")
     {
         fail("guarded header", "does not end in a blank line");
     }
+
+    // Anything that is not one of the two words is a rejection, not a silent false.
+    // "true", "1" and "yes" are the ones an operator would reach for, so each has to
+    // fail loudly rather than scoring a run with the guard it did not ask for.
+    expectRejectedSaying("--trap-guard", { "--checkpoint", "model.pt", "--trap-guard", "true" });
+    expectRejectedSaying("--trap-guard", { "--checkpoint", "model.pt", "--trap-guard", "1" });
+    expectRejectedSaying("--trap-guard", { "--checkpoint", "model.pt", "--trap-guard", "yes" });
+    expectRejectedSaying("--trap-guard", { "--checkpoint", "model.pt", "--trap-guard", "ON" });
+    expectRejectedSaying("--trap-guard", { "--checkpoint", "model.pt", "--trap-guard" });
 }
 
 // The clock ablation, which is the one setting that changes what the network sees
@@ -355,7 +386,7 @@ void theClockAblationIsRecordedAndRangeChecked()
     {
         fail("freeze clock default", "a run nobody ablated has the clock frozen");
     }
-    const std::string plain = evaluation::formatHeader(ordinary, false);
+    const std::string plain = evaluation::formatHeader(ordinary);
     if (plain.find("ABLATED") != std::string::npos)
     {
         fail("freeze clock default", "an ordinary run is announced as ablated");
@@ -367,7 +398,7 @@ void theClockAblationIsRecordedAndRangeChecked()
     {
         fail("freeze clock parse", "--freeze-clock-percent 50 did not reach the settings");
     }
-    const std::string header = evaluation::formatHeader(frozen, false);
+    const std::string header = evaluation::formatHeader(frozen);
     expectContains("ablation announced", "ABLATED", header);
     expectContains("ablation value", "50 percent", header);
     if (header.size() < 2 || header.substr(header.size() - 2) != "\n\n")
@@ -425,7 +456,7 @@ void theSearchStreamIsSeparableFromTheGames()
         fail("search seed independence", "--search-seed moved the games as well");
     }
 
-    const std::string header = evaluation::formatHeader(reseeded, false);
+    const std::string header = evaluation::formatHeader(reseeded);
     expectContains("search seed announced", "search seed 7", header);
 
     expectRejectedSaying("--search-seed", { "--checkpoint", "model.pt", "--search-seed" });
@@ -664,7 +695,7 @@ int main()
     rejectsBeforeAnyWorkIsDone();
     rejectsASeedRangeThatLeavesTheReservedBand();
     theHeaderRecordsWhatWouldChangeTheResult();
-    theHeaderRecordsTheTrapGuardInBothStates();
+    theTrapGuardIsASettingAndIsRecordedInBothStates();
     theClockAblationIsRecordedAndRangeChecked();
     theSearchStreamIsSeparableFromTheGames();
     eachGameGetsALineThatCanBePaired();

@@ -4,6 +4,8 @@
 #include <span>
 #include <string>
 
+#include "az_parameters.h"
+
 // The evaluator's settings, and the rejections that happen before a checkpoint is
 // read.
 //
@@ -63,6 +65,15 @@ struct Settings
     // known, a paired comparison between two checkpoints cannot say how much of its
     // churn is learning.
     std::optional<unsigned int> search_seed;
+    // Whether the search's root move is vetoed when it seals the head away from its
+    // own tail. Defaults to az::TRAP_GUARD so the constant stays the one place the
+    // default is written, and --trap-guard on|off overrides it for a run.
+    //
+    // Measured twice and rejected twice: 44 against 56 wins at n=64 in the old
+    // regime, and 903 against 918 at n=1000 once timeouts were nearly gone. It is a
+    // setting rather than a constant because measuring the two states should not mean
+    // editing a header and rebuilding.
+    bool trap_guard{ az::TRAP_GUARD };
 
     int cellCount() const noexcept;
     // The snake starts one segment long, so this many apples fills the board.
@@ -82,6 +93,10 @@ struct Settings
 // in an int. A seed offset is rejected if the games it spans would run past the
 // end of the reserved evaluation band, which is silent unsigned wraparound into
 // the training range rather than an error anything would notice.
+//
+// --trap-guard takes "on" or "off" and rejects anything else. It carries a value
+// rather than being a bare switch because readFlags pairs every flag with one, and
+// because a run that means to measure the guard off should be able to say so.
 Settings parseArguments(std::span<const std::string> arguments);
 
 // How one game ended. Exhaustive: a game that is not won and did not time out
@@ -101,10 +116,10 @@ enum class Outcome
 // comparable. Two logs that do not record it cannot be told apart afterwards, which
 // is what confounded the iter110-to-iter123 comparison.
 //
-// `trap_guard` is az::TRAP_GUARD, a build constant rather than a flag, and it
-// changes which move the search plays at the root. It is named in both states, so
-// a log says what it measured instead of leaving it to the binary's build date.
-std::string formatHeader(const Settings& settings, bool trap_guard);
+// Carries the trap guard for the same reason, and names it in both states: a line
+// printed only when the guard is on makes its absence mean either "off" or "a binary
+// from before this line existed".
+std::string formatHeader(const Settings& settings);
 
 // One game's outcome, one line, ending in a newline.
 //
