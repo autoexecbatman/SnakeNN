@@ -97,8 +97,16 @@ constexpr bool TRAP_REPORT = true;
 // games (docs/measure_value_squashing.py), because tanh has to stay in the part
 // of its range that resolves: at 40 the extremes land at 0.41, which keeps 83
 // percent of the resolution an unbounded head would have. At 16.5 they would
-// land at 1.0 and keep 42 percent. Re-run that script if the reward scale or the
-// board changes; a scale below the largest return silently flattens the endgame.
+// land at 1.0 and keep 42 percent.
+//
+// It is not an upper bound on what a return can be, and that is a deliberate
+// accepted deviation rather than an oversight. Z3 puts the supremum at 43.75
+// (docs/prove_value_bound.py), reached only by eating on every step for 99
+// consecutive steps and then winning - which needs every apple to spawn against
+// the head for a whole game. The largest return in 1000 real games was 16.433,
+// so the unreachable 3.75 of headroom is not worth a retrain to recover. Raise
+// this above 44 if the reward scale changes, since that argument is about this
+// reward structure and not about the constant.
 constexpr float VALUE_SCALE = 40.0f;
 
 // The paper caps a 10x10 game at 1,200 steps, which is twelve steps per cell.
