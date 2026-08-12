@@ -234,6 +234,21 @@ int main(int argc, char** argv)
             : 0.0;
     std::cout << std::format("Revisited edges {}, of which aliased {} ({:.2f} percent)\n",
                              search.revisitedEdges(), search.aliasedEdges(), aliased_share);
+    // The share that could change a move. A disagreement of a step cost is below
+    // what the value head resolves; one of an apple inverts what the edge is worth,
+    // and only this line separates them.
+    const double material_share =
+        search.revisitedEdges() > 0
+            ? 100.0 * static_cast<double>(search.materiallyAliasedEdges()) / search.revisitedEdges()
+            : 0.0;
+    std::cout << std::format("  of which worth more than half an apple {} ({:.2f} percent)\n",
+                             search.materiallyAliasedEdges(), material_share);
+    const double node_share =
+        search.revisitedNodes() > 0
+            ? 100.0 * static_cast<double>(search.aliasedNodes()) / search.revisitedNodes()
+            : 0.0;
+    std::cout << std::format("Revisited nodes {}, of which aliased {} ({:.2f} percent)\n",
+                             search.revisitedNodes(), search.aliasedNodes(), node_share);
 
     run.outcome = ledger::Outcome::Finished;
     run.seconds = seconds;

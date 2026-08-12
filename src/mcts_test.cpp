@@ -1001,6 +1001,44 @@ void testAliasProbeCountsWhatItClaims()
             search.aliasedEdges() > 0,
             std::format("the probe fires - simulations disagree about an edge - aliased {} of {}",
                         search.aliasedEdges(), search.revisitedEdges()));
+
+        expect(search.materiallyAliasedEdges() <= search.aliasedEdges(),
+               std::format("material disagreements are a subset of all of them - {} of {}",
+                           search.materiallyAliasedEdges(), search.aliasedEdges()));
+        // Deducible rather than measured, which is why it may be asserted without
+        // pre-judging the rate this probe exists to report: an edge on which one
+        // simulation ate a respawned apple and another did not differs by
+        // discount^ticks of a whole apple, and edges here span one tick or a few.
+        // A zero would mean the threshold is wrong, not that the search agrees.
+        expect(search.materiallyAliasedEdges() > 0,
+               std::format("some disagreement is worth more than half an apple - {} of {}",
+                           search.materiallyAliasedEdges(), search.aliasedEdges()));
+
+        // Per node rather than per traversal, so both are bounded by the traversal
+        // counts and each other. A node counted twice would break the first of
+        // these long before the ratio looked wrong.
+        expect(search.revisitedNodes() > 0 && search.revisitedNodes() <= search.revisitedEdges(),
+               std::format("revisited nodes are counted once each - {} nodes over {} traversals",
+                           search.revisitedNodes(), search.revisitedEdges()));
+        expect(search.aliasedNodes() > 0 && search.aliasedNodes() <= search.revisitedNodes(),
+               std::format("aliased nodes are a subset of revisited ones - {} of {}",
+                           search.aliasedNodes(), search.revisitedNodes()));
+    }
+
+    // Silent unless asked, for the new counters too. Checked separately from the
+    // block above because that one predates them and would pass without them.
+    {
+        MonteCarloSearch::Config config = testConfig(600);
+        MonteCarloSearch search(evaluator, config);
+        SnakeEnv root = rootBesideTheFood(6, 4242, 400);
+        std::vector<const SnakeEnv*> roots{ &root };
+        search.search(roots);
+        expect(search.materiallyAliasedEdges() == 0 && search.revisitedNodes() == 0 &&
+                   search.aliasedNodes() == 0,
+               std::format("the sizing counters are silent unless alias_report is set - "
+                           "material {}, nodes {}/{}",
+                           search.materiallyAliasedEdges(), search.aliasedNodes(),
+                           search.revisitedNodes()));
     }
 }
 

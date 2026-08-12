@@ -20,6 +20,12 @@ constexpr float PRIOR_SUM_TOLERANCE = 1e-3f;
 // accumulation along a forced-move chain.
 constexpr float REWARD_TOLERANCE = 1e-4f;
 
+// How far two computations of one edge's reward must differ before the difference
+// could change a move. Half an apple sits an order of magnitude above a step cost
+// and an order of magnitude below an apple, so it separates a forced-move chain of
+// a different length from one simulation eating where another did not.
+constexpr float MATERIAL_REWARD_DIFFERENCE = SnakeEnv::FOOD_REWARD / 2.0f;
+
 // How many times to re-draw the Dirichlet weights if every one of them comes back
 // zero. With a concentration below one the gamma density diverges at the origin,
 // so very small draws are ordinary and an underflow to exactly zero is not a
@@ -535,16 +541,30 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
                     if (child.edge_recorded)
                     {
                         revisited_edges_++;
+                        if (!child.revisit_counted)
+                        {
+                            revisited_nodes_++;
+                            child.revisit_counted = true;
+                        }
                         // A different reward means one simulation ate where another
                         // did not; a different tick count means the forced-move
                         // chain ran differently. Either way the two simulations
                         // walked the same actions into different games.
+                        const float reward_gap = std::abs(child.first_reward - edge_reward);
                         const bool differs =
-                            std::abs(child.first_reward - edge_reward) > REWARD_TOLERANCE ||
-                            child.first_edge_steps != edge_steps;
+                            reward_gap > REWARD_TOLERANCE || child.first_edge_steps != edge_steps;
                         if (differs)
                         {
                             aliased_edges_++;
+                            if (reward_gap > MATERIAL_REWARD_DIFFERENCE)
+                            {
+                                materially_aliased_edges_++;
+                            }
+                            if (!child.alias_counted)
+                            {
+                                aliased_nodes_++;
+                                child.alias_counted = true;
+                            }
                         }
                     }
                     else

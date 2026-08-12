@@ -141,6 +141,25 @@ public:
     // the aliasing, and it is bounded above by revisitedEdges().
     long long aliasedEdges() const { return aliased_edges_; }
 
+    // The subset again, narrowed to disagreements worth acting on: those whose two
+    // rewards differ by more than half an apple.
+    //
+    // aliasedEdges() puts two unlike things in one number. A gap near a whole apple
+    // is one simulation eating where another did not and inverts what the edge is
+    // worth; a gap near a step cost is a forced-move chain one tick longer, which is
+    // below what the value head resolves. Only this counter answers whether fixing
+    // the aliasing could move a win rate.
+    long long materiallyAliasedEdges() const { return materially_aliased_edges_; }
+
+    // The same two quantities counted once per node instead of once per traversal.
+    //
+    // Both counters above are per traversal, so their ratio already weights each
+    // disagreement by how much attention the search paid it. These say how much of
+    // the tree is affected at all: a high traversal rate over few nodes is a handful
+    // of hot edges, over many nodes it is the whole tree.
+    long long revisitedNodes() const { return revisited_nodes_; }
+    long long aliasedNodes() const { return aliased_nodes_; }
+
 private:
     struct Node
     {
@@ -183,6 +202,11 @@ private:
         float first_reward{ 0.0f };
         int first_edge_steps{ 1 };
         bool edge_recorded{ false };
+        // Whether this node has already been counted towards the per-node totals,
+        // which are counts of nodes rather than of traversals and so must not be
+        // incremented twice for one node.
+        bool revisit_counted{ false };
+        bool alias_counted{ false };
         // The network's steps-to-go for this node, as a fraction of the budget,
         // stored when the node was expanded. One is the pessimistic default and
         // is what an unexpanded node keeps, so a node the search never looked at
@@ -247,5 +271,8 @@ private:
     long long sealed_choices_{ 0 };
     long long revisited_edges_{ 0 };
     long long aliased_edges_{ 0 };
+    long long materially_aliased_edges_{ 0 };
+    long long revisited_nodes_{ 0 };
+    long long aliased_nodes_{ 0 };
     void addRootNoise(Tree& tree);
 };
