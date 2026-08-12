@@ -174,6 +174,10 @@ Settings parseArguments(std::span<const std::string> arguments)
         {
             settings.average_edges = parseOnOff(pair.flag, pair.value);
         }
+        else if (pair.flag == "--death-cap")
+        {
+            settings.death_cap = parseOnOff(pair.flag, pair.value);
+        }
         else if (pair.flag == "--search-seed")
         {
             settings.search_seed = flags::parseWholeUnsigned(pair.flag, pair.value);
@@ -222,14 +226,18 @@ std::string formatHeader(const Settings& settings)
     // are an expectation and a single draw.
     const std::string_view edges = settings.average_edges ? "averaged edges" : "last-write edges";
 
+    // Named in both states for the same reason again. A run whose header does not
+    // say which way this was set cannot be paired with anything later.
+    const std::string_view cap = settings.death_cap ? "death cap on" : "death cap off";
+
     return std::format(
         "=== Evaluation ===\n"
         "{} on {}x{}, {} games, {} simulations, step limit {}, batch {}\n"
-        "seeds {}..{} (reserved evaluation range), greedy, no root noise, {}, {}\n{}{}\n",
+        "seeds {}..{} (reserved evaluation range), greedy, no root noise, {}, {}, {}\n{}{}\n",
         settings.checkpoint, settings.board, settings.board, settings.games, settings.simulations,
         settings.stepLimit(), settings.batch, seeds::evaluationGameSeed(settings.seed_offset, 0),
-        seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1), guard, edges, stream,
-        ablation);
+        seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1), guard, edges, cap,
+        stream, ablation);
 }
 
 std::string formatGameLine(unsigned int seed, Outcome outcome, int score, int steps)

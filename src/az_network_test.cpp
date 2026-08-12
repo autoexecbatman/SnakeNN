@@ -63,7 +63,7 @@ void testOutputShapes()
 
     const int batch = 5;
     torch::Tensor input = torch::zeros({ batch, SnakeEnv::PLANE_COUNT, 8, 8 });
-    auto [policy, value, steps] = network->forward(input);
+    auto [policy, value, steps, death_risk] = network->forward(input);
 
     expect(policy.sizes() == torch::IntArrayRef({ batch, SnakeEnv::ACTION_COUNT }),
            "the policy head emits one logit per relative action");
@@ -174,7 +174,7 @@ void testPredictionFieldsAreTheOnesNamed()
 
     // Structured bindings still work, which is what keeps the existing call sites
     // in the trainer and the evaluator unchanged.
-    auto [policy, value, steps] =
+    auto [policy, value, steps, death_risk] =
         network->forward(torch::rand({ batch, SnakeEnv::PLANE_COUNT, 6, 6 }));
     expect(policy.sizes() == prediction.policy_logits.sizes() &&
                value.sizes() == prediction.value.sizes(),
@@ -232,7 +232,7 @@ void testWeightsTransferAcrossBoardSizes()
         large->eval();
         torch::NoGradGuard no_grad;
         torch::Tensor input = torch::rand({ 2, SnakeEnv::PLANE_COUNT, 20, 20 });
-        auto [policy, value, steps] = large->forward(input);
+        auto [policy, value, steps, death_risk] = large->forward(input);
         bool finite = policy.isfinite().all().item<bool>() && value.isfinite().all().item<bool>();
         expect(finite, "the transferred network runs on the larger board and stays finite");
     }

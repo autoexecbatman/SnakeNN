@@ -163,6 +163,8 @@ int main(int argc, char** argv)
     // Self-play and evaluation searching differently is a difference no log records,
     // and a constant only one of them reads is how that arrives.
     search_config.average_edges = az::AVERAGE_EDGES;
+    search_config.death_cap = az::DEATH_CAP;
+    search_config.death_cap_threshold = az::DEATH_CAP_THRESHOLD;
     search_config.root_noise_fraction = az::ROOT_NOISE_FRACTION;
     search_config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
     search_config.seed = settings.seed;

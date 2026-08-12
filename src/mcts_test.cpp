@@ -65,7 +65,7 @@ class SilentEvaluator : public Evaluator
 {
 public:
     void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
-                  float* steps_out) override
+                  float* steps_out, float* death_risk_out) override
     {
         calls++;
         largest_batch = std::max(largest_batch, (int)states.size());
@@ -74,6 +74,7 @@ public:
             for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
             {
                 priors_out[index * SnakeEnv::ACTION_COUNT + action] = 1.0f / SnakeEnv::ACTION_COUNT;
+                death_risk_out[index * SnakeEnv::ACTION_COUNT + action] = 0.0f;
             }
             values_out[index] = 0.0f;
             steps_out[index] = 1.0f;
@@ -93,7 +94,7 @@ public:
     explicit PriorEvaluator(const std::vector<float>& priors) : priors_(priors) {}
 
     void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
-                  float* steps_out) override
+                  float* steps_out, float* death_risk_out) override
     {
         for (size_t index = 0; index < states.size(); index++)
         {
@@ -101,6 +102,7 @@ public:
             {
                 priors_out[index * SnakeEnv::ACTION_COUNT + action] =
                     priors_[static_cast<size_t>(action)];
+                death_risk_out[index * SnakeEnv::ACTION_COUNT + action] = 0.0f;
             }
             values_out[index] = 0.0f;
             steps_out[index] = 1.0f;
@@ -121,7 +123,7 @@ public:
     explicit ConstantValueEvaluator(float value) : value_(value) {}
 
     void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
-                  float* steps_out) override
+                  float* steps_out, float* death_risk_out) override
     {
         for (size_t index = 0; index < states.size(); index++)
         {
@@ -129,6 +131,7 @@ public:
             {
                 priors_out[index * SnakeEnv::ACTION_COUNT + action] =
                     1.0f / static_cast<float>(SnakeEnv::ACTION_COUNT);
+                death_risk_out[index * SnakeEnv::ACTION_COUNT + action] = 0.0f;
             }
             values_out[index] = value_;
             steps_out[index] = 1.0f;
@@ -137,6 +140,35 @@ public:
 
 private:
     float value_;
+};
+
+// States one death risk per action and is silent about everything else, so a test
+// can say "this action is doomed" and check only what the cap did about it. Flat
+// priors and a zero value keep every other term identical across the actions.
+class RiskEvaluator : public Evaluator
+{
+public:
+    explicit RiskEvaluator(const std::vector<float>& death_risks) : death_risks_(death_risks) {}
+
+    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
+                  float* steps_out, float* death_risk_out) override
+    {
+        for (size_t index = 0; index < states.size(); index++)
+        {
+            for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+            {
+                priors_out[index * SnakeEnv::ACTION_COUNT + action] =
+                    1.0f / static_cast<float>(SnakeEnv::ACTION_COUNT);
+                death_risk_out[index * SnakeEnv::ACTION_COUNT + action] =
+                    death_risks_[static_cast<size_t>(action)];
+            }
+            values_out[index] = 0.0f;
+            steps_out[index] = 1.0f;
+        }
+    }
+
+private:
+    std::vector<float> death_risks_;
 };
 
 MonteCarloSearch::Config testConfig(int simulations)
@@ -1121,9 +1153,255 @@ void testAveragedEdgesAreAnExpectationOverWhatTheNodeStandsFor()
     }
 }
 
+// Walks a small board chasing food until no action survives, and reports whether
+// it found such a position. Growing the body is what crowds the board; a random
+// walk dies at length one and never reaches one.
+bool walkToDoomedPosition(SnakeEnv& game)
+{
+    for (int step = 0; step < 40000; step++)
+    {
+        if (game.done())
+        {
+            game.reset();
+            continue;
+        }
+
+        int survivors = 0;
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            if (!game.wouldDie(static_cast<SnakeEnv::Action>(action)))
+            {
+                survivors++;
+            }
+        }
+        if (survivors == 0)
+        {
+            return true;
+        }
+
+        SnakeEnv::Action chosen = SnakeEnv::Action::STRAIGHT;
+        int best_distance = 1 << 30;
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            const SnakeEnv::Action candidate = static_cast<SnakeEnv::Action>(action);
+            if (game.wouldDie(candidate))
+            {
+                continue;
+            }
+            const Position next = game.headAfter(candidate);
+            const int distance =
+                std::abs(next.x - game.food().x) + std::abs(next.y - game.food().y);
+            if (distance < best_distance)
+            {
+                best_distance = distance;
+                chosen = candidate;
+            }
+        }
+        game.step(chosen);
+    }
+    return false;
+}
+
+// Drives a game into the last column, where continuing straight leaves the board
+// on the next tick and the other two actions do not.
+//
+// The head must reach width - 1, not width - 2: from the second-to-last column
+// straight is survivable and the death is a ply further on, so a risk of zero
+// there is correct and an assertion of one is a wrong property rather than a bug.
+SnakeEnv beforeTheWall()
+{
+    SnakeEnv env(9, 9, 5, TEST_STEP_LIMIT);
+    while (env.body()[0].x < env.width() - 1)
+    {
+        env.step(SnakeEnv::Action::STRAIGHT);
+    }
+    return env;
+}
+
+void testDeathRiskIsBackedUpAsUnavoidability()
+{
+    // The evaluator says every action is perfectly safe, so anything the risk
+    // reports comes from the simulator's own terminations rather than from the
+    // network. That is what separates a backed-up estimate from a copied one: a
+    // search that simply forwarded the network's number would report zero here.
+    SnakeEnv env = beforeTheWall();
+    SilentEvaluator evaluator;
+    MonteCarloSearch search(evaluator, testConfig(96));
+    std::vector<const SnakeEnv*> roots{ &env };
+    auto results = search.search(roots);
+
+    const bool reported =
+        results[0].death_risk.size() == static_cast<size_t>(SnakeEnv::ACTION_COUNT);
+    expect(reported, "the search reports one death risk per root action");
+    if (!reported)
+    {
+        // Without this the assertions below index an empty vector and take the
+        // process down, which stops the rest of the red output being read.
+        return;
+    }
+
+    const float straight = results[0].death_risk[(int)SnakeEnv::Action::STRAIGHT];
+    const float left = results[0].death_risk[(int)SnakeEnv::Action::LEFT];
+    const float right = results[0].death_risk[(int)SnakeEnv::Action::RIGHT];
+
+    expect(std::abs(straight - 1.0f) < 1e-6f,
+           std::format("walking into the wall is certain death, so its risk is exactly 1 - got "
+                       "{:.6f}",
+                       straight));
+    // Stated against the fatal action rather than against a constant. "Below 1"
+    // is satisfied by all-zeros, which is what a search that only ever forwarded
+    // the network's estimate returns - and that is precisely the implementation
+    // this test exists to reject.
+    expect(left < straight && right < straight,
+           std::format("and the two survivable actions are strictly below it - {:.6f} and {:.6f} "
+                       "against {:.6f}",
+                       left, right, straight));
+}
+
+void testRiskClimbsFromBelowRatherThanStayingAtTheLeafItWasWrittenAt()
+{
+    // The root's children get their risk from evaluating the *root*, so an
+    // evaluator with one answer everywhere cannot tell a search that backs the
+    // risk up from one that never does. This one answers differently at the root
+    // than below it: 0 where no step has been taken since the last apple, 1
+    // everywhere else.
+    //
+    // So the root's children are written 0 at expansion, and only the minimum over
+    // their own children - evaluated one ply deeper, where the answer is 1 - can
+    // raise them. Dropping the refresh from backup leaves them at 0, which is the
+    // mutant `no_refresh_on_backup` that survived the first suite.
+    class DepthRiskEvaluator : public Evaluator
+    {
+    public:
+        void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
+                      float* values_out, float* steps_out, float* death_risk_out) override
+        {
+            for (size_t index = 0; index < states.size(); index++)
+            {
+                const float risk = states[index]->stepsSinceFood() == 0 ? 0.0f : 1.0f;
+                for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+                {
+                    priors_out[index * SnakeEnv::ACTION_COUNT + action] =
+                        1.0f / static_cast<float>(SnakeEnv::ACTION_COUNT);
+                    death_risk_out[index * SnakeEnv::ACTION_COUNT + action] = risk;
+                }
+                values_out[index] = 0.0f;
+                steps_out[index] = 1.0f;
+            }
+        }
+    };
+
+    SnakeEnv env(9, 9, 11, TEST_STEP_LIMIT);
+    expect(env.stepsSinceFood() == 0, "the root is a position the evaluator scores as risk 0");
+
+    DepthRiskEvaluator evaluator;
+    MonteCarloSearch search(evaluator, testConfig(64));
+    std::vector<const SnakeEnv*> roots{ &env };
+    auto results = search.search(roots);
+
+    // Every root action reads 1 only if the value climbed from a ply deeper. The
+    // number written into these nodes at expansion was 0.
+    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+    {
+        expect(std::abs(results[0].death_risk[action] - 1.0f) < 1e-6f,
+               std::format("root action {} carries the risk backed up from below, not the 0 "
+                           "written at expansion - got {:.6f}",
+                           action, results[0].death_risk[action]));
+    }
+}
+
+void testCapDoesNotRefuseAtTheThresholdItself()
+{
+    // Every action sits exactly on the threshold. The contract refuses what is
+    // above it, so nothing is refused here - and an implementation using >=
+    // refuses all three, which is the off-by-one no other test can see because
+    // every risk elsewhere is exactly 0 or 1.
+    SnakeEnv env(9, 9, 11, TEST_STEP_LIMIT);
+    RiskEvaluator evaluator(std::vector<float>{ 0.5f, 0.5f, 0.5f });
+    MonteCarloSearch::Config config = testConfig(8);
+    config.death_cap = true;
+    config.death_cap_threshold = 0.5f;
+    MonteCarloSearch search(evaluator, config);
+    std::vector<const SnakeEnv*> roots{ &env };
+    auto results = search.search(roots);
+
+    expect(std::abs(results[0].death_risk[0] - 0.5f) < 1e-6f,
+           std::format("the root's risk sits exactly on the threshold - {:.6f}",
+                       results[0].death_risk[0]));
+    expect(search.deathCapFires() == 0,
+           std::format("an action level with the threshold is not refused - fired {} times",
+                       search.deathCapFires()));
+}
+
+void testDeathCapRefusesOnlyWhenAnAlternativeSurvives()
+{
+    // Off, the cap must be invisible. This is the control: without it, the count
+    // below could be satisfied by a filter that fires unconditionally.
+    {
+        SnakeEnv env = beforeTheWall();
+        SilentEvaluator evaluator;
+        MonteCarloSearch search(evaluator, testConfig(96));
+        std::vector<const SnakeEnv*> roots{ &env };
+        search.search(roots);
+        expect(search.deathCapFires() == 0, "with the cap off nothing is refused");
+    }
+
+    {
+        SnakeEnv env = beforeTheWall();
+        SilentEvaluator evaluator;
+        MonteCarloSearch::Config config = testConfig(96);
+        config.death_cap = true;
+        config.death_cap_threshold = 0.5f;
+        MonteCarloSearch search(evaluator, config);
+        std::vector<const SnakeEnv*> roots{ &env };
+        auto results = search.search(roots);
+
+        expect(search.deathCapFires() >= 1,
+               std::format("the cap refuses the action that walks into the wall - fired {} times",
+                           search.deathCapFires()));
+        expect(results[0].policy[(int)SnakeEnv::Action::STRAIGHT] == 0.0f,
+               "a refused action takes no share of the policy at all");
+        expect(results[0].best_action != SnakeEnv::Action::STRAIGHT, "and is not chosen");
+    }
+
+    // Every action doomed. Refusing here would leave the search nothing to play,
+    // and vetoing every move of a lost position is exactly what made the trap
+    // guard the endgame policy rather than a guard.
+    {
+        SnakeEnv env(6, 6, 20260808, TEST_STEP_LIMIT);
+        const bool found = walkToDoomedPosition(env);
+        expect(found, "a position where every action kills was reached");
+        if (found)
+        {
+            SilentEvaluator evaluator;
+            MonteCarloSearch::Config config = testConfig(96);
+            config.death_cap = true;
+            config.death_cap_threshold = 0.5f;
+            MonteCarloSearch search(evaluator, config);
+            std::vector<const SnakeEnv*> roots{ &env };
+            auto results = search.search(roots);
+
+            expect(search.deathCapFires() == 0,
+                   std::format("with no survivable action the cap refuses nothing - fired {} times",
+                               search.deathCapFires()));
+            float total = 0.0f;
+            for (float weight : results[0].policy)
+            {
+                total += weight;
+            }
+            expect(std::abs(total - 1.0f) < 1e-4f,
+                   std::format("and the policy is still a distribution - sums to {:.6f}", total));
+        }
+    }
+}
+
 int main()
 {
     std::cout << "MonteCarloSearch properties" << std::endl;
+    testDeathRiskIsBackedUpAsUnavoidability();
+    testRiskClimbsFromBelowRatherThanStayingAtTheLeafItWasWrittenAt();
+    testCapDoesNotRefuseAtTheThresholdItself();
+    testDeathCapRefusesOnlyWhenAnAlternativeSurvives();
     testAliasProbeCountsWhatItClaims();
     testAveragedEdgesAreAnExpectationOverWhatTheNodeStandsFor();
     testForcedActionAgreesWithWouldDie();

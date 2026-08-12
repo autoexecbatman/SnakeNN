@@ -82,6 +82,11 @@ struct Settings
     // states have to be measurable against each other on one binary, or the arms of
     // the comparison differ by a rebuild as well as by the change.
     bool average_edges{ az::AVERAGE_EDGES };
+    // Whether the root refuses an action whose backed-up death risk exceeds
+    // az::DEATH_CAP_THRESHOLD. Defaults to az::DEATH_CAP; --death-cap on|off sets it,
+    // for the same reason as the two above - both arms of a comparison run on one
+    // binary, so they differ by the setting and not also by a rebuild.
+    bool death_cap{ az::DEATH_CAP };
 
     int cellCount() const noexcept;
     // The snake starts one segment long, so this many apples fills the board.

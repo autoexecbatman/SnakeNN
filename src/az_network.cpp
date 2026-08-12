@@ -82,6 +82,18 @@ AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channe
     steps_hidden = register_module(
         "steps_hidden", torch::nn::Linear(VALUE_HEAD_CHANNELS * POOLED_CELLS, VALUE_HIDDEN));
     steps_out = register_module("steps_out", torch::nn::Linear(VALUE_HIDDEN, 1));
+
+    // One output per action rather than one per state, because the risk is
+    // consumed as a cap on an action. Pooled like the others, so no weight here
+    // depends on board size and a 10x10 checkpoint still loads at 20x20.
+    death_conv = register_module(
+        "death_conv",
+        torch::nn::Conv2d(torch::nn::Conv2dOptions(channels_, VALUE_HEAD_CHANNELS, 1).bias(false)));
+    death_norm = register_module("death_norm", torch::nn::BatchNorm2d(VALUE_HEAD_CHANNELS));
+    death_hidden = register_module(
+        "death_hidden", torch::nn::Linear(VALUE_HEAD_CHANNELS * POOLED_CELLS, VALUE_HIDDEN));
+    death_out =
+        register_module("death_out", torch::nn::Linear(VALUE_HIDDEN, SnakeEnv::ACTION_COUNT));
 }
 
 Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
@@ -135,6 +147,13 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
     // a fraction is what makes the estimate mean the same thing on every board.
     steps = torch::sigmoid(steps_out(steps));
 
+    torch::Tensor death_risk = torch::relu(death_norm(death_conv(trunk)));
+    death_risk = torch::adaptive_avg_pool2d(death_risk, { POOLED_SIDE, POOLED_SIDE });
+    death_risk = torch::relu(death_hidden(death_risk.flatten(1)));
+    // Bounded to (0, 1) because the target is a probability: the chance that this
+    // action leads to a death nothing after it can avoid.
+    death_risk = torch::sigmoid(death_out(death_risk));
+
     // The two shapes every consumer indexes without checking: the evaluator reads
     // ACTION_COUNT priors per state and one value, and the trainer builds its loss
     // against both. A wrong batch dimension here would misalign policy targets with
@@ -150,7 +169,13 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
                 std::format("the steps head produced [{}] for a batch of {}, expected [{}, 1]",
                             steps.dim(), planes.size(0), planes.size(0)));
 
-    return Prediction{ policy, value, steps };
+    TORCH_CHECK(
+        death_risk.dim() == 2 && death_risk.size(0) == planes.size(0) &&
+            death_risk.size(1) == SnakeEnv::ACTION_COUNT,
+        std::format("the death head produced [{}] for a batch of {}, expected [{}, {}]",
+                    death_risk.dim(), planes.size(0), planes.size(0), SnakeEnv::ACTION_COUNT));
+
+    return Prediction{ policy, value, steps, death_risk };
 }
 
 namespace

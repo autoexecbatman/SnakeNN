@@ -41,6 +41,15 @@ struct Prediction
     // the whole game. Supervised and undiscounted, so it is the only estimate
     // here that reaches the deadline.
     torch::Tensor steps_to_go;
+    // [N, ACTION_COUNT] in (0, 1), from a sigmoid. The probability that taking
+    // each action leads to a death no later play can avoid.
+    //
+    // Its own head, and per action rather than per state, for the same reason
+    // steps_to_go is separate: the value is discounted at 0.98 and cannot see
+    // past about 200 steps, while a region sealed at half fill kills later than
+    // that. Fatemi et al. 2019 give the construction - an undiscounted signal
+    // that is 1 exactly on the states from which every trajectory dies.
+    torch::Tensor death_risk;
 };
 
 // A stem weight widened to accept more input planes, with the new ones zeroed.
@@ -127,6 +136,11 @@ private:
     torch::nn::BatchNorm2d steps_norm{ nullptr };
     torch::nn::Linear steps_hidden{ nullptr };
     torch::nn::Linear steps_out{ nullptr };
+
+    torch::nn::Conv2d death_conv{ nullptr };
+    torch::nn::BatchNorm2d death_norm{ nullptr };
+    torch::nn::Linear death_hidden{ nullptr };
+    torch::nn::Linear death_out{ nullptr };
 };
 
 TORCH_MODULE(AlphaZeroNet);

@@ -103,6 +103,8 @@ int main(int argc, char** argv)
     search_config.trap_guard = settings.trap_guard;
     search_config.trap_report = az::TRAP_REPORT;
     search_config.average_edges = settings.average_edges;
+    search_config.death_cap = settings.death_cap;
+    search_config.death_cap_threshold = az::DEATH_CAP_THRESHOLD;
     // Always on here: it is a measurement rather than a behaviour, it changes no
     // move, and it costs two comparisons per edge traversal against a forward pass.
     search_config.alias_report = true;
@@ -226,6 +228,10 @@ int main(int argc, char** argv)
     std::cout << std::format("Took {:.2f}s, {} evaluations\n", seconds, evaluator.evaluations());
     std::cout << std::format("Sealed choices {}, of which the guard overruled {}\n",
                              search.sealedChoices(), search.trapGuardFires());
+    // Printed in both states, like the header line: zero with the cap off is the
+    // control, and zero with it on says the threshold never fired rather than that
+    // the run had no dead ends.
+    std::cout << std::format("Death cap refusals {}\n", search.deathCapFires());
     // How much the tree's open-loop keying costs: edges reached again by a later
     // simulation that found a different game there. Printed as a rate because the
     // raw counts scale with the number of games and cannot be compared across runs.

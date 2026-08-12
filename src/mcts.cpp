@@ -232,8 +232,11 @@ int MonteCarloSearch::selectChild(const Tree& tree, int node_index) const
     return best_action;
 }
 
-void MonteCarloSearch::expand(Tree& tree, int node_index, std::span<const float> priors)
+void MonteCarloSearch::expand(Tree& tree, int node_index, std::span<const float> priors,
+                              std::span<const float> death_risks)
 {
+    assert(death_risks.size() == static_cast<size_t>(SnakeEnv::ACTION_COUNT) &&
+           "expand needs exactly one death risk per action");
     assert(node_index >= 0 && node_index < static_cast<int>(tree.nodes.size()) &&
            "expand given a node index outside the arena");
     // The length used to travel separately from the pointer, which meant this
@@ -274,6 +277,11 @@ void MonteCarloSearch::expand(Tree& tree, int node_index, std::span<const float>
     {
         Node child;
         child.prior = priors[action];
+        // The network's own estimate, which stands until the subtree below this
+        // child is expanded and backup replaces it with the minimum over its
+        // actions. A child that turns out terminal has it overwritten at the
+        // moment the descent marks it.
+        child.death_risk = death_risks[action];
         tree.nodes.push_back(child);
     }
 
@@ -285,6 +293,28 @@ void MonteCarloSearch::expand(Tree& tree, int node_index, std::span<const float>
     assert(tree.nodes[node_index].first_child.value() + SnakeEnv::ACTION_COUNT ==
                static_cast<int>(tree.nodes.size()) &&
            "the children this expansion created are not the last block in the arena");
+}
+
+void MonteCarloSearch::refreshDeathRisk(Tree& tree, int node_index)
+{
+    assert(node_index >= 0 && node_index < static_cast<int>(tree.nodes.size()) &&
+           "refreshDeathRisk given a node index outside the arena");
+
+    Node& node = tree.nodes[node_index];
+    if (node.terminal || !node.first_child.has_value())
+    {
+        // A finished game keeps the 1 or 0 the descent gave it, and an unexpanded
+        // node keeps the network's estimate. Neither has actions to minimise over.
+        return;
+    }
+
+    const int first_child = node.first_child.value();
+    float lowest = tree.nodes[first_child].death_risk;
+    for (int action = 1; action < SnakeEnv::ACTION_COUNT; action++)
+    {
+        lowest = std::min(lowest, tree.nodes[first_child + action].death_risk);
+    }
+    node.death_risk = lowest;
 }
 
 void MonteCarloSearch::backup(Tree& tree, float leaf_value, float leaf_steps)
@@ -316,6 +346,12 @@ void MonteCarloSearch::backup(Tree& tree, float leaf_value, float leaf_steps)
         node.visit_count++;
         node.value_sum += carried;
         node.steps_sum += carried_steps;
+
+        // Undiscounted and not accumulated: unavoidability is a property of the
+        // position, not an average over how often a descent happened to end badly.
+        // Refreshed from the children this simulation has just extended, so the
+        // estimate climbs the path exactly as far as the new information reaches.
+        refreshDeathRisk(tree, tree.path[position]);
 
         // Every node on a path has a real edge count: children are created at one
         // and the descent only raises them, and the root now keeps the same
@@ -597,6 +633,15 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
                 tree.nodes[child_index].reward = edge_reward;
                 tree.nodes[child_index].edge_steps = edge_steps;
                 tree.nodes[child_index].terminal = outcome.done;
+                if (outcome.done)
+                {
+                    // A finished game that was not won is treated as a death. The
+                    // environment reports done and won and nothing between them, so
+                    // an exhausted budget is counted here too; a descent runs tens
+                    // of plies against a budget of hundreds, so that case is rare
+                    // rather than absent.
+                    tree.nodes[child_index].death_risk = state.won() ? 0.0f : 1.0f;
+                }
 
                 node_index = child_index;
                 tree.path.push_back(node_index);
@@ -626,7 +671,9 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
             priors_.assign(batch_.size() * SnakeEnv::ACTION_COUNT, 0.0f);
             values_.assign(batch_.size(), 0.0f);
             steps_.assign(batch_.size(), 1.0f);
-            evaluator_.evaluate(batch_, priors_.data(), values_.data(), steps_.data());
+            death_risks_.assign(batch_.size() * SnakeEnv::ACTION_COUNT, 0.0f);
+            evaluator_.evaluate(batch_, priors_.data(), values_.data(), steps_.data(),
+                                death_risks_.data());
         }
 
         // Expansion and backup.
@@ -660,7 +707,10 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
 
                 const std::span<const float> leaf_priors = std::span<const float>(priors_).subspan(
                     batch_position * SnakeEnv::ACTION_COUNT, SnakeEnv::ACTION_COUNT);
-                expand(tree, tree.path.back(), leaf_priors);
+                const std::span<const float> leaf_risks =
+                    std::span<const float>(death_risks_)
+                        .subspan(batch_position * SnakeEnv::ACTION_COUNT, SnakeEnv::ACTION_COUNT);
+                expand(tree, tree.path.back(), leaf_priors, leaf_risks);
 
                 if (tree.path.size() == 1)
                 {
@@ -700,12 +750,49 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         // it is the only reason the visits array can be all zeros.
         int visits[SnakeEnv::ACTION_COUNT] = { 0, 0, 0 };
         int total_visits = 0;
+        result.death_risk.assign(SnakeEnv::ACTION_COUNT, 0.0f);
         if (tree.nodes[0].first_child.has_value())
         {
             const int first_child = tree.nodes[0].first_child.value();
             for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
             {
                 visits[action] = tree.nodes[first_child + action].visit_count;
+                result.death_risk[action] = tree.nodes[first_child + action].death_risk;
+            }
+
+            // The cap, applied to visit counts before anything reads them, so a
+            // refused action is absent from the policy and from the argmax alike
+            // rather than being subtracted from a choice already made.
+            //
+            // Refuses only when something survives. With every action over the
+            // threshold the position is lost whatever is played, and a filter that
+            // empties the choice there is the trap guard's failure repeated: it
+            // vetoed every endgame move and became the endgame policy.
+            if (config_.death_cap)
+            {
+                bool anything_survives = false;
+                for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+                {
+                    if (result.death_risk[action] <= config_.death_cap_threshold)
+                    {
+                        anything_survives = true;
+                    }
+                }
+                if (anything_survives)
+                {
+                    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+                    {
+                        if (result.death_risk[action] > config_.death_cap_threshold)
+                        {
+                            visits[action] = 0;
+                            death_cap_fires_++;
+                        }
+                    }
+                }
+            }
+
+            for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+            {
                 total_visits += visits[action];
             }
         }

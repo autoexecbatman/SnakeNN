@@ -89,6 +89,23 @@ public:
         // just recomputed along its own path, which is an unbiased sample of the
         // return and is what the value target wants.
         bool average_edges{ false };
+        // Whether the root refuses an action whose backed-up death risk exceeds
+        // death_cap_threshold. Off reproduces the search as it was.
+        //
+        // Fatemi et al. 2019 define a dead-end as a state every trajectory from
+        // which reaches an undesired terminal, and prove that a threshold on their
+        // undiscounted risk excludes certain-death actions without touching the
+        // rest. Undiscounted is what this buys over the value head, whose 0.98
+        // gives it a 50-step horizon while a region sealed at half fill kills
+        // later than that.
+        //
+        // It refuses only when some other action is below the threshold. With
+        // every action above it the position is lost either way, and refusing
+        // there is what turned the trap guard into the endgame policy.
+        bool death_cap{ false };
+        // The risk above which an action is refused, in [0, 1]. Only read when
+        // death_cap is set.
+        float death_cap_threshold{ 0.0f };
         // Dirichlet noise on root priors, the standard device for keeping
         // self-play from collapsing onto one line. Set fraction to zero when
         // evaluating rather than training.
@@ -103,6 +120,13 @@ public:
         std::vector<float> policy;
         // Root value estimate after search.
         float value{ 0.0f };
+        // Backed-up death risk per root action, in [0, 1]. Search-derived rather
+        // than the network's own estimate: the terminations along each descent are
+        // real and only the leaf is predicted, which is the same reason the steps
+        // accumulator is worth more than the steps head. This is what the head
+        // trains against, so it is reported whether or not the cap is on - a
+        // quantity produced only when it is acted on cannot be measured first.
+        std::vector<float> death_risk;
         SnakeEnv::Action best_action{ SnakeEnv::Action::STRAIGHT };
     };
 
@@ -176,6 +200,11 @@ public:
     long long revisitedNodes() const { return revisited_nodes_; }
     long long aliasedNodes() const { return aliased_nodes_; }
 
+    // How many root actions the cap has refused since construction. Zero when
+    // death_cap is off. Reported for the same reason trapGuardFires is: a filter
+    // that fires silently cannot be told from one that never fires.
+    long long deathCapFires() const { return death_cap_fires_; }
+
 private:
     struct Node
     {
@@ -195,6 +224,18 @@ private:
         // ticks along the descent are real, and only the leaf is predicted, so it
         // is strictly better informed than the network's own steps_to_go.
         float steps_sum{ 0.0f };
+        // Probability that the action entering this node leads to a death nothing
+        // afterwards can avoid, in [0, 1]. Exactly 1 on a node whose game ended in
+        // a death and 0 on one that won, and otherwise the minimum over this
+        // node's own actions - a position is doomed only when every action from it
+        // is. The minimum is what makes this a dead-end estimate rather than a
+        // death-frequency estimate, which is the distinction that decides whether
+        // it says anything the policy does not already say.
+        //
+        // Undiscounted on purpose, so it carries no horizon. Starts at the
+        // network's own estimate for the entering action and is replaced as the
+        // subtree below it is expanded.
+        float death_risk{ 0.0f };
         int visit_count{ 0 };
         // Arena index of action 0's child, once this node has children. Empty
         // until then, and empty is the whole answer - there is no -1 standing in
@@ -286,6 +327,7 @@ private:
     std::vector<float> priors_;
     std::vector<float> values_;
     std::vector<float> steps_;
+    std::vector<float> death_risks_;
 
     // The PUCT score for one child, given how much attention the parent has to
     // distribute. Separated from the argmax so that the formula and the choosing
@@ -296,8 +338,15 @@ private:
     // Priors as a span rather than a bare pointer: the length travelled with the
     // caller's intent and nowhere else, so the callee could not check it. Now it
     // can, and does.
-    void expand(Tree& tree, int node_index, std::span<const float> priors);
+    void expand(Tree& tree, int node_index, std::span<const float> priors,
+                std::span<const float> death_risks);
     void backup(Tree& tree, float leaf_value, float leaf_steps);
+
+    // The minimum death risk over a node's actions, which is the risk of being in
+    // it: a position is doomed only when every action from it is. Leaves the node
+    // alone when it has no children, so an unexpanded node keeps the network's
+    // estimate and a terminal one keeps the 1 or 0 the descent gave it.
+    void refreshDeathRisk(Tree& tree, int node_index);
 
     // The budget the steps accumulator is a fraction of, taken from the roots.
     float steps_budget_{ 1.0f };
@@ -308,5 +357,6 @@ private:
     long long materially_aliased_edges_{ 0 };
     long long revisited_nodes_{ 0 };
     long long aliased_nodes_{ 0 };
+    long long death_cap_fires_{ 0 };
     void addRootNoise(Tree& tree);
 };

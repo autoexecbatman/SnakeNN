@@ -34,13 +34,14 @@ class SilentEvaluator : public Evaluator
 {
 public:
     void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
-                  float* steps_out) override
+                  float* steps_out, float* death_risk_out) override
     {
         for (size_t index = 0; index < states.size(); index++)
         {
             for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
             {
                 priors_out[index * SnakeEnv::ACTION_COUNT + action] = 1.0f / SnakeEnv::ACTION_COUNT;
+                death_risk_out[index * SnakeEnv::ACTION_COUNT + action] = 0.0f;
             }
             values_out[index] = 0.0f;
             steps_out[index] = 1.0f;

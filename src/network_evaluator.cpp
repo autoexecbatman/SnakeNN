@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "az_parameters.h"
 #include "network_evaluator.h"
 
 NetworkEvaluator::NetworkEvaluator(AlphaZeroNet network, torch::Device device)
@@ -12,7 +13,7 @@ NetworkEvaluator::NetworkEvaluator(AlphaZeroNet network, torch::Device device)
 }
 
 void NetworkEvaluator::evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out,
-                                float* values_out, float* steps_out)
+                                float* values_out, float* steps_out, float* death_risk_out)
 {
     if (states.empty())
     {
@@ -47,13 +48,20 @@ void NetworkEvaluator::evaluate(const std::vector<const SnakeEnv*>& states, floa
     torch::Tensor priors = torch::softmax(prediction.policy_logits, 1).to(torch::kCPU).contiguous();
     torch::Tensor values = prediction.value.to(torch::kCPU).contiguous();
     torch::Tensor steps = prediction.steps_to_go.to(torch::kCPU).contiguous();
+    torch::Tensor death_risk = prediction.death_risk.to(torch::kCPU).contiguous();
 
     const float* prior_data = priors.data_ptr<float>();
     const float* value_data = values.data_ptr<float>();
     const float* steps_data = steps.data_ptr<float>();
+    const float* death_data = death_risk.data_ptr<float>();
     for (int index = 0; index < batch * SnakeEnv::ACTION_COUNT; index++)
     {
         priors_out[index] = prior_data[index];
+        // Zero until the head has a loss behind it. A head that no target has
+        // trained emits its initialisation, which at a leaf is noise the cap
+        // would act on; zero leaves the risk to the simulator's own terminals,
+        // which is what the first measurement is meant to be of.
+        death_risk_out[index] = az::DEATH_RISK_FROM_NETWORK ? death_data[index] : 0.0f;
     }
     for (int index = 0; index < batch; index++)
     {

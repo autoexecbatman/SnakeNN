@@ -106,6 +106,29 @@ constexpr bool TRAP_REPORT = true;
 // Default, not the setting. `AlphaZeroEvaluate` takes --average-edges on|off.
 constexpr bool AVERAGE_EDGES = false;
 
+// Whether the root refuses an action whose backed-up death risk exceeds
+// DEATH_CAP_THRESHOLD, and the threshold itself.
+//
+// Deaths are 62 of the 67 remaining losses, at median 55 percent fill with about 690
+// steps of budget unused and no slow apple before them - a region sealing behind an
+// apple, which is a dead-end in the sense of Fatemi et al. 2019: every trajectory from
+// it dies. Their construction is undiscounted, which is what it buys over the value
+// head, whose 0.98 gives it a 50-step horizon.
+//
+// The cap refuses only when some other action is below the threshold. Refusing when
+// everything is above it is what turned the trap guard into the endgame policy.
+//
+// Default, not the setting. `AlphaZeroEvaluate` takes --death-cap on|off.
+constexpr bool DEATH_CAP = false;
+constexpr float DEATH_CAP_THRESHOLD = 0.5f;
+
+// Whether the leaf's death risk comes from the network's head or is left at zero.
+//
+// Off until the head has a loss behind it: an untrained head emits its initialisation,
+// and a cap acting on that is acting on noise. With it off the risk is entirely the
+// simulator's own terminations, which is what the first measurement is of.
+constexpr bool DEATH_RISK_FROM_NETWORK = false;
+
 // The bound on the value head, in the same units as a reward.
 //
 // The head is bounded because the search compares leaves and one bad
