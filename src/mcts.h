@@ -64,6 +64,15 @@ public:
         // learned to avoid them and the veto is what stops that being measurable:
         // a guard that corrects the move erases the evidence it was needed.
         bool trap_report{ false };
+        // Whether to count how often two simulations reaching the same node
+        // disagree about the edge that got them there.
+        //
+        // A node is keyed by the actions that reach it, not by the state, and each
+        // simulation reseeds - so the same node is reached with the apple in
+        // different cells and its edge reward is whichever simulation wrote last.
+        // Visit counts average over placements; that one field does not. This
+        // measures how often the two disagree, before anything is done about it.
+        bool alias_report{ false };
         // Dirichlet noise on root priors, the standard device for keeping
         // self-play from collapsing onto one line. Set fraction to zero when
         // evaluating rather than training.
@@ -121,6 +130,17 @@ public:
     // subset the guard managed to do something about.
     long long sealedChoices() const { return sealed_choices_; }
 
+    // Edge traversals that reached a node whose entering edge had already been
+    // recorded by an earlier simulation, counted since construction. Zero when
+    // alias_report is off, and zero for a search of one simulation, which cannot
+    // reach any node twice.
+    long long revisitedEdges() const { return revisited_edges_; }
+
+    // The subset of those whose recomputed edge differed from the recorded one -
+    // a different reward or a different number of ticks. This is the frequency of
+    // the aliasing, and it is bounded above by revisitedEdges().
+    long long aliasedEdges() const { return aliased_edges_; }
+
 private:
     struct Node
     {
@@ -157,6 +177,12 @@ private:
         // default - backup computes a return across the root and discards it.
         int edge_steps{ 1 };
         bool terminal{ false };
+        // What the first simulation to traverse the entering edge computed for it,
+        // kept only so a later traversal can be compared against it. Read by the
+        // alias probe and by nothing that decides a move.
+        float first_reward{ 0.0f };
+        int first_edge_steps{ 1 };
+        bool edge_recorded{ false };
         // The network's steps-to-go for this node, as a fraction of the budget,
         // stored when the node was expanded. One is the pessimistic default and
         // is what an unexpanded node keeps, so a node the search never looked at
@@ -219,5 +245,7 @@ private:
     float steps_budget_{ 1.0f };
     long long trap_guard_fires_{ 0 };
     long long sealed_choices_{ 0 };
+    long long revisited_edges_{ 0 };
+    long long aliased_edges_{ 0 };
     void addRootNoise(Tree& tree);
 };

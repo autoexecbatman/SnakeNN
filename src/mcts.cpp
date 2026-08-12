@@ -14,6 +14,12 @@ namespace
 // slack is for rounding and nothing else.
 constexpr float PRIOR_SUM_TOLERANCE = 1e-3f;
 
+// How far two computations of one edge's reward may differ and still count as the
+// same edge. The differences the alias probe looks for are an apple's whole reward
+// or a step cost, both orders of magnitude above this; the slack is for the float
+// accumulation along a forced-move chain.
+constexpr float REWARD_TOLERANCE = 1e-4f;
+
 // How many times to re-draw the Dirichlet weights if every one of them comes back
 // zero. With a concentration below one the gamma density diverges at the origin,
 // so very small draws are ordinary and an underflow to exactly zero is not a
@@ -521,6 +527,32 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
                     edge_reward += std::pow(config_.discount, static_cast<float>(edge_steps)) *
                                    (outcome.reward + config_.step_reward);
                     edge_steps++;
+                }
+
+                if (config_.alias_report)
+                {
+                    Node& child = tree.nodes[child_index];
+                    if (child.edge_recorded)
+                    {
+                        revisited_edges_++;
+                        // A different reward means one simulation ate where another
+                        // did not; a different tick count means the forced-move
+                        // chain ran differently. Either way the two simulations
+                        // walked the same actions into different games.
+                        const bool differs =
+                            std::abs(child.first_reward - edge_reward) > REWARD_TOLERANCE ||
+                            child.first_edge_steps != edge_steps;
+                        if (differs)
+                        {
+                            aliased_edges_++;
+                        }
+                    }
+                    else
+                    {
+                        child.first_reward = edge_reward;
+                        child.first_edge_steps = edge_steps;
+                        child.edge_recorded = true;
+                    }
                 }
 
                 tree.nodes[child_index].reward = edge_reward;

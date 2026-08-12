@@ -1,4 +1,5 @@
 #include <cmath>
+#include <format>
 #include <iostream>
 #include <string>
 #include <type_traits>
@@ -903,9 +904,110 @@ void testForcedActionAgreesWithWouldDie()
 
 }  // namespace
 
+// Walks the environment greedily towards the food until eating it is one move
+// away, so a search from here spends its depth past the first apple rather than
+// reaching it. Stops early rather than looping if the walk stalls.
+SnakeEnv rootBesideTheFood(int board, unsigned int seed, int step_limit)
+{
+    SnakeEnv environment(board, board, seed, step_limit);
+    for (int step = 0; step < board * board && !environment.done(); step++)
+    {
+        const Position food = environment.food();
+        const Position head = environment.body()[0];
+        if (std::abs(head.x - food.x) + std::abs(head.y - food.y) <= 1)
+        {
+            break;
+        }
+        int best_distance = 1 << 30;
+        SnakeEnv::Action chosen = SnakeEnv::Action::STRAIGHT;
+        for (int candidate = 0; candidate < SnakeEnv::ACTION_COUNT; candidate++)
+        {
+            const SnakeEnv::Action action = static_cast<SnakeEnv::Action>(candidate);
+            if (environment.wouldDie(action))
+            {
+                continue;
+            }
+            const Position next = environment.headAfter(action);
+            const int distance = std::abs(next.x - food.x) + std::abs(next.y - food.y);
+            if (distance < best_distance)
+            {
+                best_distance = distance;
+                chosen = action;
+            }
+        }
+        environment.step(chosen);
+    }
+    return environment;
+}
+
+// The alias probe measures how often two simulations reaching one node disagree
+// about the edge that got them there. The root's apple is fixed, so an edge that
+// eats it pays the same reward in every simulation; disagreement can only appear
+// past a first apple, where the respawn differs between simulations. The search
+// therefore has to run deep enough on a small enough board to eat twice.
+void testAliasProbeCountsWhatItClaims()
+{
+    SilentEvaluator evaluator;
+
+    // Off unless asked. A probe that counts regardless would make every existing
+    // run pay for it and would report numbers nobody chose to measure.
+    {
+        MonteCarloSearch::Config config = testConfig(200);
+        MonteCarloSearch search(evaluator, config);
+        SnakeEnv root(6, 6, 4242, 400);
+        std::vector<const SnakeEnv*> roots{ &root };
+        search.search(roots);
+        expect(search.revisitedEdges() == 0 && search.aliasedEdges() == 0,
+               std::format("the probe is silent unless alias_report is set - revisited {}, "
+                           "aliased {}",
+                           search.revisitedEdges(), search.aliasedEdges()));
+    }
+
+    // One simulation cannot reach any node twice, so nothing is revisited. This is
+    // what separates a real counter from one incremented on every traversal.
+    {
+        MonteCarloSearch::Config config = testConfig(1);
+        config.alias_report = true;
+        MonteCarloSearch search(evaluator, config);
+        SnakeEnv root(6, 6, 4242, 400);
+        std::vector<const SnakeEnv*> roots{ &root };
+        search.search(roots);
+        expect(
+            search.revisitedEdges() == 0,
+            std::format("one simulation revisits no edge - revisited {}", search.revisitedEdges()));
+    }
+
+    // Past a first apple, which is the only place the recorded edge and the
+    // recomputed one can differ: the root's apple is fixed, so every simulation
+    // eats the same one, and only the respawn varies between them.
+    {
+        MonteCarloSearch::Config config = testConfig(600);
+        config.alias_report = true;
+        MonteCarloSearch search(evaluator, config);
+        SnakeEnv root = rootBesideTheFood(6, 4242, 400);
+        std::vector<const SnakeEnv*> roots{ &root };
+        search.search(roots);
+
+        expect(search.revisitedEdges() > 0,
+               std::format("the probe sees revisited edges at all - revisited {}",
+                           search.revisitedEdges()));
+        expect(search.aliasedEdges() <= search.revisitedEdges(),
+               std::format("aliased edges are a subset of revisited ones - aliased {} of {}",
+                           search.aliasedEdges(), search.revisitedEdges()));
+        // Asserted rather than printed: if no descent ever disagrees, the two
+        // checks above hold on a probe that can never fire, and the measurement
+        // this exists to make would read as zero for the wrong reason.
+        expect(
+            search.aliasedEdges() > 0,
+            std::format("the probe fires - simulations disagree about an edge - aliased {} of {}",
+                        search.aliasedEdges(), search.revisitedEdges()));
+    }
+}
+
 int main()
 {
     std::cout << "MonteCarloSearch properties" << std::endl;
+    testAliasProbeCountsWhatItClaims();
     testForcedActionAgreesWithWouldDie();
     testPolicyIsADistribution();
     testPriorsSteerTheSearch();

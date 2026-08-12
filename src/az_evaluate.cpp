@@ -102,6 +102,9 @@ int main(int argc, char** argv)
     search_config.steps_tiebreak_margin = az::STEPS_TIEBREAK_MARGIN;
     search_config.trap_guard = settings.trap_guard;
     search_config.trap_report = az::TRAP_REPORT;
+    // Always on here: it is a measurement rather than a behaviour, it changes no
+    // move, and it costs two comparisons per edge traversal against a forward pass.
+    search_config.alias_report = true;
     // Off, deliberately: noise is what makes self-play explore, and a number
     // measured with it on describes the exploration policy rather than the agent.
     search_config.root_noise_fraction = 0.0f;
@@ -222,6 +225,15 @@ int main(int argc, char** argv)
     std::cout << std::format("Took {:.2f}s, {} evaluations\n", seconds, evaluator.evaluations());
     std::cout << std::format("Sealed choices {}, of which the guard overruled {}\n",
                              search.sealedChoices(), search.trapGuardFires());
+    // How much the tree's open-loop keying costs: edges reached again by a later
+    // simulation that found a different game there. Printed as a rate because the
+    // raw counts scale with the number of games and cannot be compared across runs.
+    const double aliased_share =
+        search.revisitedEdges() > 0
+            ? 100.0 * static_cast<double>(search.aliasedEdges()) / search.revisitedEdges()
+            : 0.0;
+    std::cout << std::format("Revisited edges {}, of which aliased {} ({:.2f} percent)\n",
+                             search.revisitedEdges(), search.aliasedEdges(), aliased_share);
 
     run.outcome = ledger::Outcome::Finished;
     run.seconds = seconds;
