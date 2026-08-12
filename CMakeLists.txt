@@ -865,6 +865,7 @@ endif()
 add_executable(ThroughputBenchmark
     src/throughput_benchmark.cpp
     src/az_network.cpp
+    src/az_parameters.cpp
     src/vector_env.cpp
     src/snake_env.cpp
     src/hamiltonian_cycle.cpp
