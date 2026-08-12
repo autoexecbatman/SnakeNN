@@ -90,7 +90,7 @@ int main(int argc, char** argv)
     // an iteration is played if a training seed ever reaches this one. Any figure
     // measured before 2026-08-08 was scored partly on games the agent had trained
     // on and is not comparable with anything printed below.
-    std::cout << evaluation::formatHeader(settings);
+    std::cout << evaluation::formatHeader(settings, az::TRAP_GUARD);
 
     NetworkEvaluator evaluator(network, device);
 

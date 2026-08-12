@@ -74,6 +74,12 @@ constexpr float STEPS_LOSS_WEIGHT = 0.25f;
 // It is a veto, not a fallback - the search still picks among what survives it -
 // and how often it fires is printed, so a network that has learned the pattern
 // shows up as the count falling rather than as nothing at all.
+//
+// TODO: make this a runtime flag, --trap-guard, on the pattern --freeze-clock-percent
+// already follows. Measuring the two states means editing this line and rebuilding,
+// so the working tree is dirty for the length of a run and the revert is manual. As a
+// setting it would also reach formatHeader through Settings, and the bool parameter
+// that function takes for it can go away.
 constexpr bool TRAP_GUARD = false;
 
 // Whether to count the seals anyway. On: the veto is what costs win rate, and

@@ -167,7 +167,7 @@ Settings parseArguments(std::span<const std::string> arguments)
     return settings;
 }
 
-std::string formatHeader(const Settings& settings)
+std::string formatHeader(const Settings& settings, bool trap_guard)
 {
     // An ablated run and an ordinary one differ in nothing else a log records, so
     // this line is the only thing that would stop the two being compared as if they
@@ -188,13 +188,18 @@ std::string formatHeader(const Settings& settings)
                              *settings.search_seed);
     }
 
+    // Named in both states rather than only when set: a line that appears only for
+    // the guarded run makes its absence mean either "off" or "an older binary".
+    const std::string_view guard = trap_guard ? "trap guard on" : "trap guard off";
+
     return std::format(
         "=== Evaluation ===\n"
         "{} on {}x{}, {} games, {} simulations, step limit {}, batch {}\n"
-        "seeds {}..{} (reserved evaluation range), greedy, no root noise\n{}{}\n",
+        "seeds {}..{} (reserved evaluation range), greedy, no root noise, {}\n{}{}\n",
         settings.checkpoint, settings.board, settings.board, settings.games, settings.simulations,
         settings.stepLimit(), settings.batch, seeds::evaluationGameSeed(settings.seed_offset, 0),
-        seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1), stream, ablation);
+        seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1), guard, stream,
+        ablation);
 }
 
 std::string formatGameLine(unsigned int seed, Outcome outcome, int score, int steps)

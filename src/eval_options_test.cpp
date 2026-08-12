@@ -304,7 +304,7 @@ void theHeaderRecordsWhatWouldChangeTheResult()
 {
     const evaluation::Settings settings = parseWithCheckpoint(
         { "--board", "10", "--games", "64", "--simulations", "200", "--batch", "64" });
-    const std::string header = evaluation::formatHeader(settings);
+    const std::string header = evaluation::formatHeader(settings, false);
 
     expectContains("header checkpoint", "model.pt", header);
     expectContains("header board", "10x10", header);
@@ -322,6 +322,29 @@ void theHeaderRecordsWhatWouldChangeTheResult()
     }
 }
 
+// The trap guard is a build constant, so nothing on the command line records it and
+// two runs that differ only in it are otherwise identical in a log. Both states are
+// named, and the two headers must differ - a rendering that ignores the argument
+// satisfies either check alone.
+void theHeaderRecordsTheTrapGuardInBothStates()
+{
+    const evaluation::Settings settings = parseWithCheckpoint({ "--board", "10" });
+
+    const std::string guarded = evaluation::formatHeader(settings, true);
+    const std::string unguarded = evaluation::formatHeader(settings, false);
+
+    expectContains("guard on announced", "trap guard on", guarded);
+    expectContains("guard off announced", "trap guard off", unguarded);
+    if (guarded == unguarded)
+    {
+        fail("trap guard", "the two guard states render the same header");
+    }
+    if (guarded.size() < 2 || guarded.substr(guarded.size() - 2) != "\n\n")
+    {
+        fail("guarded header", "does not end in a blank line");
+    }
+}
+
 // The clock ablation, which is the one setting that changes what the network sees
 // rather than how the run is scored. A log that did not say so would be compared
 // against an ordinary run as though the two measured the same agent.
@@ -332,7 +355,7 @@ void theClockAblationIsRecordedAndRangeChecked()
     {
         fail("freeze clock default", "a run nobody ablated has the clock frozen");
     }
-    const std::string plain = evaluation::formatHeader(ordinary);
+    const std::string plain = evaluation::formatHeader(ordinary, false);
     if (plain.find("ABLATED") != std::string::npos)
     {
         fail("freeze clock default", "an ordinary run is announced as ablated");
@@ -344,7 +367,7 @@ void theClockAblationIsRecordedAndRangeChecked()
     {
         fail("freeze clock parse", "--freeze-clock-percent 50 did not reach the settings");
     }
-    const std::string header = evaluation::formatHeader(frozen);
+    const std::string header = evaluation::formatHeader(frozen, false);
     expectContains("ablation announced", "ABLATED", header);
     expectContains("ablation value", "50 percent", header);
     if (header.size() < 2 || header.substr(header.size() - 2) != "\n\n")
@@ -402,7 +425,7 @@ void theSearchStreamIsSeparableFromTheGames()
         fail("search seed independence", "--search-seed moved the games as well");
     }
 
-    const std::string header = evaluation::formatHeader(reseeded);
+    const std::string header = evaluation::formatHeader(reseeded, false);
     expectContains("search seed announced", "search seed 7", header);
 
     expectRejectedSaying("--search-seed", { "--checkpoint", "model.pt", "--search-seed" });
@@ -641,6 +664,7 @@ int main()
     rejectsBeforeAnyWorkIsDone();
     rejectsASeedRangeThatLeavesTheReservedBand();
     theHeaderRecordsWhatWouldChangeTheResult();
+    theHeaderRecordsTheTrapGuardInBothStates();
     theClockAblationIsRecordedAndRangeChecked();
     theSearchStreamIsSeparableFromTheGames();
     eachGameGetsALineThatCanBePaired();

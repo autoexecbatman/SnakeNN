@@ -100,7 +100,11 @@ enum class Outcome
 // two runs at different batch sizes searched different futures and are not
 // comparable. Two logs that do not record it cannot be told apart afterwards, which
 // is what confounded the iter110-to-iter123 comparison.
-std::string formatHeader(const Settings& settings);
+//
+// `trap_guard` is az::TRAP_GUARD, a build constant rather than a flag, and it
+// changes which move the search plays at the root. It is named in both states, so
+// a log says what it measured instead of leaving it to the binary's build date.
+std::string formatHeader(const Settings& settings, bool trap_guard);
 
 // One game's outcome, one line, ending in a newline.
 //
