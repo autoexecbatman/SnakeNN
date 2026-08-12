@@ -74,6 +74,14 @@ struct Settings
     // setting rather than a constant because measuring the two states should not mean
     // editing a header and rebuilding.
     bool trap_guard{ az::TRAP_GUARD };
+    // Whether selection averages an edge over the traversals that reached it instead
+    // of reading the last one written. Defaults to az::AVERAGE_EDGES; --average-edges
+    // on|off overrides it for a run.
+    //
+    // A setting rather than a constant for the same reason as the guard: the two
+    // states have to be measurable against each other on one binary, or the arms of
+    // the comparison differ by a rebuild as well as by the change.
+    bool average_edges{ az::AVERAGE_EDGES };
 
     int cellCount() const noexcept;
     // The snake starts one segment long, so this many apples fills the board.
@@ -94,7 +102,7 @@ struct Settings
 // end of the reserved evaluation band, which is silent unsigned wraparound into
 // the training range rather than an error anything would notice.
 //
-// --trap-guard takes "on" or "off" and rejects anything else. It carries a value
+// --trap-guard and --average-edges take "on" or "off" and reject anything else. It carries a value
 // rather than being a bare switch because readFlags pairs every flag with one, and
 // because a run that means to measure the guard off should be able to say so.
 Settings parseArguments(std::span<const std::string> arguments);

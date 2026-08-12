@@ -1042,10 +1042,90 @@ void testAliasProbeCountsWhatItClaims()
     }
 }
 
+// Averaging an edge over the traversals that reached it is an expectation over the
+// states a node stands for. Where every simulation finds the same game at a node
+// there is nothing to average and the search must be unchanged; where they find
+// different games it must not be.
+void testAveragedEdgesAreAnExpectationOverWhatTheNodeStandsFor()
+{
+    SilentEvaluator evaluator;
+
+    // From the opening, with the root's apple fixed and the search too shallow to
+    // eat it, every simulation replays the identical game. Averaging a constant is
+    // that constant, so both settings must agree move for move.
+    //
+    // The precondition is checked rather than assumed: the alias probe must report
+    // no disagreement at all here, or this is measuring something else.
+    {
+        MonteCarloSearch::Config baseline = testConfig(80);
+        baseline.alias_report = true;
+        MonteCarloSearch unaveraged(evaluator, baseline);
+        SnakeEnv root(6, 6, 4242, 400);
+        std::vector<const SnakeEnv*> roots{ &root };
+        const MonteCarloSearch::Result before = unaveraged.search(roots)[0];
+        expect(unaveraged.aliasedEdges() == 0,
+               std::format("no simulation disagrees here, so averaging has nothing to do - "
+                           "aliased {} of {}",
+                           unaveraged.aliasedEdges(), unaveraged.revisitedEdges()));
+
+        MonteCarloSearch::Config averaged = baseline;
+        averaged.average_edges = true;
+        MonteCarloSearch search(evaluator, averaged);
+        const MonteCarloSearch::Result after = search.search(roots)[0];
+
+        expect(before.best_action == after.best_action,
+               "averaging changes no move where every simulation agrees");
+        bool policy_matches = before.policy.size() == after.policy.size();
+        for (size_t action = 0; action < before.policy.size() && policy_matches; action++)
+        {
+            policy_matches = std::abs(before.policy[action] - after.policy[action]) < 1e-6f;
+        }
+        expect(policy_matches, "and it changes no visit count there either");
+        expect(
+            std::abs(before.value - after.value) < 1e-6f,
+            std::format("nor the root value - {:.6f} against {:.6f}", before.value, after.value));
+    }
+
+    // Past a first apple the placements differ between simulations, so the edge is a
+    // draw from a distribution and its mean is a different number from its last
+    // value. The search must actually read the mean - an implementation that stores
+    // the sums and goes on reading the last write passes everything above.
+    {
+        MonteCarloSearch::Config baseline = testConfig(600);
+        baseline.alias_report = true;
+        MonteCarloSearch unaveraged(evaluator, baseline);
+        SnakeEnv root = rootBesideTheFood(6, 4242, 400);
+        std::vector<const SnakeEnv*> roots{ &root };
+        const MonteCarloSearch::Result before = unaveraged.search(roots)[0];
+        expect(unaveraged.aliasedEdges() > 0,
+               std::format("simulations do disagree here - aliased {} of {}",
+                           unaveraged.aliasedEdges(), unaveraged.revisitedEdges()));
+
+        MonteCarloSearch::Config averaged = baseline;
+        averaged.average_edges = true;
+        MonteCarloSearch search(evaluator, averaged);
+        const MonteCarloSearch::Result after = search.search(roots)[0];
+
+        // Asserted on the root value rather than on the visit counts, and the
+        // difference is the point. Averaging changes an exploitation term deep in
+        // the tree, which changes which leaves are expanded and so what the root is
+        // worth. It does not reach the root's visit distribution here: one action
+        // already holds 98 percent of the visits, and a visit is one part in the
+        // simulation count, so the counts are far too coarse to register it. A test
+        // written against the policy passes for a search that ignores the mean.
+        expect(std::abs(before.value - after.value) > 1e-4f,
+               std::format("averaging moves the root value where the simulations disagree, so "
+                           "selection reads the mean rather than the last write - {:.6f} against "
+                           "{:.6f}",
+                           before.value, after.value));
+    }
+}
+
 int main()
 {
     std::cout << "MonteCarloSearch properties" << std::endl;
     testAliasProbeCountsWhatItClaims();
+    testAveragedEdgesAreAnExpectationOverWhatTheNodeStandsFor();
     testForcedActionAgreesWithWouldDie();
     testPolicyIsADistribution();
     testPriorsSteerTheSearch();

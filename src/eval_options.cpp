@@ -170,6 +170,10 @@ Settings parseArguments(std::span<const std::string> arguments)
         {
             settings.trap_guard = parseOnOff(pair.flag, pair.value);
         }
+        else if (pair.flag == "--average-edges")
+        {
+            settings.average_edges = parseOnOff(pair.flag, pair.value);
+        }
         else if (pair.flag == "--search-seed")
         {
             settings.search_seed = flags::parseWholeUnsigned(pair.flag, pair.value);
@@ -213,13 +217,18 @@ std::string formatHeader(const Settings& settings)
     // the guarded run makes its absence mean either "off" or "an older binary".
     const std::string_view guard = trap_guard ? "trap guard on" : "trap guard off";
 
+    // Named in both states for the same reason as the guard, and named after what
+    // selection reads rather than after the flag: the two arms of this comparison
+    // are an expectation and a single draw.
+    const std::string_view edges = settings.average_edges ? "averaged edges" : "last-write edges";
+
     return std::format(
         "=== Evaluation ===\n"
         "{} on {}x{}, {} games, {} simulations, step limit {}, batch {}\n"
-        "seeds {}..{} (reserved evaluation range), greedy, no root noise, {}\n{}{}\n",
+        "seeds {}..{} (reserved evaluation range), greedy, no root noise, {}, {}\n{}{}\n",
         settings.checkpoint, settings.board, settings.board, settings.games, settings.simulations,
         settings.stepLimit(), settings.batch, seeds::evaluationGameSeed(settings.seed_offset, 0),
-        seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1), guard, stream,
+        seeds::evaluationGameSeed(settings.seed_offset, settings.games - 1), guard, edges, stream,
         ablation);
 }
 

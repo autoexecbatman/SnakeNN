@@ -141,10 +141,20 @@ float MonteCarloSearch::actionScore(const Node& child, float parent_weight) cons
     float exploitation = 0.0f;
     if (child.visit_count > 0)
     {
-        const float discount_over_edge =
-            std::pow(config_.discount, static_cast<float>(child.edge_steps));
+        // What the entering edge is worth. Averaged over the traversals that reached
+        // this node when asked, because the node stands for a distribution of states
+        // and one traversal is one draw from it; otherwise whatever the last
+        // simulation through here wrote.
+        float edge_reward = child.reward;
+        float discount_over_edge = std::pow(config_.discount, static_cast<float>(child.edge_steps));
+        if (config_.average_edges && child.edge_traversals > 0)
+        {
+            const float traversals = static_cast<float>(child.edge_traversals);
+            edge_reward = child.reward_sum / traversals;
+            discount_over_edge = child.discount_sum / traversals;
+        }
         const float mean_return = child.value_sum / static_cast<float>(child.visit_count);
-        exploitation = child.reward + discount_over_edge * mean_return;
+        exploitation = edge_reward + discount_over_edge * mean_return;
     }
 
     // Exploration: the prior, scaled by how much weight stands behind this
@@ -573,6 +583,15 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
                         child.first_edge_steps = edge_steps;
                         child.edge_recorded = true;
                     }
+                }
+
+                if (config_.average_edges)
+                {
+                    Node& child = tree.nodes[child_index];
+                    child.reward_sum += edge_reward;
+                    child.discount_sum +=
+                        std::pow(config_.discount, static_cast<float>(edge_steps));
+                    child.edge_traversals++;
                 }
 
                 tree.nodes[child_index].reward = edge_reward;

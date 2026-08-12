@@ -89,6 +89,23 @@ constexpr bool TRAP_GUARD = false;
 // it. A guard that corrects the move erases its own evidence.
 constexpr bool TRAP_REPORT = true;
 
+// Whether selection reads an edge's mean reward over the traversals that reached it
+// rather than whatever the last simulation wrote there.
+//
+// A tree node is keyed by the actions reaching it, not by the state, so it stands
+// for a distribution of states and the quantity selection needs is an expectation
+// over that distribution. Visit counts already are one. Leurent and Maillard 2019
+// give the estimator: the rewards at a sequence's last transition, summed over
+// traversals and divided by the traversal count.
+//
+// Measured before it was written: 4.99 percent of revisited edge traversals carried a
+// reward more than half an apple from the recorded one. That is the error this
+// removes, and it is not a claim about wins - open-loop keying costs optimality
+// whatever the estimator, so a correct open-loop search is still a suboptimal one.
+//
+// Default, not the setting. `AlphaZeroEvaluate` takes --average-edges on|off.
+constexpr bool AVERAGE_EDGES = false;
+
 // The bound on the value head, in the same units as a reward.
 //
 // The head is bounded because the search compares leaves and one bad

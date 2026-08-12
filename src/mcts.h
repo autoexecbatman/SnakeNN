@@ -73,6 +73,22 @@ public:
         // Visit counts average over placements; that one field does not. This
         // measures how often the two disagree, before anything is done about it.
         bool alias_report{ false };
+        // Whether selection reads the mean of an edge's reward and discount factor
+        // over the traversals that reached it, rather than whatever the last
+        // simulation to pass through wrote. Off reproduces the search as it was.
+        //
+        // A node is keyed by its action sequence, so it stands for a distribution of
+        // states rather than one state, and the quantity selection needs is an
+        // expectation over that distribution. Visit counts already are one; the
+        // entering edge is a single draw sitting beside them. Leurent and Maillard
+        // 2019 give the estimator for exactly this - the rewards collected at the
+        // last transition of a sequence, summed over traversals and divided by the
+        // traversal count.
+        //
+        // Backup is not affected and must not be: it reads the edge this simulation
+        // just recomputed along its own path, which is an unbiased sample of the
+        // return and is what the value target wants.
+        bool average_edges{ false };
         // Dirichlet noise on root priors, the standard device for keeping
         // self-play from collapsing onto one line. Set fraction to zero when
         // evaluating rather than training.
@@ -207,6 +223,24 @@ private:
         // incremented twice for one node.
         bool revisit_counted{ false };
         bool alias_counted{ false };
+        // The entering edge summed over every traversal that recomputed it, and the
+        // number of those traversals. Their ratios are what selection reads when
+        // average_edges is set.
+        //
+        // The discount factor is accumulated rather than the tick count it comes
+        // from. gamma^k is convex in k, so the mean of the factors is not the factor
+        // of the mean - checked by z3 in docs/prove_discount_jensen.py. The error is
+        // under a fifth of a percent at this project's discount, so this costs
+        // nothing and buys nothing; it is here because pow is computed at that site
+        // either way.
+        //
+        // Counted separately from visit_count rather than assumed equal to it. They
+        // are incremented by different phases - one by the descent, one by backup -
+        // and a denominator that is right only because two counters happen to agree
+        // is one that breaks silently when either phase changes.
+        float reward_sum{ 0.0f };
+        float discount_sum{ 0.0f };
+        int edge_traversals{ 0 };
         // The network's steps-to-go for this node, as a fraction of the budget,
         // stored when the node was expanded. One is the pessimistic default and
         // is what an unexpanded node keeps, so a node the search never looked at

@@ -179,6 +179,10 @@ std::vector<std::string> differingFields(const evaluation::Settings& left,
     {
         names.push_back("trap_guard");
     }
+    if (left.average_edges != right.average_edges)
+    {
+        names.push_back("average_edges");
+    }
     return names;
 }
 
@@ -232,6 +236,7 @@ void eachFlagWritesItsOwnField()
     expectOnlyFieldChanged("ledger_path", { "--ledger", "../../docs/runs.tsv" });
     expectOnlyFieldChanged("freeze_clock_percent", { "--freeze-clock-percent", "50" });
     expectOnlyFieldChanged("trap_guard", { "--trap-guard", "on" });
+    expectOnlyFieldChanged("average_edges", { "--average-edges", "on" });
 }
 
 void derivesTheStepLimitFromTheBoard()
@@ -374,6 +379,47 @@ void theTrapGuardIsASettingAndIsRecordedInBothStates()
     expectRejectedSaying("--trap-guard", { "--checkpoint", "model.pt", "--trap-guard", "yes" });
     expectRejectedSaying("--trap-guard", { "--checkpoint", "model.pt", "--trap-guard", "ON" });
     expectRejectedSaying("--trap-guard", { "--checkpoint", "model.pt", "--trap-guard" });
+}
+
+// Averaging changes which move the search plays, so the same three obligations hold
+// as for the guard: the default comes from the constant, both directions parse, and
+// the header names the state in both so a missing line cannot mean two things.
+void averagedEdgesAreASettingAndAreRecordedInBothStates()
+{
+    const evaluation::Settings defaulted = parseWithCheckpoint({ "--board", "10" });
+    if (defaulted.average_edges != az::AVERAGE_EDGES)
+    {
+        fail("average edges default", "the default does not come from az::AVERAGE_EDGES");
+    }
+
+    const evaluation::Settings averaged =
+        parseWithCheckpoint({ "--board", "10", "--average-edges", "on" });
+    const evaluation::Settings last_write =
+        parseWithCheckpoint({ "--board", "10", "--average-edges", "off" });
+
+    if (!averaged.average_edges)
+    {
+        fail("average edges on", "--average-edges on did not reach the settings");
+    }
+    if (last_write.average_edges)
+    {
+        fail("average edges off", "--average-edges off did not reach the settings");
+    }
+
+    const std::string on_header = evaluation::formatHeader(averaged);
+    const std::string off_header = evaluation::formatHeader(last_write);
+
+    expectContains("averaging announced", "averaged edges", on_header);
+    expectContains("last write announced", "last-write edges", off_header);
+    if (on_header == off_header)
+    {
+        fail("average edges", "the two states render the same header");
+    }
+
+    expectRejectedSaying("--average-edges",
+                         { "--checkpoint", "model.pt", "--average-edges", "true" });
+    expectRejectedSaying("--average-edges", { "--checkpoint", "model.pt", "--average-edges", "1" });
+    expectRejectedSaying("--average-edges", { "--checkpoint", "model.pt", "--average-edges" });
 }
 
 // The clock ablation, which is the one setting that changes what the network sees
@@ -696,6 +742,7 @@ int main()
     rejectsASeedRangeThatLeavesTheReservedBand();
     theHeaderRecordsWhatWouldChangeTheResult();
     theTrapGuardIsASettingAndIsRecordedInBothStates();
+    averagedEdgesAreASettingAndAreRecordedInBothStates();
     theClockAblationIsRecordedAndRangeChecked();
     theSearchStreamIsSeparableFromTheGames();
     eachGameGetsALineThatCanBePaired();

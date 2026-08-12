@@ -159,6 +159,10 @@ int main(int argc, char** argv)
     search_config.steps_tiebreak_margin = az::STEPS_TIEBREAK_MARGIN;
     search_config.trap_guard = az::TRAP_GUARD;
     search_config.trap_report = az::TRAP_REPORT;
+    // Set explicitly rather than left to the Config default, which happens to match.
+    // Self-play and evaluation searching differently is a difference no log records,
+    // and a constant only one of them reads is how that arrives.
+    search_config.average_edges = az::AVERAGE_EDGES;
     search_config.root_noise_fraction = az::ROOT_NOISE_FRACTION;
     search_config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
     search_config.seed = settings.seed;

@@ -102,6 +102,7 @@ int main(int argc, char** argv)
     search_config.steps_tiebreak_margin = az::STEPS_TIEBREAK_MARGIN;
     search_config.trap_guard = settings.trap_guard;
     search_config.trap_report = az::TRAP_REPORT;
+    search_config.average_edges = settings.average_edges;
     // Always on here: it is a measurement rather than a behaviour, it changes no
     // move, and it costs two comparisons per edge traversal against a forward pass.
     search_config.alias_report = true;
