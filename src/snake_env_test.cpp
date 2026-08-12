@@ -1,3 +1,4 @@
+#include <format>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -1116,6 +1117,72 @@ void testTailReachableSeparatesAPocketFromACrowdedBoard()
     // Without this the test above passes on a board that never got crowded, and
     // the condition it is meant to separate was never exercised.
     expect(crowded_moves > 0, "the walk passed through states a cell count would have vetoed");
+
+    // The case every assertion above misses: a move that survives and still seals
+    // the head away from its tail. Without one, "the tail is reachable" is
+    // satisfied by any function that answers "the move did not kill", which is
+    // the whole distinction the trap guard rests on.
+    int sealing_but_survivable = 0;
+    int steps_onto_the_vacating_tail = 0;
+    bool tail_seen_when_stepping_onto_it = true;
+    for (unsigned int seed = 1; seed <= 40u; seed++)
+    {
+        SnakeEnv wanderer(8, 8, seed, TEST_STEP_LIMIT);
+        for (int step = 0; step < 400 && !wanderer.done(); step++)
+        {
+            for (int index = 0; index < SnakeEnv::ACTION_COUNT; index++)
+            {
+                const SnakeEnv::Action action = static_cast<SnakeEnv::Action>(index);
+                if (wanderer.wouldDie(action))
+                {
+                    continue;
+                }
+                if (!wanderer.tailReachable(action))
+                {
+                    sealing_but_survivable++;
+                }
+                // Entering the cell the tail is leaving: the snake is standing on
+                // its own tail's exit, so its tail is by construction right there.
+                if (wanderer.headAfter(action) == wanderer.body().back())
+                {
+                    steps_onto_the_vacating_tail++;
+                    tail_seen_when_stepping_onto_it =
+                        tail_seen_when_stepping_onto_it && wanderer.tailReachable(action);
+                }
+            }
+            // Greedy toward the food among the moves that survive. A policy that
+            // merely survives circles forever at length one and never produces a
+            // snake long enough to seal anything - which is what the counters
+            // below are there to prove did not happen.
+            SnakeEnv::Action chosen = SnakeEnv::Action::STRAIGHT;
+            int best_distance = -1;
+            for (int index = 0; index < SnakeEnv::ACTION_COUNT; index++)
+            {
+                const SnakeEnv::Action action = static_cast<SnakeEnv::Action>(index);
+                if (wanderer.wouldDie(action))
+                {
+                    continue;
+                }
+                const Position landing = wanderer.headAfter(action);
+                const Position food = wanderer.food();
+                const int dx = landing.x > food.x ? landing.x - food.x : food.x - landing.x;
+                const int dy = landing.y > food.y ? landing.y - food.y : food.y - landing.y;
+                if (best_distance < 0 || dx + dy < best_distance)
+                {
+                    best_distance = dx + dy;
+                    chosen = action;
+                }
+            }
+            wanderer.step(chosen);
+        }
+    }
+    std::cout << std::format("        {} survivable sealing moves, {} steps onto the tail\n",
+                             sealing_but_survivable, steps_onto_the_vacating_tail);
+    expect(sealing_but_survivable > 0,
+           "a move can survive and still seal the tail - the case the guard is for");
+    expect(steps_onto_the_vacating_tail > 0, "the walk entered the cell the tail vacates");
+    expect(tail_seen_when_stepping_onto_it,
+           "stepping into the cell the tail is leaving reaches the tail");
 }
 
 void testStepLimitIsRequired()
