@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+﻿cmake_minimum_required(VERSION 3.18)
 project(SnakeNN CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -784,6 +784,32 @@ set_property(TARGET EvalOptionsTest PROPERTY CXX_STANDARD 20)
 enable_strict_warnings(EvalOptionsTest)
 add_test(NAME eval_options COMMAND EvalOptionsTest)
 
+# The statistics that say whether a death head learned anything: spread, Spearman
+# and an AUC over the search's own backed-up risk. Separated from the program that
+# collects the pairs so the arithmetic is testable - no LibTorch, so its assertions
+# are reachable in Debug. Mutation sweep in docs/mutate_death_probe.ps1.
+add_executable(DeathProbeTest
+    src/death_probe_test.cpp
+    src/death_probe.cpp
+)
+
+set_property(TARGET DeathProbeTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(DeathProbeTest)
+add_test(NAME death_probe COMMAND DeathProbeTest)
+
+# Coverage and label yield: how often the search visits every root action, and what the
+# all-or-nothing label rule gives away against a per-action one. No LibTorch, so its
+# assertions are reachable in Debug. No mutation sweep yet - the tests here have not
+# been tested.
+add_executable(CoverageTallyTest
+    src/coverage_tally_test.cpp
+    src/coverage_tally.cpp
+)
+
+set_property(TARGET CoverageTallyTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(CoverageTallyTest)
+add_test(NAME coverage_tally COMMAND CoverageTallyTest)
+
 # AlphaZero training loop.
 add_executable(AlphaZeroTrainer
     src/run_ledger.cpp
@@ -833,6 +859,59 @@ target_compile_definitions(AlphaZeroEvaluate PRIVATE TORCH_CUDA=1)
 
 if(WIN32)
     target_link_options(AlphaZeroEvaluate PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Scores a trained death head against the risk the search backs up, with an
+# untrained network of the same shape as the floor. Exists because az10_death368.pt
+# trained for 4.8 hours without printing its death loss, so nothing in that run says
+# whether the head learned.
+add_executable(AlphaZeroDeathProbe
+    src/az_death_probe.cpp
+    src/death_probe.cpp
+    src/az_parameters.cpp
+    src/flag_parser.cpp
+    src/mcts.cpp
+    src/network_evaluator.cpp
+    src/az_network.cpp
+    src/snake_env.cpp
+)
+
+target_include_directories(AlphaZeroDeathProbe PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(AlphaZeroDeathProbe ${TORCH_LIBRARIES})
+set_property(TARGET AlphaZeroDeathProbe PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(AlphaZeroDeathProbe)
+
+target_compile_definitions(AlphaZeroDeathProbe PRIVATE USE_CUDA=1)
+target_compile_definitions(AlphaZeroDeathProbe PRIVATE TORCH_CUDA=1)
+
+if(WIN32)
+    target_link_options(AlphaZeroDeathProbe PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# Root coverage with and without Dirichlet noise, on one fixed set of positions. The
+# death probe measured 4 percent coverage with noise off, which is evaluation's setting
+# and not self-play's; this is what says whether training is starved of death labels.
+add_executable(AlphaZeroCoverage
+    src/az_coverage.cpp
+    src/coverage_tally.cpp
+    src/az_parameters.cpp
+    src/flag_parser.cpp
+    src/mcts.cpp
+    src/network_evaluator.cpp
+    src/az_network.cpp
+    src/snake_env.cpp
+)
+
+target_include_directories(AlphaZeroCoverage PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(AlphaZeroCoverage ${TORCH_LIBRARIES})
+set_property(TARGET AlphaZeroCoverage PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(AlphaZeroCoverage)
+
+target_compile_definitions(AlphaZeroCoverage PRIVATE USE_CUDA=1)
+target_compile_definitions(AlphaZeroCoverage PRIVATE TORCH_CUDA=1)
+
+if(WIN32)
+    target_link_options(AlphaZeroCoverage PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
 endif()
 
 # Watch a trained network play, under the same conditions it is scored under.
