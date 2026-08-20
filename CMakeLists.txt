@@ -799,8 +799,7 @@ add_test(NAME death_probe COMMAND DeathProbeTest)
 
 # Coverage and label yield: how often the search visits every root action, and what the
 # all-or-nothing label rule gives away against a per-action one. No LibTorch, so its
-# assertions are reachable in Debug. No mutation sweep yet - the tests here have not
-# been tested.
+# assertions are reachable in Debug. Mutation sweep in docs/mutate_coverage_tally.ps1.
 add_executable(CoverageTallyTest
     src/coverage_tally_test.cpp
     src/coverage_tally.cpp
