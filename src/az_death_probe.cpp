@@ -1,4 +1,4 @@
-// AlphaZeroDeathProbe: does the trained death head contain anything?
+﻿// AlphaZeroDeathProbe: does the trained death head contain anything?
 //
 // az10_death368.pt cost 4.8 hours and its logs cannot say, because the death loss was
 // never printed. This scores the head directly instead of the run that produced it:
@@ -122,6 +122,7 @@ MonteCarloSearch::Config searchConfig(const ProbeSettings& settings)
     config.trap_guard = false;
     config.trap_report = az::TRAP_REPORT;
     config.average_edges = false;
+    config.normalize_values = az::NORMALIZE_VALUES;
     // Off on purpose: the cap changes which move is played, and a probe that let it
     // fire would score the head against a search the head had already steered.
     config.death_cap = false;

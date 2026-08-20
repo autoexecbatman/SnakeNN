@@ -624,6 +624,7 @@ add_test(NAME vector_env_properties COMMAND VectorEnvTest)
 add_executable(SearchTest
     src/mcts_test.cpp
     src/mcts.cpp
+    src/value_range.cpp
     src/snake_env.cpp
 )
 
@@ -700,6 +701,7 @@ add_executable(SelfPlayTest
     src/selfplay_test.cpp
     src/selfplay.cpp
     src/mcts.cpp
+    src/value_range.cpp
     src/snake_env.cpp
 )
 
@@ -809,6 +811,18 @@ set_property(TARGET CoverageTallyTest PROPERTY CXX_STANDARD 20)
 enable_strict_warnings(CoverageTallyTest)
 add_test(NAME coverage_tally COMMAND CoverageTallyTest)
 
+# The range selection normalises a value against, so c_puct compares two numbers on one
+# scale. No LibTorch, so its assertions are reachable in Debug. Mutation sweep in
+# docs/mutate_value_range.ps1.
+add_executable(ValueRangeTest
+    src/value_range_test.cpp
+    src/value_range.cpp
+)
+
+set_property(TARGET ValueRangeTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(ValueRangeTest)
+add_test(NAME value_range COMMAND ValueRangeTest)
+
 # AlphaZero training loop.
 add_executable(AlphaZeroTrainer
     src/run_ledger.cpp
@@ -817,6 +831,7 @@ add_executable(AlphaZeroTrainer
     src/az_parameters.cpp
     src/selfplay.cpp
     src/mcts.cpp
+    src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
     src/snake_env.cpp
@@ -843,6 +858,7 @@ add_executable(AlphaZeroEvaluate
     src/az_parameters.cpp
     src/flag_parser.cpp
     src/mcts.cpp
+    src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
     src/snake_env.cpp
@@ -870,6 +886,7 @@ add_executable(AlphaZeroDeathProbe
     src/az_parameters.cpp
     src/flag_parser.cpp
     src/mcts.cpp
+    src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
     src/snake_env.cpp
@@ -896,6 +913,7 @@ add_executable(AlphaZeroCoverage
     src/az_parameters.cpp
     src/flag_parser.cpp
     src/mcts.cpp
+    src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
     src/snake_env.cpp
@@ -921,6 +939,7 @@ add_executable(AlphaZeroVisual
     src/flag_parser.cpp
     src/board_render.cpp
     src/mcts.cpp
+    src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
     src/snake_env.cpp

@@ -1,4 +1,4 @@
-#include <torch/torch.h>
+﻿#include <torch/torch.h>
 #include <raylib.h>
 
 #include <algorithm>
@@ -88,6 +88,9 @@ int main(int argc, char** argv)
     MonteCarloSearch::Config search_config;
     search_config.simulations = settings.simulations;
     search_config.exploration = az::EXPLORATION;
+    // Set here even though the default matches: a field only some callers set is how
+    // self-play and evaluation come to search differently.
+    search_config.normalize_values = az::NORMALIZE_VALUES;
     search_config.discount = az::DISCOUNT;
     // Off, as in the evaluator, so what is on screen is the agent the win rate
     // describes rather than the exploration policy.

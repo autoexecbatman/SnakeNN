@@ -1,4 +1,4 @@
-// AlphaZeroTrainer: the training loop. Plays a batch of self-play games, appends them
+﻿// AlphaZeroTrainer: the training loop. Plays a batch of self-play games, appends them
 // to a replay buffer, takes gradient steps on samples from it, writes a checkpoint,
 // and repeats. One main(); the pieces it drives are testable and it is not.
 //
@@ -171,6 +171,9 @@ int main(int argc, char** argv)
     // Self-play and evaluation searching differently is a difference no log records,
     // and a constant only one of them reads is how that arrives.
     search_config.average_edges = az::AVERAGE_EDGES;
+    // Set here even though the default matches: a field only some callers set is how
+    // self-play and evaluation come to search differently.
+    search_config.normalize_values = az::NORMALIZE_VALUES;
     search_config.death_cap = az::DEATH_CAP;
     search_config.death_cap_threshold = az::DEATH_CAP_THRESHOLD;
     search_config.root_noise_fraction = az::ROOT_NOISE_FRACTION;

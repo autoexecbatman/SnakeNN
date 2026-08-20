@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // Monte Carlo tree search over the real simulator. The network supplies a prior and
 // a value; this does the lookahead and returns an improved policy.
@@ -46,6 +46,7 @@
 
 #include "evaluator.h"
 #include "snake_env.h"
+#include "value_range.h"
 
 // The move the position leaves no choice about, if there is one. Empty covers both
 // "two or more survive" and "none does" - either way the caller decides.
@@ -84,6 +85,10 @@ public:
         bool death_cap{ false };
         // The risk above which an action is refused, in [0, 1]; read only if capped.
         float death_cap_threshold{ 0.0f };
+        // Whether selection normalises a value against the range this tree has seen
+        // before comparing it with the prior term, so c_puct means what it does in the
+        // paper. Backup is unaffected.
+        bool normalize_values{ false };
         // Dirichlet noise on root priors; set the fraction to zero when evaluating.
         float root_noise_fraction{ 0.0f };
         float root_noise_alpha{ 0.0f };
@@ -191,6 +196,9 @@ private:
         // Engaged when the descent ended on a terminal, which is owed no evaluation;
         // empty means this tree has a leaf in the batch awaiting the network.
         std::optional<float> known_leaf_value;
+        // The values selection has compared in this tree, for normalising the next
+        // comparison. Per tree rather than per search: two trees hold different games.
+        ValueRange value_range;
     };
 
     Evaluator& evaluator_;
@@ -206,9 +214,16 @@ private:
     std::vector<float> steps_;
     std::vector<float> death_risks_;
 
-    // The PUCT score for one child, given the parent's attention to distribute.
-    float actionScore(const Node& child, float parent_weight) const;
-    int selectChild(const Tree& tree, int node_index) const;
+    // What one visited child is worth: what its edge pays, plus the discounted mean
+    // return from where it lands. One definition, because selection both compares this
+    // and widens the range with it. Asserts the child has been visited.
+    float rawActionValue(const Node& child) const;
+    // The PUCT score for one child, given the parent's attention to distribute and the
+    // range to measure its value against. An unestablished range leaves the value alone.
+    float actionScore(const Node& child, float parent_weight, const ValueRange& range) const;
+    // Widens the tree's range with what it compares, so the next descent normalises
+    // against values this tree has actually produced.
+    int selectChild(Tree& tree, int node_index);
     // Spans rather than bare pointers, so the callee can check the lengths.
     void expand(Tree& tree, int node_index, std::span<const float> priors,
                 std::span<const float> death_risks);

@@ -1,4 +1,4 @@
-#include <torch/torch.h>
+﻿#include <torch/torch.h>
 
 #include <process.h>
 #include <algorithm>
@@ -103,6 +103,9 @@ int main(int argc, char** argv)
     search_config.trap_guard = settings.trap_guard;
     search_config.trap_report = az::TRAP_REPORT;
     search_config.average_edges = settings.average_edges;
+    // Set here even though the default matches: a field only some callers set is how
+    // self-play and evaluation come to search differently.
+    search_config.normalize_values = az::NORMALIZE_VALUES;
     search_config.death_cap = settings.death_cap;
     search_config.death_cap_threshold = az::DEATH_CAP_THRESHOLD;
     // Always on here: it is a measurement rather than a behaviour, it changes no

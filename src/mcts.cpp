@@ -1,4 +1,4 @@
-// Implementation of MonteCarloSearch. The interface, and how to call it, are in mcts.h.
+﻿// Implementation of MonteCarloSearch. The interface, and how to call it, are in mcts.h.
 
 #include <algorithm>
 #include <cassert>
@@ -76,7 +76,25 @@ MonteCarloSearch::MonteCarloSearch(Evaluator& evaluator, const Config& config)
     }
 }
 
-float MonteCarloSearch::actionScore(const Node& child, float parent_weight) const
+float MonteCarloSearch::rawActionValue(const Node& child) const
+{
+    assert(child.visit_count > 0 && "an unvisited child has no value to report");
+
+    // Averaged over traversals when asked, since one traversal is one draw.
+    float edge_reward = child.reward;
+    float discount_over_edge = std::pow(config_.discount, static_cast<float>(child.edge_steps));
+    if (config_.average_edges && child.edge_traversals > 0)
+    {
+        const float traversals = static_cast<float>(child.edge_traversals);
+        edge_reward = child.reward_sum / traversals;
+        discount_over_edge = child.discount_sum / traversals;
+    }
+    const float mean_return = child.value_sum / static_cast<float>(child.visit_count);
+    return edge_reward + discount_over_edge * mean_return;
+}
+
+float MonteCarloSearch::actionScore(const Node& child, float parent_weight,
+                                    const ValueRange& range) const
 {
     assert(child.visit_count >= 0 && "a child cannot have been visited a negative number of times");
     // Every edge covers a tick, so a zero is a corrupt arena rather than a short edge.
@@ -90,17 +108,14 @@ float MonteCarloSearch::actionScore(const Node& child, float parent_weight) cons
     float exploitation = 0.0f;
     if (child.visit_count > 0)
     {
-        // Averaged over traversals when asked, since one traversal is one draw.
-        float edge_reward = child.reward;
-        float discount_over_edge = std::pow(config_.discount, static_cast<float>(child.edge_steps));
-        if (config_.average_edges && child.edge_traversals > 0)
+        exploitation = rawActionValue(child);
+        // Against the range this tree has compared, so the sum below adds two numbers on
+        // one scale. An unestablished range returns it untouched, which is what the
+        // first comparisons in a tree get.
+        if (config_.normalize_values)
         {
-            const float traversals = static_cast<float>(child.edge_traversals);
-            edge_reward = child.reward_sum / traversals;
-            discount_over_edge = child.discount_sum / traversals;
+            exploitation = range.normalize(exploitation);
         }
-        const float mean_return = child.value_sum / static_cast<float>(child.visit_count);
-        exploitation = edge_reward + discount_over_edge * mean_return;
     }
 
     // The prior, scaled by the weight behind the decision, decaying with visits.
@@ -113,7 +128,7 @@ float MonteCarloSearch::actionScore(const Node& child, float parent_weight) cons
     return score;
 }
 
-int MonteCarloSearch::selectChild(const Tree& tree, int node_index) const
+int MonteCarloSearch::selectChild(Tree& tree, int node_index)
 {
     assert(node_index >= 0 && node_index < static_cast<int>(tree.nodes.size()) &&
            "selectChild given a node index outside the arena");
@@ -137,13 +152,29 @@ int MonteCarloSearch::selectChild(const Tree& tree, int node_index) const
     // Its square root keeps a promising unvisited action in contention.
     const float parent_weight = std::sqrt(static_cast<float>(parent.visit_count));
 
+    // Widened before anything is scored, so every child in this comparison is measured
+    // against a range that already contains all of them. Only visited children have a
+    // value; an unvisited one contributes nothing but its prior.
+    if (config_.normalize_values)
+    {
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            const Node& child = tree.nodes[first_child + action];
+            if (child.visit_count > 0)
+            {
+                tree.value_range.observe(rawActionValue(child));
+            }
+        }
+    }
+
     // Seeded with a real score, so no sentinel stands in for "nothing chosen yet".
     int best_action = 0;
-    float best_score = actionScore(tree.nodes[first_child], parent_weight);
+    float best_score = actionScore(tree.nodes[first_child], parent_weight, tree.value_range);
 
     for (int action = 1; action < SnakeEnv::ACTION_COUNT; action++)
     {
-        const float score = actionScore(tree.nodes[first_child + action], parent_weight);
+        const float score =
+            actionScore(tree.nodes[first_child + action], parent_weight, tree.value_range);
         if (score > best_score)
         {
             best_score = score;

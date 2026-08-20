@@ -142,6 +142,7 @@ MonteCarloSearch::Config armConfig(const CoverageSettings& settings, float noise
     config.trap_guard = false;
     config.trap_report = az::TRAP_REPORT;
     config.average_edges = false;
+    config.normalize_values = az::NORMALIZE_VALUES;
     config.death_cap = false;
     config.death_cap_threshold = az::DEATH_CAP_THRESHOLD;
     config.alias_report = false;

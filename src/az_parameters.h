@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // The paper's hyperparameters and the quantities derived from them, for every program
 // in the AlphaZero stack - trainer, evaluator and visual alike.
@@ -184,6 +184,21 @@ constexpr bool DEATH_RISK_FROM_NETWORK = false;
 // this above 44 if the reward scale changes, since that argument is about this
 // reward structure and not about the constant.
 constexpr float VALUE_SCALE = 40.0f;
+
+// Whether selection normalises an action's value against the range this tree has seen
+// before comparing it with the prior term, as MuZero does.
+//
+// PUCT adds a value to c_puct * prior * sqrt(N), and the paper's c_puct of 0.5 assumes
+// values in [-1, 1]. Values here are raw returns bounded by VALUE_SCALE, so the value
+// side can be forty times anything the prior side produces and the constant stops
+// meaning what it means in the paper. Measured 2026-08-20: the fraction of positions
+// whose second-best prior is under 0.001 went from 2 percent to 46 percent across the
+// change that made values raw, while mean policy entropy barely moved.
+//
+// Off, so a checkpoint trained before it plays as it did. It is a fix for the scale
+// selection compares on, not a rescue for a policy already trained to one action - a
+// prior of 0.0005 yields almost no exploration term at any scale.
+constexpr bool NORMALIZE_VALUES = false;
 
 // The paper caps a 10x10 game at 1,200 steps, which is twelve steps per cell.
 // Scaling by area rather than fixing the number keeps "win" meaning the same

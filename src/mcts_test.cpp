@@ -1,4 +1,4 @@
-#include <cmath>
+﻿#include <cmath>
 #include <format>
 #include <iostream>
 #include <string>
@@ -405,6 +405,94 @@ MonteCarloSearch::Config noisyConfig(int simulations, float fraction, unsigned i
     config.root_noise_fraction = fraction;
     config.seed = seed;
     return config;
+}
+
+// Values scaled by a constant, so two searches differ in nothing but the size of the
+// numbers they compare. The prior is uniform and the values vary with the position, so
+// the range has a width to normalise against.
+class ScaledValueEvaluator : public Evaluator
+{
+public:
+    explicit ScaledValueEvaluator(float scale) : scale_(scale) {}
+
+    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
+                  float* steps_out, float* death_risk_out) override
+    {
+        for (size_t index = 0; index < states.size(); index++)
+        {
+            for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+            {
+                priors_out[index * SnakeEnv::ACTION_COUNT + action] =
+                    1.0f / static_cast<float>(SnakeEnv::ACTION_COUNT);
+                death_risk_out[index * SnakeEnv::ACTION_COUNT + action] = 0.0f;
+            }
+            // Varies with the position, so leaves disagree and the range has a width.
+            const float spread = 0.2f * static_cast<float>(states[index]->steps() % 7);
+            values_out[index] = scale_ * (0.4f + spread);
+            steps_out[index] = 1.0f;
+        }
+    }
+
+private:
+    float scale_;
+};
+
+std::vector<float> policyUnderScale(float scale, bool normalize)
+{
+    SnakeEnv board = boardWithDistantFood(6, 1);
+    ScaledValueEvaluator evaluator(scale);
+    MonteCarloSearch::Config config = testConfig(200);
+    config.normalize_values = normalize;
+    MonteCarloSearch search(evaluator, config);
+    const std::vector<const SnakeEnv*> roots{ &board };
+    return search.search(roots).front().policy;
+}
+
+float largestPolicyGap(const std::vector<float>& left, const std::vector<float>& right)
+{
+    float largest = 0.0f;
+    for (size_t index = 0; index < left.size(); index++)
+    {
+        largest = std::max(largest, std::abs(left[index] - right[index]));
+    }
+    return largest;
+}
+
+// What normalising buys, stated as the property it is for: c_puct compares a value
+// against a prior term, so the visit distribution must not depend on how large the values
+// happen to be. Raw values here are bounded by az::VALUE_SCALE at 40 while the largest
+// exploration term a prior can produce is single digits, which is how a change to the
+// value scale silently changed how much the search explored.
+void testNormalisingMakesSelectionScaleInvariant()
+{
+    // Unnormalised, a tenfold change in the value scale is a tenfold change in what
+    // exploitation is worth against an unchanged prior term, so the search explores
+    // differently. This is the falsifier: without it the assertion below passes for a
+    // search that ignores values altogether.
+    const float raw_gap =
+        largestPolicyGap(policyUnderScale(1.0f, false), policyUnderScale(10.0f, false));
+    if (raw_gap <= 0.01f)
+    {
+        std::cout << std::format(
+            "[FAIL] unnormalised selection ignored a tenfold value scale: gap {:.6f}\n", raw_gap);
+        failures++;
+    }
+
+    // Normalised, the dependence has to shrink - but it cannot vanish, and expecting it
+    // to was wrong. An action is worth its edge reward plus its discounted value, and
+    // scaling the network's output scales only the second term: a +1 apple and a -10
+    // death keep their size. So the sum being normalised is a different mixture at each
+    // scale, and exact invariance is unavailable by construction rather than by defect.
+    const float normalised_gap =
+        largestPolicyGap(policyUnderScale(1.0f, true), policyUnderScale(10.0f, true));
+    if (normalised_gap >= raw_gap)
+    {
+        std::cout << std::format(
+            "[FAIL] normalising did not reduce the value scale's influence: raw {:.6f}, "
+            "normalised {:.6f}\n",
+            raw_gap, normalised_gap);
+        failures++;
+    }
 }
 
 void testRootNoiseIsAppliedAndKeepsADistribution()
@@ -1314,6 +1402,7 @@ int main()
     testNoActionIsStarved();
     testDoomedPositionIsSearchedNotExpandedPastDeath();
     testBackupDiscountsByEdgeLength();
+    testNormalisingMakesSelectionScaleInvariant();
     testRootNoiseIsAppliedAndKeepsADistribution();
     testSearchReusesBuffersWithoutLeakingState();
     testAvoidsAnImmediateWall();
