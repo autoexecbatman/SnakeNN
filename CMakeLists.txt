@@ -721,6 +721,7 @@ add_executable(TrainerOptionsTest
     src/trainer_options_test.cpp
     src/trainer_options.cpp
     src/az_parameters.cpp
+    src/flag_parser.cpp
 )
 
 set_property(TARGET TrainerOptionsTest PROPERTY CXX_STANDARD 20)
@@ -844,6 +845,7 @@ add_executable(AlphaZeroTrainer
     src/az_trainer.cpp
     src/trainer_options.cpp
     src/az_parameters.cpp
+    src/flag_parser.cpp
     src/selfplay.cpp
     src/mcts.cpp
     src/exploration_floor.cpp

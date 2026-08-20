@@ -1,4 +1,4 @@
-# Mutation test for flags::parseWholeInt.
+﻿# Mutation test for flags::parseWholeInt.
 #
 # Each mutant is compiled in its own directory together with a copy of the header
 # and the test, because MSVC resolves a quoted include from the including file's
@@ -25,6 +25,20 @@ $mutants = @(
   @{ name = "u_drop_consumption";    scope = "unsigned int parseWholeUnsigned"; from = "result.ec != std::errc{} || result.ptr != text.data() + text.size()"; to = "false" },
   @{ name = "u_drop_range_branch";   scope = "unsigned int parseWholeUnsigned"; from = "result.ec == std::errc::result_out_of_range"; to = "false" },
   @{ name = "u_always_zero";         scope = "unsigned int parseWholeUnsigned"; from = "return number;"; to = "return 0;" },
+  # parseUnitFloat. Scoped, because its body shares its shape with the two above and an
+  # unscoped replacement would mutate all three at once and report a kill for the wrong
+  # reason.
+  @{ name = "unit_drop_consumption";    scope = "float parseUnitFloat"; from = "result.ec != std::errc{} || result.ptr != text.data() + text.size()"; to = "result.ec != std::errc{}" },
+  @{ name = "unit_drop_range_branch";   scope = "float parseUnitFloat"; from = "result.ec == std::errc::result_out_of_range"; to = "false" },
+  # The unit bound. Written as a negated range test so a NaN - which compares false
+  # against everything - is refused; the two mutants below are the two ways to lose that.
+  @{ name = "unit_no_bound";       scope = "float parseUnitFloat"; from = "    if (!(number >= 0.0f && number <= 1.0f))"; to = "    if (false)" },
+  @{ name = "unit_bound_admits_nan";    scope = "float parseUnitFloat"; from = "    if (!(number >= 0.0f && number <= 1.0f))"; to = "    if (number < 0.0f || number > 1.0f)" },
+  # The endpoints are legal: zero is off and one is always. Excluding them turns a
+  # deliberate setting into an error.
+  @{ name = "unit_bound_excludes_ends"; scope = "float parseUnitFloat"; from = "    if (!(number >= 0.0f && number <= 1.0f))"; to = "    if (!(number > 0.0f && number < 1.0f))" },
+  @{ name = "unit_upper_bound_only";    scope = "float parseUnitFloat"; from = "number >= 0.0f && number <= 1.0f"; to = "number <= 1.0f" },
+  @{ name = "unit_lower_bound_only";    scope = "float parseUnitFloat"; from = "number >= 0.0f && number <= 1.0f"; to = "number >= 0.0f" },
   @{ name = "u_message_drops_flag";  from = '"{} needs a whole number that is not negative, got ''{}''", flag, text'; to = '"needs a whole number that is not negative, got ''{}''", text' },
   # requireAtLeast. The two off-by-one mutants are what the paired bounds in the
   # test exist to catch; the never-throws one is what the accept cases cannot.
@@ -40,7 +54,7 @@ $mutants = @(
   @{ name = "f_drop_missing_value";  from = "if (index + 1 >= arguments.size())"; to = "if (false)" },
   @{ name = "f_drop_midline_guard";  from = 'if (value.starts_with("--"))'; to = "if (false)" },
   @{ name = "f_step_by_one";         from = "index += 2"; to = "index += 1" },
-  @{ name = "f_swap_flag_and_value"; from = "pairs.push_back(FlagValue{flag, value});"; to = "pairs.push_back(FlagValue{value, flag});" },
+  @{ name = "f_swap_flag_and_value"; from = "pairs.push_back(FlagValue{ flag, value });"; to = "pairs.push_back(FlagValue{ value, flag });" },
   @{ name = "f_drop_last_pair";      from = "index < arguments.size(); index += 2"; to = "index + 2 < arguments.size(); index += 2" }
 )
 

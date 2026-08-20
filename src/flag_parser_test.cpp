@@ -1,3 +1,4 @@
+﻿#include <cmath>
 #include <format>
 #include <iostream>
 #include <stdexcept>
@@ -86,7 +87,7 @@ void rejectsAnythingItDidNotFullyConsume()
 // Both branches throw the same type, so only the message distinguishes them.
 void reportsAnOutOfRangeValueAsItsOwnMistake()
 {
-    for (const std::string_view text : {"2147483648", "-2147483649", "99999999999999999999"})
+    for (const std::string_view text : { "2147483648", "-2147483649", "99999999999999999999" })
     {
         expectRejected("--seed", text);
         try
@@ -328,35 +329,111 @@ void expectArgumentsRejected(std::string_view what, const std::vector<std::strin
 void splitsArgumentsIntoPairsInOrder()
 {
     expectPairs("no arguments", {}, {});
-    expectPairs("one pair", {"--board", "10"}, {"--board", "10"});
-    expectPairs("three pairs, order preserved", {"--board", "10", "--games", "64", "--seed", "0"},
-                {"--board", "10", "--games", "64", "--seed", "0"});
+    expectPairs("one pair", { "--board", "10" }, { "--board", "10" });
+    expectPairs("three pairs, order preserved", { "--board", "10", "--games", "64", "--seed", "0" },
+                { "--board", "10", "--games", "64", "--seed", "0" });
     // A negative number is a value; only "--" opens a flag.
-    expectPairs("negative value", {"--offset", "-5"}, {"--offset", "-5"});
+    expectPairs("negative value", { "--offset", "-5" }, { "--offset", "-5" });
     // A path is a value like any other.
-    expectPairs("path value", {"--checkpoint", "az10_iter123.pt"},
-                {"--checkpoint", "az10_iter123.pt"});
+    expectPairs("path value", { "--checkpoint", "az10_iter123.pt" },
+                { "--checkpoint", "az10_iter123.pt" });
 }
 
 void rejectsAFlagWithNoValue()
 {
-    expectArgumentsRejected("trailing flag", {"--board"}, "--board");
-    expectArgumentsRejected("trailing flag after a pair", {"--board", "10", "--games"}, "--games");
+    expectArgumentsRejected("trailing flag", { "--board" }, "--board");
+    expectArgumentsRejected("trailing flag after a pair", { "--board", "10", "--games" },
+                            "--games");
     // The dropped value mid-line: "--games" would otherwise be board's value.
-    expectArgumentsRejected("value dropped mid-line", {"--board", "--games", "64"}, "--board");
+    expectArgumentsRejected("value dropped mid-line", { "--board", "--games", "64" }, "--board");
 }
 
 void rejectsSomethingThatIsNotAFlag()
 {
-    expectArgumentsRejected("bare word first", {"board", "10"}, "board");
-    expectArgumentsRejected("single dash", {"-board", "10"}, "-board");
-    expectArgumentsRejected("bare word after a pair", {"--board", "10", "games", "64"}, "games");
+    expectArgumentsRejected("bare word first", { "board", "10" }, "board");
+    expectArgumentsRejected("single dash", { "-board", "10" }, "-board");
+    expectArgumentsRejected("bare word after a pair", { "--board", "10", "games", "64" }, "games");
 }
 
 }  // namespace
 
+void expectRate(std::string_view flag, std::string_view text, float expected)
+{
+    try
+    {
+        const float value = flags::parseUnitFloat(flag, text);
+        if (std::abs(value - expected) > 1e-6f)
+        {
+            std::cout << std::format("[FAIL] {} '{}': expected {:.6f}, got {:.6f}\n", flag, text,
+                                     expected, value);
+            failures++;
+        }
+    }
+    catch (const std::exception& error)
+    {
+        std::cout << std::format("[FAIL] {} '{}': rejected: {}\n", flag, text, error.what());
+        failures++;
+    }
+}
+
+void expectRateRejected(std::string_view flag, std::string_view text)
+{
+    try
+    {
+        const float value = flags::parseUnitFloat(flag, text);
+        std::cout << std::format("[FAIL] {} '{}': accepted, returned {:.6f}\n", flag, text, value);
+        failures++;
+    }
+    catch (const std::invalid_argument& error)
+    {
+        const std::string message = error.what();
+        if (message.find(flag) == std::string::npos)
+        {
+            std::cout << std::format("[FAIL] {} '{}': message omits the flag: {}\n", flag, text,
+                                     message);
+            failures++;
+        }
+    }
+    catch (const std::exception& error)
+    {
+        std::cout << std::format("[FAIL] {} '{}': wrong exception: {}\n", flag, text, error.what());
+        failures++;
+    }
+}
+
+// A rate is a fraction in [0, 1]. The endpoints are legal - zero is "off" and one is
+// "always" - and everything outside is refused rather than clamped, because a clamp
+// turns a typo into a plausible run.
+void testParseUnitFloat()
+{
+    expectRate("--exploration-epsilon", "0", 0.0f);
+    expectRate("--exploration-epsilon", "1", 1.0f);
+    expectRate("--exploration-epsilon", "0.1", 0.1f);
+    expectRate("--exploration-epsilon", "0.5", 0.5f);
+    expectRate("--exploration-epsilon", ".5", 0.5f);
+    expectRate("--exploration-epsilon", "1e-1", 0.1f);
+
+    // The defect this parser exists to avoid, in its own shape: a partial parse is an
+    // error, not a value. "0.1x" must not arrive as 0.1.
+    expectRateRejected("--exploration-epsilon", "0.1x");
+    expectRateRejected("--exploration-epsilon", "abc");
+    expectRateRejected("--exploration-epsilon", "");
+    expectRateRejected("--exploration-epsilon", " 0.5");
+    expectRateRejected("--exploration-epsilon", "0.5 ");
+
+    // Outside the unit interval, either side.
+    expectRateRejected("--exploration-epsilon", "1.5");
+    expectRateRejected("--exploration-epsilon", "-0.1");
+
+    // A NaN compares false against every bound, so a range test written as two
+    // comparisons would admit it and hand an infinity to a search config.
+    expectRateRejected("--exploration-epsilon", "nan");
+    expectRateRejected("--exploration-epsilon", "inf");
+}
+
 int main()
 {
+    testParseUnitFloat();
     acceptsAWholeNumber();
     rejectsAnythingItDidNotFullyConsume();
     reportsAnOutOfRangeValueAsItsOwnMistake();

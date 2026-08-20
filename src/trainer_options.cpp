@@ -1,4 +1,4 @@
-#include <algorithm>
+﻿#include <algorithm>
 #include <cassert>
 #include <charconv>
 #include <format>
@@ -7,6 +7,7 @@
 #include <string>
 
 #include "az_parameters.h"
+#include "flag_parser.h"
 #include "trainer_options.h"
 
 namespace trainer
@@ -246,6 +247,10 @@ Settings parseArguments(std::span<const char* const> arguments)
         else if (flag == "--ledger")
         {
             settings.ledger_path = value;
+        }
+        else if (flag == "--exploration-epsilon")
+        {
+            settings.exploration_epsilon = flags::parseUnitFloat(flag, value);
         }
         else if (flag == "--resume")
         {

@@ -1,4 +1,4 @@
-#include <cassert>
+﻿#include <cassert>
 #include <charconv>
 #include <format>
 #include <stdexcept>
@@ -29,6 +29,34 @@ int parseWholeInt(std::string_view flag, std::string_view text)
     if (result.ec != std::errc{} || result.ptr != text.data() + text.size())
     {
         throw std::invalid_argument(std::format("{} needs a whole number, got '{}'", flag, text));
+    }
+    return number;
+}
+
+float parseUnitFloat(std::string_view flag, std::string_view text)
+{
+    assert(!flag.empty() && "parseUnitFloat was given no flag name to report against");
+
+    float number = 0.0f;
+    const std::from_chars_result result =
+        std::from_chars(text.data(), text.data() + text.size(), number);
+
+    if (result.ec == std::errc::result_out_of_range)
+    {
+        throw std::invalid_argument(
+            std::format("{} is out of range for a rate, got '{}'", flag, text));
+    }
+    // Unparsed input remaining means a partial parse, which is an error not a value.
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size())
+    {
+        throw std::invalid_argument(std::format("{} needs a number, got '{}'", flag, text));
+    }
+    // Written as a failed range test rather than a pair of comparisons, so a NaN -
+    // which compares false against everything - is refused rather than admitted.
+    if (!(number >= 0.0f && number <= 1.0f))
+    {
+        throw std::invalid_argument(
+            std::format("{} must be a rate in [0, 1], got '{}'", flag, text));
     }
     return number;
 }
@@ -91,7 +119,7 @@ std::vector<FlagValue> readFlags(std::span<const std::string> arguments)
         {
             throw std::invalid_argument(std::format("{} was given no value", flag));
         }
-        pairs.push_back(FlagValue{flag, value});
+        pairs.push_back(FlagValue{ flag, value });
     }
     return pairs;
 }

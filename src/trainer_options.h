@@ -1,8 +1,10 @@
-#pragma once
+﻿#pragma once
 
 #include <optional>
 #include <span>
 #include <string>
+
+#include "az_parameters.h"
 
 // The trainer's settings, and the two strings it prints.
 //
@@ -59,6 +61,12 @@ struct Settings
     // is build/Release and is not version controlled, so a run meant to leave a
     // durable record passes --ledger ../../docs/runs.tsv.
     std::string ledger_path{ "runs.tsv" };
+    // How often selection ignores its scores and picks uniformly, before the
+    // 1/log(N) decay. A flag rather than a constant because it changes the run's
+    // result and the ledger records the command line: compiled in, two runs that
+    // differ by it are indistinguishable afterwards. Defaults to the constant, so
+    // omitting it keeps whatever az_parameters.h says.
+    float exploration_epsilon{ az::EXPLORATION_EPSILON };
 
     int cellCount() const noexcept { return board * board; }
     // The snake starts one segment long, so this many apples fills the board.

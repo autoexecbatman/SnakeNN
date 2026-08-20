@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <span>
 #include <string>
@@ -25,6 +25,14 @@ int parseWholeInt(std::string_view flag, std::string_view text);
 // A leading '-' is rejected rather than wrapped, so "-1" is an error and not
 // 4294967295. Accepts 0 through 4294967295.
 unsigned int parseWholeUnsigned(std::string_view flag, std::string_view text);
+
+// As parseWholeInt, for a rate in [0, 1] such as an exploration or noise fraction.
+//
+// The whole of `text` must be consumed, so "0.1x" is rejected rather than read as
+// 0.1. Accepts "0", "1", "0.5", ".5" and "1e-1"; rejects "", " 0.5", "0.5 ", a
+// value below 0 or above 1, and any not-a-number - an infinity or a NaN reaching a
+// search config would disable the thing it configures rather than fail.
+float parseUnitFloat(std::string_view flag, std::string_view text);
 
 // Throws std::invalid_argument unless value >= minimum. The message carries the
 // flag, the bound and the value.

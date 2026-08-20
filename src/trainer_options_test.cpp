@@ -1,4 +1,4 @@
-#include <cassert>
+﻿#include <cassert>
 #include <format>
 #include <iostream>
 #include <string>
@@ -68,13 +68,14 @@ std::string describe(const trainer::Settings& settings)
     return std::format(
         "board={}\niterations={}\nstart_iteration={}\ngames_per_iteration={}\nsimulations={}\n"
         "step_limit_override={}\nchannels={}\nblocks={}\nbatch_size={}\nbatches_per_iteration={}\n"
-        "replay_bytes={}\nseed={}\ncheckpoint={}\nresume={}\nledger_path={}\n",
+        "replay_bytes={}\nseed={}\ncheckpoint={}\nresume={}\nledger_path={}\n"
+        "exploration_epsilon={}\n",
         settings.board, settings.iterations, settings.start_iteration, settings.games_per_iteration,
         settings.simulations,
         settings.step_limit_override ? std::format("{}", *settings.step_limit_override) : "none",
         settings.channels, settings.blocks, settings.batch_size, settings.batches_per_iteration,
         settings.replay_bytes, settings.seed, settings.checkpoint, settings.resume,
-        settings.ledger_path);
+        settings.ledger_path, settings.exploration_epsilon);
 }
 
 // Splits a description into its lines so exactly one may be required to differ.
@@ -225,6 +226,7 @@ void testEveryFlagSetsTheFieldItNames()
     // which git ignores. A run whose cost lands there is as lost as the ones this
     // ledger exists to replace, so the path is given rather than assumed.
     expectFlagSetsOnly("--ledger", "../../docs/runs.tsv", "ledger_path=../../docs/runs.tsv");
+    expectFlagSetsOnly("--exploration-epsilon", "0.25", "exploration_epsilon=0.25");
 
     // The whole command line the current run was launched with, parsed at once.
     // Each of the fourteen above is checked alone; this is the one check that a
@@ -394,8 +396,29 @@ void testProgressBarReportsTheFurtherMeasure()
 
 }  // namespace
 
+// The flag exists so the ledger records what the run did: the ledger stores the command
+// line, and a value compiled into az_parameters.h leaves two different runs looking
+// identical afterwards. So the property is that the flag reaches the settings, and that
+// omitting it falls back to the constant rather than to zero.
+void testExplorationEpsilonIsAFlag()
+{
+    expect(parse({ "--exploration-epsilon", "0.1" }).exploration_epsilon == 0.1f,
+           "--exploration-epsilon 0.1 arrives as 0.1");
+    expect(parse({ "--exploration-epsilon", "0" }).exploration_epsilon == 0.0f,
+           "--exploration-epsilon 0 arrives as 0, which is off");
+    // Omitted means whatever the constant says, not zero - otherwise turning the floor on
+    // in az_parameters.h would be silently overridden by every run that did not pass it.
+    expect(parse({ "--board", "10" }).exploration_epsilon == az::EXPLORATION_EPSILON,
+           "omitting the flag falls back to the constant");
+    // A rate, refused outside [0, 1] and on a partial parse.
+    expect(throwsOnParse({ "--exploration-epsilon", "1.5" }), "a rate above one is refused");
+    expect(throwsOnParse({ "--exploration-epsilon", "-0.1" }), "a negative rate is refused");
+    expect(throwsOnParse({ "--exploration-epsilon", "0.1x" }), "a partial parse is refused");
+}
+
 int main()
 {
+    testExplorationEpsilonIsAFlag();
     std::cout << "Trainer options\n";
     testDefaultsAreTheDocumentedOnes();
     testStepLimitIsDerivedFromTheBoardUnlessGiven();
