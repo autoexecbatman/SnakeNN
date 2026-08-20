@@ -570,6 +570,60 @@ void testNormalisingReachesASaturatedRoot()
     }
 }
 
+// The property the floor exists for, stated as the thing that was measured broken: under a
+// prior near one-hot the search visits one root action of three, and no value of c_puct
+// recovers it because every term of PUCT's exploration half multiplies the prior. An
+// additive floor does not, so it must turn all_actions_visited from false to true.
+void testTheExplorationFloorCoversTheRoot()
+{
+    SnakeEnv board = boardWithDistantFood(6, 1);
+
+    SaturatedPriorEvaluator without_evaluator;
+    MonteCarloSearch::Config without = testConfig(200);
+    without.exploration_epsilon = 0.0f;
+    MonteCarloSearch without_search(without_evaluator, without);
+    const std::vector<const SnakeEnv*> without_roots{ &board };
+    const MonteCarloSearch::Result bare = without_search.search(without_roots).front();
+
+    // The falsifier. If this ever reports true the position stopped being the hard case
+    // and the assertion below proves nothing.
+    if (bare.all_actions_visited)
+    {
+        std::cout << "[FAIL] the saturated position no longer starves the root, so the "
+                     "floor below is not being tested against anything\n";
+        failures++;
+    }
+
+    SaturatedPriorEvaluator with_evaluator;
+    MonteCarloSearch::Config with = testConfig(200);
+    with.exploration_epsilon = 0.1f;
+    MonteCarloSearch with_search(with_evaluator, with);
+    const std::vector<const SnakeEnv*> with_roots{ &board };
+    const MonteCarloSearch::Result floored = with_search.search(with_roots).front();
+
+    if (!floored.all_actions_visited)
+    {
+        std::cout << std::format(
+            "[FAIL] the exploration floor did not cover the root: "
+            "policy {:.4f} / {:.4f} / {:.4f}\n",
+            floored.policy[0], floored.policy[1], floored.policy[2]);
+        failures++;
+    }
+
+    // And it still returns a distribution.
+    float total = 0.0f;
+    for (float weight : floored.policy)
+    {
+        total += weight;
+    }
+    if (std::abs(total - 1.0f) > 1e-5f)
+    {
+        std::cout << std::format("[FAIL] the floored policy is not a distribution: {:.6f}\n",
+                                 total);
+        failures++;
+    }
+}
+
 void testRootNoiseIsAppliedAndKeepsADistribution()
 {
     // Every other config sets the fraction to zero, so this body ran only inside the
@@ -1479,6 +1533,7 @@ int main()
     testBackupDiscountsByEdgeLength();
     testNormalisingMakesSelectionScaleInvariant();
     testNormalisingReachesASaturatedRoot();
+    testTheExplorationFloorCoversTheRoot();
     testRootNoiseIsAppliedAndKeepsADistribution();
     testSearchReusesBuffersWithoutLeakingState();
     testAvoidsAnImmediateWall();

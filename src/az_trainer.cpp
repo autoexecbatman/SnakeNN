@@ -174,6 +174,7 @@ int main(int argc, char** argv)
     // Set here even though the default matches: a field only some callers set is how
     // self-play and evaluation come to search differently.
     search_config.normalize_values = az::NORMALIZE_VALUES;
+    search_config.exploration_epsilon = az::EXPLORATION_EPSILON;
     search_config.death_cap = az::DEATH_CAP;
     search_config.death_cap_threshold = az::DEATH_CAP_THRESHOLD;
     search_config.root_noise_fraction = az::ROOT_NOISE_FRACTION;

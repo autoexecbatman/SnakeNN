@@ -91,6 +91,7 @@ int main(int argc, char** argv)
     // Set here even though the default matches: a field only some callers set is how
     // self-play and evaluation come to search differently.
     search_config.normalize_values = az::NORMALIZE_VALUES;
+    search_config.exploration_epsilon = az::EXPLORATION_EPSILON;
     search_config.discount = az::DISCOUNT;
     // Off, as in the evaluator, so what is on screen is the agent the win rate
     // describes rather than the exploration policy.

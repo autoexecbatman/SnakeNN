@@ -123,6 +123,7 @@ MonteCarloSearch::Config searchConfig(const ProbeSettings& settings)
     config.trap_report = az::TRAP_REPORT;
     config.average_edges = false;
     config.normalize_values = az::NORMALIZE_VALUES;
+    config.exploration_epsilon = az::EXPLORATION_EPSILON;
     // Off on purpose: the cap changes which move is played, and a probe that let it
     // fire would score the head against a search the head had already steered.
     config.death_cap = false;

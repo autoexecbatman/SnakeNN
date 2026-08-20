@@ -200,6 +200,21 @@ constexpr float VALUE_SCALE = 40.0f;
 // prior of 0.0005 yields almost no exploration term at any scale.
 constexpr bool NORMALIZE_VALUES = false;
 
+// How often selection picks an action uniformly instead of by its scores, before the
+// 1/log(N) decay applied in exploration_floor.h. Zero is off.
+//
+// Every term of the PUCT exploration half multiplies the prior, so a prior near zero
+// leaves the search no way back: measured on az10_death368, sweeping c_puct over a
+// hundredfold moved root actions visited from 1.13 of 3 to 1.24. KataGo's forced playouts
+// have the same shape and award under half a playout at these priors. Xiao et al. 2019 mix
+// in a uniform policy instead, which is additive and does not ask the network's permission
+// - at 0.1 here every action is guaranteed about 3.8 visits of 200.
+//
+// Off, so a checkpoint trained before it plays as it did. Turning it on spends simulations
+// on actions the network dislikes in exchange for covering the root; judge it on coverage
+// first and on win rate second.
+constexpr float EXPLORATION_EPSILON = 0.0f;
+
 // The paper caps a 10x10 game at 1,200 steps, which is twelve steps per cell.
 // Scaling by area rather than fixing the number keeps "win" meaning the same
 // thing at every board size the curriculum passes through.

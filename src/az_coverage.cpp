@@ -66,6 +66,8 @@ struct CoverageSettings
     // otherwise a weak checkpoint is measured on the short games it plays and a
     // strong one on crowded boards, and the difference is the population.
     std::string position_checkpoint;
+    // Swept rather than fixed: the floor is the thing under test here.
+    float epsilon{ 0.0f };
 };
 
 CoverageSettings parseSettings(std::span<const std::string> arguments)
@@ -113,6 +115,10 @@ CoverageSettings parseSettings(std::span<const std::string> arguments)
         {
             settings.position_checkpoint = std::string(entry.value);
         }
+        else if (entry.flag == "--epsilon")
+        {
+            settings.epsilon = std::stof(std::string(entry.value));
+        }
         else
         {
             throw std::invalid_argument(std::format("unknown flag {}", entry.flag));
@@ -143,6 +149,7 @@ MonteCarloSearch::Config armConfig(const CoverageSettings& settings, float noise
     config.trap_report = az::TRAP_REPORT;
     config.average_edges = false;
     config.normalize_values = az::NORMALIZE_VALUES;
+    config.exploration_epsilon = settings.epsilon;
     config.death_cap = false;
     config.death_cap_threshold = az::DEATH_CAP_THRESHOLD;
     config.alias_report = false;
@@ -459,10 +466,16 @@ int main(int argc, char** argv)
         std::format("NOISE ON at {}, c_puct 0.5 - self-play conditions", az::ROOT_NOISE_FRACTION),
         noisy);
 
-    for (const float exploration : { 5.0f, 20.0f, 50.0f })
+    // The exploration floor, which is the arm this program was extended for. c_puct is
+    // left alone: sweeping it was already measured to move coverage from 1.13 to 1.24
+    // actions, because every term it appears in multiplies the prior.
+    for (const float epsilon : { 0.05f, 0.1f, 0.3f })
     {
-        const ArmResult swept = measureArm(network, device, settings, 0.0f, exploration, positions);
-        report(std::format("NOISE OFF, c_puct {}", exploration), swept);
+        CoverageSettings floored = settings;
+        floored.epsilon = epsilon;
+        const ArmResult swept =
+            measureArm(network, device, floored, 0.0f, az::EXPLORATION, positions);
+        report(std::format("NOISE OFF, exploration floor epsilon {}", epsilon), swept);
     }
 
     const auto finished = std::chrono::high_resolution_clock::now();

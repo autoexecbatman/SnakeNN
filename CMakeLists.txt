@@ -624,6 +624,7 @@ add_test(NAME vector_env_properties COMMAND VectorEnvTest)
 add_executable(SearchTest
     src/mcts_test.cpp
     src/mcts.cpp
+    src/exploration_floor.cpp
     src/value_range.cpp
     src/snake_env.cpp
 )
@@ -701,6 +702,7 @@ add_executable(SelfPlayTest
     src/selfplay_test.cpp
     src/selfplay.cpp
     src/mcts.cpp
+    src/exploration_floor.cpp
     src/value_range.cpp
     src/snake_env.cpp
 )
@@ -823,6 +825,19 @@ set_property(TARGET ValueRangeTest PROPERTY CXX_STANDARD 20)
 enable_strict_warnings(ValueRangeTest)
 add_test(NAME value_range COMMAND ValueRangeTest)
 
+# How often selection bypasses its own argmax and picks uniformly. PUCT's exploration
+# multiplies the prior, so it cannot reach an action the network has written off; this
+# floor is additive and can. No LibTorch, so its assertions are reachable in Debug.
+# Mutation sweep in docs/mutate_exploration_floor.ps1.
+add_executable(ExplorationFloorTest
+    src/exploration_floor_test.cpp
+    src/exploration_floor.cpp
+)
+
+set_property(TARGET ExplorationFloorTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(ExplorationFloorTest)
+add_test(NAME exploration_floor COMMAND ExplorationFloorTest)
+
 # AlphaZero training loop.
 add_executable(AlphaZeroTrainer
     src/run_ledger.cpp
@@ -831,6 +846,7 @@ add_executable(AlphaZeroTrainer
     src/az_parameters.cpp
     src/selfplay.cpp
     src/mcts.cpp
+    src/exploration_floor.cpp
     src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
@@ -858,6 +874,7 @@ add_executable(AlphaZeroEvaluate
     src/az_parameters.cpp
     src/flag_parser.cpp
     src/mcts.cpp
+    src/exploration_floor.cpp
     src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
@@ -886,6 +903,7 @@ add_executable(AlphaZeroDeathProbe
     src/az_parameters.cpp
     src/flag_parser.cpp
     src/mcts.cpp
+    src/exploration_floor.cpp
     src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
@@ -913,6 +931,7 @@ add_executable(AlphaZeroCoverage
     src/az_parameters.cpp
     src/flag_parser.cpp
     src/mcts.cpp
+    src/exploration_floor.cpp
     src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
@@ -939,6 +958,7 @@ add_executable(AlphaZeroVisual
     src/flag_parser.cpp
     src/board_render.cpp
     src/mcts.cpp
+    src/exploration_floor.cpp
     src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp

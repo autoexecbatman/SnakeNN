@@ -6,6 +6,8 @@
 #include <optional>
 #include <stdexcept>
 
+#include "exploration_floor.h"
+
 #include "mcts.h"
 
 namespace
@@ -438,7 +440,23 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
             while (tree.nodes[node_index].first_child.has_value() &&
                    !tree.nodes[node_index].terminal)
             {
-                int action = selectChild(tree, node_index);
+                // The additive floor, bypassing the argmax rather than feeding it. Every
+                // term of PUCT's exploration half multiplies the prior, so a prior near
+                // zero cannot be rescued from inside the comparison - flooring the prior
+                // there still leaves the value term deciding. This is Xiao et al. 2019's
+                // uniform mixture in the shape an argmax search can take.
+                int action = 0;
+                const float mix_weight =
+                    explorationMixWeight(config_.exploration_epsilon, SnakeEnv::ACTION_COUNT,
+                                         tree.nodes[node_index].visit_count);
+                if (mix_weight > 0.0f && uniform_unit_(rng_) < mix_weight)
+                {
+                    action = uniform_action_(rng_);
+                }
+                else
+                {
+                    action = selectChild(tree, node_index);
+                }
                 int child_index = tree.nodes[node_index].first_child.value() + action;
 
                 SnakeEnv::StepResult outcome = state.step(static_cast<SnakeEnv::Action>(action));
