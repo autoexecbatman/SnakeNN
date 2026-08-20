@@ -1,3 +1,6 @@
+// Implementation of deriveStepLimit. The constants, and how to use them, are in
+// az_parameters.h.
+
 #include <cassert>
 #include <format>
 #include <stdexcept>

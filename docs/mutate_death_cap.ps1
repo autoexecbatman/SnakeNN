@@ -69,6 +69,12 @@ $mutants = @(
     # half-measure the assertion on the policy exists to catch.
     @{ name = "refusal_leaves_visits"; from = "visits[action] = 0;`r`n                            death_cap_fires_++;"; to = "death_cap_fires_++;" },
 
+    # The flag that decides which risk labels reach training. Always-true is the
+    # bug that was in this code before the test existed: a root with no visits
+    # falls back to a uniform policy, so anything inferring coverage from the
+    # policy calls an unsearched root fully searched.
+    @{ name = "coverage_always_true"; from = "if (visits[action] == 0)"; to = "if (false)" },
+
     # Backup must refresh the risk on every node of the path, not only the leaf.
     @{ name = "no_refresh_on_backup"; from = "refreshDeathRisk(tree, tree.path[position]);"; to = "" },
 

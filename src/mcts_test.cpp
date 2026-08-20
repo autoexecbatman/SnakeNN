@@ -8,16 +8,11 @@
 #include "mcts.h"
 #include "snake_env.h"
 
-// The search is checked against hand-written evaluators with known answers, so
-// that a failure here is a failure of selection, backup or terminal handling
-// rather than of a network. Nothing in this file links LibTorch.
+// Checked against hand-written evaluators, so a failure here is one of selection,
+// backup or terminal handling. Nothing in this file links LibTorch.
 
-// A search has no value semantics: copying one would duplicate the generator so
-// two searches drew the same stream, snapshot a descent that is still in flight,
-// and share the evaluator by reference while each counted its own rate. Checked
-// at compile time because a copy is a bug that produces plausible numbers rather
-// than a crash, so no runtime test would notice it. A member added later that
-// restored copyability would break this line and nothing else.
+// A copy would share a stream, a half-finished descent and one evaluator counter.
+// Checked at compile time; the bug produces plausible numbers rather than a crash.
 static_assert(!std::is_copy_constructible<MonteCarloSearch>::value,
               "MonteCarloSearch must not be copy constructible");
 static_assert(!std::is_copy_assignable<MonteCarloSearch>::value,
@@ -29,9 +24,8 @@ static_assert(!std::is_move_assignable<MonteCarloSearch>::value,
 static_assert(std::is_nothrow_destructible<MonteCarloSearch>::value,
               "MonteCarloSearch must stay trivially releasable - rule of zero, nothing owned");
 
-// The environment is the opposite case, and deliberately so: the search copies a
-// root once per simulation, so copying has to stay cheap and available. Stated
-// here so that removing it is a decision rather than an accident.
+// The opposite case, deliberately: the search copies a root once per simulation,
+// so copying stays cheap and available.
 static_assert(std::is_copy_constructible<SnakeEnv>::value,
               "the search copies a root per simulation - SnakeEnv must stay copyable");
 static_assert(std::is_copy_assignable<SnakeEnv>::value,
@@ -85,9 +79,8 @@ public:
     int largest_batch = 0;
 };
 
-// Says exactly one thing: these priors, and a silent value head. Lets a test
-// state what the network believes and then check that selection acted on it,
-// which is the half of the search no other evaluator here isolates.
+// These priors and a silent value head, so a test can check that selection acted
+// on what the network believes.
 class PriorEvaluator : public Evaluator
 {
 public:
@@ -113,10 +106,8 @@ private:
     std::vector<float> priors_;
 };
 
-// Flat priors and a fixed value, so the return that arrives back at the root is
-// an arithmetic consequence of the discount and the path length and nothing else.
-// That is what makes backup's exponent checkable against a number worked out by
-// hand rather than against whatever it currently produces.
+// Flat priors and a fixed value, so the root's return follows from the discount and
+// the path length alone - which is what makes backup's exponent checkable by hand.
 class ConstantValueEvaluator : public Evaluator
 {
 public:
@@ -142,9 +133,8 @@ private:
     float value_;
 };
 
-// States one death risk per action and is silent about everything else, so a test
-// can say "this action is doomed" and check only what the cap did about it. Flat
-// priors and a zero value keep every other term identical across the actions.
+// One death risk per action and silence elsewhere, so a test can say "this action
+// is doomed" and check only what the cap did about it.
 class RiskEvaluator : public Evaluator
 {
 public:
@@ -196,10 +186,8 @@ int indexOfLargest(const std::vector<float>& values)
     return best;
 }
 
-// A position with room in every direction, so that selection is the only thing
-// deciding anything: no wall, no forced move, no terminal, and the food far
-// enough that no simulation reaches it inside the horizon. Without this the
-// simulator's own rewards would be doing the work the test attributes to priors.
+// Room in every direction and food out of reach, so selection is the only thing
+// deciding - otherwise the simulator's rewards do the work attributed to priors.
 SnakeEnv openBoard(unsigned int seed)
 {
     return SnakeEnv(20, 20, seed, TEST_STEP_LIMIT);
@@ -207,18 +195,8 @@ SnakeEnv openBoard(unsigned int seed)
 
 void testPriorsSteerTheSearch()
 {
-    // The exploration term is the only route from a prior to a visit, and nothing
-    // checked that the route works. If it did not, the search would be ignoring
-    // the network entirely and every training result would be search alone.
-    //
-    // The test has to move the prior and watch the answer move with it. A single
-    // skewed vector is not enough: the first version of this asserted that a
-    // 0.90/0.05/0.05 prior put the most visits on action 0, and it passed while
-    // returning the identical distribution for a 0.98/0.01/0.01 prior - the
-    // simulator's own dynamics were doing the work and the priors were never
-    // shown to matter. Favouring each action in turn from the same position is
-    // what makes the claim falsifiable: an inert prior can win at most one of
-    // the three rounds.
+    // Favours each action in turn from one position, which is what makes the claim
+    // falsifiable: an inert prior can win at most one of the three rounds.
     const int simulations = 96;
     float visits_when_favoured[SnakeEnv::ACTION_COUNT];
     int rounds_won = 0;
@@ -255,15 +233,8 @@ void testPriorsSteerTheSearch()
 
 void testNoActionIsStarved()
 {
-    // The (1 + visits) denominator is what makes attention decay: without it a
-    // single strong prior would take every simulation and the other two branches
-    // would never be looked at once. That is a silent failure - the search still
-    // returns a policy and still looks confident. So an almost-degenerate prior
-    // has to leave visits on the other two actions anyway.
-    //
-    // Checked on an open board so that the two neglected actions are neglected
-    // rather than fatal; a wall would starve them for a legitimate reason and the
-    // test would be measuring the simulator instead of the selection rule.
+    // Without the (1 + visits) decay one strong prior takes every simulation, and the
+    // search still looks confident. Open board, so neglect is not a wall's doing.
     SnakeEnv env = openBoard(909);
     std::vector<float> nearly_degenerate{ 0.98f, 0.01f, 0.01f };
     PriorEvaluator evaluator(nearly_degenerate);
@@ -289,14 +260,8 @@ void testNoActionIsStarved()
 
 void testDoomedPositionIsSearchedNotExpandedPastDeath()
 {
-    // A position where every action kills. The descent reaches such a child,
-    // marks it terminal and must stop: expanding past death would ask the network
-    // about a finished game and hang a subtree off a node with no successors.
-    // Nothing exercised that path, so the guard in expand was assertion-only.
-    //
-    // The position is found rather than constructed, because building an enclosed
-    // snake through the public interface takes more setup than it is worth and
-    // would encode one hand-made shape instead of a real one.
+    // Every action kills, so the descent must stop rather than expand past death.
+    // The position is found rather than built, so it is a real shape.
     SnakeEnv game(6, 6, 20260808, TEST_STEP_LIMIT);
     bool found_doomed = false;
     int positions_walked = 0;
@@ -373,22 +338,15 @@ void testDoomedPositionIsSearchedNotExpandedPastDeath()
     expect(std::fabs(total - 1.0f) < 1e-4f,
            "a doomed position still yields a policy that sums to one");
     expect(evaluator.calls > 0, "the root itself was evaluated");
-    // Every child of the root is terminal here, so after the root's own expansion
-    // no further expansion is owed. One evaluation call per simulation round would
-    // mean the search kept asking about finished games.
+    // Every child terminal, so a call per simulation means it asked about a finished
+    // game.
     expect(evaluator.calls < 48, "and the search stopped asking about finished games");
     std::cout << "        doomed after " << positions_walked << " positions, body "
               << game.body().size() << ", evaluator calls " << evaluator.calls << std::endl;
 }
 
-// A 20x20 board whose food is far enough from the starting head that no path a
-// short search can walk will reach it. Without that, an eaten apple puts a reward
-// on an edge and the hand-worked arithmetic below stops applying.
-// `first_seed` is where the scan starts, and it is a required argument rather than
-// a default because it decides whether two calls give the same board or different
-// ones - which is the difference between comparing two settings on one position and
-// comparing two positions. A version of this without it returned the same board
-// four times and a test that asked for four distinct games silently got one.
+// A 20x20 board whose food no short search reaches, so no edge carries a reward.
+// first_seed is required because it decides whether two calls give one board or two.
 SnakeEnv boardWithDistantFood(int minimum_distance, unsigned int first_seed)
 {
     for (unsigned int seed = first_seed; seed < first_seed + 500; seed++)
@@ -409,18 +367,9 @@ SnakeEnv boardWithDistantFood(int minimum_distance, unsigned int first_seed)
 
 void testBackupDiscountsByEdgeLength()
 {
-    // The one piece of backup's arithmetic no test reached. It is checkable
-    // exactly, because with a constant value head, flat priors and no reward
-    // anywhere on the path, the return arriving at the root is determined:
-    //
-    //   one simulation  - the leaf is the root itself, so the root's mean value is
-    //                     the evaluator's value V, undiscounted.
-    //   two simulations - the second descends one edge of one tick, so the root
-    //                     accumulates V + gamma*V over two visits, giving
-    //                     V * (1 + gamma) / 2.
-    //
-    // Dropping the discount would make the second case V as well, which is why the
-    // two are checked together rather than only the second.
+    // With a constant value head and no rewards the root's return is determined: V
+    // after one simulation, V * (1 + gamma) / 2 after two. Dropping the discount
+    // makes the second V as well, so the two are checked together.
     const float value = 0.5f;
     const float discount = testConfig(1).discount;
 
@@ -460,14 +409,8 @@ MonteCarloSearch::Config noisyConfig(int simulations, float fraction, unsigned i
 
 void testRootNoiseIsAppliedAndKeepsADistribution()
 {
-    // Root noise had no test at all. Every config in this file and in
-    // selfplay_test sets the fraction to zero, which is the function's first early
-    // return - so its body ran only inside the training binary, on the one path
-    // that shapes every game the agent learns from.
-    //
-    // Three things have to hold: the noise reaches the search, it is actually
-    // random, and it leaves the priors a distribution. The last is asserted inside
-    // the search; what a test can see is that the visit policy still sums to one.
+    // Every other config sets the fraction to zero, so this body ran only inside the
+    // training binary. Noise must arrive, be random, and leave a distribution.
     SnakeEnv quiet_board = boardWithDistantFood(6, 1);
     SilentEvaluator quiet_evaluator;
     MonteCarloSearch quiet_search(quiet_evaluator, noisyConfig(64, 0.0f, 555));
@@ -508,9 +451,7 @@ void testRootNoiseIsAppliedAndKeepsADistribution()
     expect(seed_changed_the_noise, "and the noise is drawn, not fixed - a new seed moves it");
     expect(std::fabs(noisy_total - 1.0f) < 1e-4f, "the policy under noise still sums to one");
 
-    // The extreme the assertions are really about: at a fraction of one the
-    // network's priors are discarded entirely and the Dirichlet weights stand
-    // alone. If mixing could break the distribution, this is where it would.
+    // At a fraction of one the priors are discarded and only the draws stand.
     SnakeEnv pure_board = boardWithDistantFood(6, 1);
     SilentEvaluator pure_evaluator;
     MonteCarloSearch pure_search(pure_evaluator, noisyConfig(64, 1.0f, 4242));
@@ -552,17 +493,9 @@ bool sameResult(const MonteCarloSearch::Result& left, const MonteCarloSearch::Re
 
 void testSearchReusesBuffersWithoutLeakingState()
 {
-    // The search keeps its trees and its batch buffers between calls instead of
-    // rebuilding them, which is worth tens of thousands of allocations per game and
-    // introduces exactly one risk: a later call reading something an earlier one
-    // left behind. Nothing tested that, because nothing called search twice.
-    //
-    // The position makes the check possible. With the food far from the head and a
-    // short search, no simulation reaches it, so no simulated apple is ever placed
-    // and the per-simulation reseeding changes nothing observable. With root noise
-    // off as well, the result becomes a function of the position alone - so the
-    // same position searched again on the same object has to give the same answer,
-    // and a stale tree or an uncleared path would show up as a difference.
+    // Trees are kept between calls, so the risk is a later call reading what an
+    // earlier one left. Unreachable food and no noise make the result a function of
+    // the position alone, so a stale tree shows up as a difference.
     const int simulations = 16;
     SnakeEnv board = boardWithDistantFood(10, 1);
 
@@ -609,14 +542,8 @@ void testSearchReusesBuffersWithoutLeakingState()
     }
     expect(wide_matches, "and a reused object searches a wide batch exactly as a new one does");
 
-    // Deliberately not asserted here: that the four results differ from each other.
-    // They do not, and that is correct - every game starts with its head at the
-    // centre of an empty board and the only thing distinguishing them is food the
-    // search cannot reach within this horizon, so the positions are identical as
-    // far as selection is concerned. The first version of this test claimed the
-    // opposite and failed, which is the position telling the truth about itself.
-    // Tree independence is what testBatchesEveryTreeTogether covers, on a batch
-    // whose games really do diverge.
+    // Not asserted: that the four differ. They do not, and correctly so - the only
+    // thing separating them is food out of reach. Divergence is tested elsewhere.
 
     std::vector<const SnakeEnv*> no_roots;
     expect(reused.search(no_roots).empty(), "no roots yields no results");
@@ -647,9 +574,7 @@ void testPolicyIsADistribution()
 
 void testAvoidsAnImmediateWall()
 {
-    // Drive to the right wall, then search from one step away. Continuing
-    // straight is fatal; the other two actions are not. Nothing in the
-    // evaluator says so - the search has to discover it from the simulator.
+    // Straight is fatal and the evaluator does not say so; the search must find it.
     SnakeEnv env(9, 9, 5, TEST_STEP_LIMIT);
     while (env.body()[0].x < env.width() - 2)
     {
@@ -661,9 +586,7 @@ void testAvoidsAnImmediateWall()
     std::vector<const SnakeEnv*> roots{ &env };
     auto results = search.search(roots);
 
-    // Stated against the other actions rather than against a constant, so a
-    // uniform policy - or an empty one - fails it. A threshold like "under 0.2"
-    // is satisfied by all zeros, which is exactly what a broken search returns.
+    // Against the other actions, not a constant: all-zeros satisfies a threshold.
     int straight = (int)SnakeEnv::Action::STRAIGHT;
     float straight_weight = results[0].policy[straight];
     float left_weight = results[0].policy[(int)SnakeEnv::Action::LEFT];
@@ -681,15 +604,8 @@ void testPrefersReachableFood()
     SilentEvaluator evaluator;
     MonteCarloSearch search(evaluator, testConfig(96));
 
-    // Find a state where exactly one action eats, and where eating does not
-    // put the head on the border.
-    //
-    // The border matters, and an earlier version of this test ignored it: with
-    // death at -10 against +1 for food, a search that eats into a wall column
-    // correctly declines - measured 2 percent of visits on the eating move with
-    // the root valued at -0.67. That is the search working, not failing. The
-    // claim being made here is that reward attracts visits, so the position has
-    // to be one where reward is the only thing that differs.
+    // Exactly one action eats, and not into the border - at -10 for death a search
+    // correctly declines to eat against a wall, which would confound the claim.
     bool found = false;
     for (int attempt = 0; attempt < 2000 && !found; attempt++)
     {
@@ -702,9 +618,7 @@ void testPrefersReachableFood()
             {
                 std::vector<const SnakeEnv*> roots{ &env };
                 auto results = search.search(roots);
-                // The eating action must be the argmax and must hold most of
-                // the visits. Checking the argmax alone passes by luck one time
-                // in three, which is how the stub passed this.
+                // Argmax alone passes by luck one time in three; the share does not.
                 expect(results[0].best_action == static_cast<SnakeEnv::Action>(action) &&
                            indexOfLargest(results[0].policy) == action &&
                            results[0].policy[action] > 0.5f,
@@ -810,19 +724,11 @@ void testTerminalRootsAreRejected()
     expect(threw, "searching a finished game is refused rather than answered with noise");
 }
 
-// forcedAction decides whether the search skips a move or spends a node on it,
-// and until now nothing tested it: every search property passed identically
-// before and after it was rewritten, so none of them could catch a mistake in it.
-//
-// Rather than hand-build positions, this walks real games and checks the
-// function against `wouldDie` at every position reached. `wouldDie` is the
-// definition of "fatal" that the environment's own tests already pin down, so
-// this is a check of forcedAction against the truth rather than against itself.
+// Walks real games and checks forcedAction against wouldDie at every position,
+// which is the definition of fatal the environment's own tests already pin down.
 void testForcedActionAgreesWithWouldDie()
 {
-    // Small board so the snake traps itself often - positions where zero moves
-    // survive are the case the old -1 return conflated with a free choice, and
-    // they are rare on a large board.
+    // Small board, so the zero-survivor case arises often enough to cover.
     constexpr int BOARD = 6;
     constexpr int GAMES = 60;
     constexpr int MAX_STEPS = 400;
@@ -893,11 +799,7 @@ void testForcedActionAgreesWithWouldDie()
                 break;
             }
 
-            // Walk toward the food among the moves that survive. Playing badly
-            // keeps the snake short, and a short snake almost never has a forced
-            // move - the first version of this walked onto any survivor and
-            // reached 2 forced positions in 4493, which is not coverage of the
-            // case this function exists for.
+            // Toward the food, since a short snake almost never has a forced move.
             SnakeEnv::Action chosen = last_survivor;
             int best_distance = 1 << 30;
             for (int index = 0; index < SnakeEnv::ACTION_COUNT; index++)
@@ -923,9 +825,7 @@ void testForcedActionAgreesWithWouldDie()
     expect(!disagreed, "forcedAction matches the survivor count at every position reached");
     expect(!returned_a_fatal_move, "forcedAction never returns a move that kills");
 
-    // Coverage, so none of the above can pass because a case never arose. The
-    // doomed case is the one that would otherwise go unexercised, and it is
-    // exactly the case the old -1 return got wrong.
+    // Coverage, so nothing above passes because its case never arose.
     expect(with_one_survivor > 0, "positions with exactly one survivor were reached");
     expect(with_several_survivors > 0, "positions with a real choice were reached");
     expect(with_no_survivor > 0, "positions with no survivor were reached");
@@ -936,9 +836,8 @@ void testForcedActionAgreesWithWouldDie()
 
 }  // namespace
 
-// Walks the environment greedily towards the food until eating it is one move
-// away, so a search from here spends its depth past the first apple rather than
-// reaching it. Stops early rather than looping if the walk stalls.
+// Walks greedily until eating is one move away, so a search spends its depth past
+// the first apple. Stops early rather than looping if the walk stalls.
 SnakeEnv rootBesideTheFood(int board, unsigned int seed, int step_limit)
 {
     SnakeEnv environment(board, board, seed, step_limit);
@@ -972,11 +871,8 @@ SnakeEnv rootBesideTheFood(int board, unsigned int seed, int step_limit)
     return environment;
 }
 
-// The alias probe measures how often two simulations reaching one node disagree
-// about the edge that got them there. The root's apple is fixed, so an edge that
-// eats it pays the same reward in every simulation; disagreement can only appear
-// past a first apple, where the respawn differs between simulations. The search
-// therefore has to run deep enough on a small enough board to eat twice.
+// Disagreement can only appear past a first apple, where the respawn varies, so
+// the search must run deep enough on a small enough board to eat twice.
 void testAliasProbeCountsWhatItClaims()
 {
     SilentEvaluator evaluator;
@@ -1009,9 +905,7 @@ void testAliasProbeCountsWhatItClaims()
             std::format("one simulation revisits no edge - revisited {}", search.revisitedEdges()));
     }
 
-    // Past a first apple, which is the only place the recorded edge and the
-    // recomputed one can differ: the root's apple is fixed, so every simulation
-    // eats the same one, and only the respawn varies between them.
+    // Past a first apple, the only place two computations of an edge can differ.
     {
         MonteCarloSearch::Config config = testConfig(600);
         config.alias_report = true;
@@ -1026,9 +920,7 @@ void testAliasProbeCountsWhatItClaims()
         expect(search.aliasedEdges() <= search.revisitedEdges(),
                std::format("aliased edges are a subset of revisited ones - aliased {} of {}",
                            search.aliasedEdges(), search.revisitedEdges()));
-        // Asserted rather than printed: if no descent ever disagrees, the two
-        // checks above hold on a probe that can never fire, and the measurement
-        // this exists to make would read as zero for the wrong reason.
+        // Without this the checks above hold on a probe that can never fire.
         expect(
             search.aliasedEdges() > 0,
             std::format("the probe fires - simulations disagree about an edge - aliased {} of {}",
@@ -1037,18 +929,13 @@ void testAliasProbeCountsWhatItClaims()
         expect(search.materiallyAliasedEdges() <= search.aliasedEdges(),
                std::format("material disagreements are a subset of all of them - {} of {}",
                            search.materiallyAliasedEdges(), search.aliasedEdges()));
-        // Deducible rather than measured, which is why it may be asserted without
-        // pre-judging the rate this probe exists to report: an edge on which one
-        // simulation ate a respawned apple and another did not differs by
-        // discount^ticks of a whole apple, and edges here span one tick or a few.
-        // A zero would mean the threshold is wrong, not that the search agrees.
+        // Deduced, not measured: an edge where one simulation ate differs by nearly a
+        // whole apple, so a zero here means the threshold is wrong.
         expect(search.materiallyAliasedEdges() > 0,
                std::format("some disagreement is worth more than half an apple - {} of {}",
                            search.materiallyAliasedEdges(), search.aliasedEdges()));
 
-        // Per node rather than per traversal, so both are bounded by the traversal
-        // counts and each other. A node counted twice would break the first of
-        // these long before the ratio looked wrong.
+        // Per node, so a node counted twice breaks this before a ratio looks wrong.
         expect(search.revisitedNodes() > 0 && search.revisitedNodes() <= search.revisitedEdges(),
                std::format("revisited nodes are counted once each - {} nodes over {} traversals",
                            search.revisitedNodes(), search.revisitedEdges()));
@@ -1074,20 +961,14 @@ void testAliasProbeCountsWhatItClaims()
     }
 }
 
-// Averaging an edge over the traversals that reached it is an expectation over the
-// states a node stands for. Where every simulation finds the same game at a node
-// there is nothing to average and the search must be unchanged; where they find
-// different games it must not be.
+// Where every simulation finds the same game there is nothing to average and the
+// search must be unchanged; where they find different games it must not be.
 void testAveragedEdgesAreAnExpectationOverWhatTheNodeStandsFor()
 {
     SilentEvaluator evaluator;
 
-    // From the opening, with the root's apple fixed and the search too shallow to
-    // eat it, every simulation replays the identical game. Averaging a constant is
-    // that constant, so both settings must agree move for move.
-    //
-    // The precondition is checked rather than assumed: the alias probe must report
-    // no disagreement at all here, or this is measuring something else.
+    // Every simulation replays the identical game, so averaging changes nothing. The
+    // probe must report no disagreement, or this is measuring something else.
     {
         MonteCarloSearch::Config baseline = testConfig(80);
         baseline.alias_report = true;
@@ -1118,10 +999,8 @@ void testAveragedEdgesAreAnExpectationOverWhatTheNodeStandsFor()
             std::format("nor the root value - {:.6f} against {:.6f}", before.value, after.value));
     }
 
-    // Past a first apple the placements differ between simulations, so the edge is a
-    // draw from a distribution and its mean is a different number from its last
-    // value. The search must actually read the mean - an implementation that stores
-    // the sums and goes on reading the last write passes everything above.
+    // Here the mean differs from the last write, so an implementation that stores the
+    // sums and goes on reading the last value passes everything above and fails this.
     {
         MonteCarloSearch::Config baseline = testConfig(600);
         baseline.alias_report = true;
@@ -1138,13 +1017,8 @@ void testAveragedEdgesAreAnExpectationOverWhatTheNodeStandsFor()
         MonteCarloSearch search(evaluator, averaged);
         const MonteCarloSearch::Result after = search.search(roots)[0];
 
-        // Asserted on the root value rather than on the visit counts, and the
-        // difference is the point. Averaging changes an exploitation term deep in
-        // the tree, which changes which leaves are expanded and so what the root is
-        // worth. It does not reach the root's visit distribution here: one action
-        // already holds 98 percent of the visits, and a visit is one part in the
-        // simulation count, so the counts are far too coarse to register it. A test
-        // written against the policy passes for a search that ignores the mean.
+        // On the root value, not the visits: one action holds 98 percent of them, so
+        // the counts are too coarse to register a change deep in the tree.
         expect(std::abs(before.value - after.value) > 1e-4f,
                std::format("averaging moves the root value where the simulations disagree, so "
                            "selection reads the mean rather than the last write - {:.6f} against "
@@ -1153,9 +1027,8 @@ void testAveragedEdgesAreAnExpectationOverWhatTheNodeStandsFor()
     }
 }
 
-// Walks a small board chasing food until no action survives, and reports whether
-// it found such a position. Growing the body is what crowds the board; a random
-// walk dies at length one and never reaches one.
+// Chases food on a small board until no action survives. Growing the body is what
+// crowds the board; a random walk dies at length one and never gets there.
 bool walkToDoomedPosition(SnakeEnv& game)
 {
     for (int step = 0; step < 40000; step++)
@@ -1202,12 +1075,8 @@ bool walkToDoomedPosition(SnakeEnv& game)
     return false;
 }
 
-// Drives a game into the last column, where continuing straight leaves the board
-// on the next tick and the other two actions do not.
-//
-// The head must reach width - 1, not width - 2: from the second-to-last column
-// straight is survivable and the death is a ply further on, so a risk of zero
-// there is correct and an assertion of one is a wrong property rather than a bug.
+// Drives into the last column, where straight leaves the board next tick. It must
+// be width - 1: from width - 2 straight survives and a risk of zero is correct.
 SnakeEnv beforeTheWall()
 {
     SnakeEnv env(9, 9, 5, TEST_STEP_LIMIT);
@@ -1220,10 +1089,8 @@ SnakeEnv beforeTheWall()
 
 void testDeathRiskIsBackedUpAsUnavoidability()
 {
-    // The evaluator says every action is perfectly safe, so anything the risk
-    // reports comes from the simulator's own terminations rather than from the
-    // network. That is what separates a backed-up estimate from a copied one: a
-    // search that simply forwarded the network's number would report zero here.
+    // The evaluator calls everything safe, so a search that forwarded its number
+    // would report zero and only the simulator's terminations can raise this.
     SnakeEnv env = beforeTheWall();
     SilentEvaluator evaluator;
     MonteCarloSearch search(evaluator, testConfig(96));
@@ -1248,10 +1115,7 @@ void testDeathRiskIsBackedUpAsUnavoidability()
            std::format("walking into the wall is certain death, so its risk is exactly 1 - got "
                        "{:.6f}",
                        straight));
-    // Stated against the fatal action rather than against a constant. "Below 1"
-    // is satisfied by all-zeros, which is what a search that only ever forwarded
-    // the network's estimate returns - and that is precisely the implementation
-    // this test exists to reject.
+    // Against the fatal action, not a constant: all-zeros satisfies "below 1".
     expect(left < straight && right < straight,
            std::format("and the two survivable actions are strictly below it - {:.6f} and {:.6f} "
                        "against {:.6f}",
@@ -1260,16 +1124,8 @@ void testDeathRiskIsBackedUpAsUnavoidability()
 
 void testRiskClimbsFromBelowRatherThanStayingAtTheLeafItWasWrittenAt()
 {
-    // The root's children get their risk from evaluating the *root*, so an
-    // evaluator with one answer everywhere cannot tell a search that backs the
-    // risk up from one that never does. This one answers differently at the root
-    // than below it: 0 where no step has been taken since the last apple, 1
-    // everywhere else.
-    //
-    // So the root's children are written 0 at expansion, and only the minimum over
-    // their own children - evaluated one ply deeper, where the answer is 1 - can
-    // raise them. Dropping the refresh from backup leaves them at 0, which is the
-    // mutant `no_refresh_on_backup` that survived the first suite.
+    // Answers 0 at the root and 1 below it, so the children start at 0 and only a
+    // minimum taken one ply deeper can raise them. Without the refresh they stay 0.
     class DepthRiskEvaluator : public Evaluator
     {
     public:
@@ -1310,12 +1166,60 @@ void testRiskClimbsFromBelowRatherThanStayingAtTheLeafItWasWrittenAt()
     }
 }
 
+void testAllActionsVisitedIsFalseWhereTheSearchDidNotGo()
+{
+    // One simulation leaves the policy uniform, so reading coverage off the policy
+    // would call an untouched root fully explored and label it safe.
+    {
+        SnakeEnv env(9, 9, 11, TEST_STEP_LIMIT);
+        SilentEvaluator evaluator;
+        MonteCarloSearch search(evaluator, testConfig(1));
+        std::vector<const SnakeEnv*> roots{ &env };
+        auto results = search.search(roots);
+
+        float total = 0.0f;
+        for (float weight : results[0].policy)
+        {
+            total += weight;
+        }
+        expect(
+            std::abs(total - 1.0f) < 1e-4f,
+            std::format("with one simulation the policy is still a distribution - {:.6f}", total));
+        expect(!results[0].all_actions_visited,
+               "and the search reports that it visited nothing, which the uniform policy hides");
+    }
+
+    // A search with enough simulations does visit all three, so the flag is not
+    // simply always false.
+    {
+        SnakeEnv env(9, 9, 11, TEST_STEP_LIMIT);
+        SilentEvaluator evaluator;
+        MonteCarloSearch search(evaluator, testConfig(64));
+        std::vector<const SnakeEnv*> roots{ &env };
+        auto results = search.search(roots);
+        expect(results[0].all_actions_visited, "and reports true once every root action was tried");
+    }
+
+    // A refused action has its visits zeroed, so a capped root is excluded from
+    // the training labels by the same test.
+    {
+        SnakeEnv env = beforeTheWall();
+        SilentEvaluator evaluator;
+        MonteCarloSearch::Config config = testConfig(64);
+        config.death_cap = true;
+        config.death_cap_threshold = 0.5f;
+        MonteCarloSearch search(evaluator, config);
+        std::vector<const SnakeEnv*> roots{ &env };
+        auto results = search.search(roots);
+        expect(!results[0].all_actions_visited,
+               "a root where the cap refused an action does not count as fully searched");
+    }
+}
+
 void testCapDoesNotRefuseAtTheThresholdItself()
 {
-    // Every action sits exactly on the threshold. The contract refuses what is
-    // above it, so nothing is refused here - and an implementation using >=
-    // refuses all three, which is the off-by-one no other test can see because
-    // every risk elsewhere is exactly 0 or 1.
+    // Exactly on the threshold, where >= refuses all three - an off-by-one no other
+    // test can see, since every risk elsewhere is exactly 0 or 1.
     SnakeEnv env(9, 9, 11, TEST_STEP_LIMIT);
     RiskEvaluator evaluator(std::vector<float>{ 0.5f, 0.5f, 0.5f });
     MonteCarloSearch::Config config = testConfig(8);
@@ -1364,9 +1268,8 @@ void testDeathCapRefusesOnlyWhenAnAlternativeSurvives()
         expect(results[0].best_action != SnakeEnv::Action::STRAIGHT, "and is not chosen");
     }
 
-    // Every action doomed. Refusing here would leave the search nothing to play,
-    // and vetoing every move of a lost position is exactly what made the trap
-    // guard the endgame policy rather than a guard.
+    // All doomed: refusing here would leave nothing to play, which is what turned
+    // the trap guard into the endgame policy.
     {
         SnakeEnv env(6, 6, 20260808, TEST_STEP_LIMIT);
         const bool found = walkToDoomedPosition(env);
@@ -1400,6 +1303,7 @@ int main()
     std::cout << "MonteCarloSearch properties" << std::endl;
     testDeathRiskIsBackedUpAsUnavoidability();
     testRiskClimbsFromBelowRatherThanStayingAtTheLeafItWasWrittenAt();
+    testAllActionsVisitedIsFalseWhereTheSearchDidNotGo();
     testCapDoesNotRefuseAtTheThresholdItself();
     testDeathCapRefusesOnlyWhenAnAlternativeSurvives();
     testAliasProbeCountsWhatItClaims();

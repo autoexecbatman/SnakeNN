@@ -1,3 +1,5 @@
+// Implementation of SelfPlay. The interface, and how to call it, are in selfplay.h.
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -9,6 +11,8 @@ SelfPlay::SelfPlay(Evaluator& evaluator, const MonteCarloSearch::Config& search_
                    const Config& config)
     : evaluator_(evaluator), search_config_(search_config), config_(config), rng_(config.seed)
 {
+    // A batch of no games produces no summaries, and the caller divides by that
+    // count to report a score.
     if (config.games_in_parallel < 1)
     {
         throw std::invalid_argument("self-play needs at least one game in flight");
@@ -22,8 +26,10 @@ void SelfPlay::setProgressCallback(std::function<void(const Progress&)> callback
 
 int SelfPlay::sampleAction(const std::vector<float>& policy, int moves_played)
 {
+    // Past the opening, or with temperature off, the visit argmax is the move.
     if (moves_played >= config_.temperature_moves || config_.temperature <= 0.0f)
     {
+        // Seeded with the first action, so no sentinel stands in for "none seen".
         int best = 0;
         for (int action = 1; action < SnakeEnv::ACTION_COUNT; action++)
         {
@@ -35,6 +41,8 @@ int SelfPlay::sampleAction(const std::vector<float>& policy, int moves_played)
         return best;
     }
 
+    // Visit shares raised to 1/temperature: below one this sharpens the
+    // distribution toward the argmax, above one it flattens it toward uniform.
     float weights[SnakeEnv::ACTION_COUNT];
     float total = 0.0f;
     const float inverse_temperature = 1.0f / config_.temperature;
@@ -43,11 +51,15 @@ int SelfPlay::sampleAction(const std::vector<float>& policy, int moves_played)
         weights[action] = std::pow(policy[action], inverse_temperature);
         total += weights[action];
     }
+    // Every weight zero means the search reported no visits at all. Sampling that
+    // would divide by zero, and any action is as unjustified as any other.
     if (total <= 0.0f)
     {
         return 0;
     }
 
+    // Drawn against the running total rather than against normalised weights, which
+    // keeps the one division out of the loop.
     std::uniform_real_distribution<float> pick(0.0f, total);
     float target = pick(rng_);
     float running = 0.0f;
@@ -59,6 +71,7 @@ int SelfPlay::sampleAction(const std::vector<float>& policy, int moves_played)
             return action;
         }
     }
+    // Reached only when rounding leaves the target a hair above the final total.
     return SnakeEnv::ACTION_COUNT - 1;
 }
 
@@ -68,6 +81,8 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
 {
     const int game_count = config_.games_in_parallel;
 
+    // Game `index` takes seed `game_seed_base + index`, which is what makes a batch
+    // reproducible from the one seed the caller passed.
     std::vector<SnakeEnv> games;
     games.reserve(game_count);
     for (int index = 0; index < game_count; index++)
@@ -83,14 +98,18 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
     std::vector<int> moves_played(game_count, 0);
     std::vector<bool> hit_limit(game_count, false);
 
+    // Built per batch, so its counters cover this batch alone.
     MonteCarloSearch search(evaluator_, search_config_);
 
+    // The games still being stepped, and pointers to them for the search. Rebuilt
+    // every move because a game that ended must leave the batch.
     std::vector<int> live;
     std::vector<const SnakeEnv*> roots;
 
     auto started = std::chrono::high_resolution_clock::now();
     long long moves_played_total = 0;
 
+    // One pass of this loop is one move in every game still running.
     while (true)
     {
         live.clear();
@@ -101,6 +120,8 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
             {
                 continue;
             }
+            // Checked here rather than inside the environment so the game is
+            // recorded as cut off rather than as finished.
             if (games[index].steps() >= config_.step_limit)
             {
                 hit_limit[index] = true;
@@ -114,6 +135,8 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
             break;
         }
 
+        // Every live game searched in one call, so all their leaves reach the
+        // network in a single forward pass.
         std::vector<MonteCarloSearch::Result> results = search.search(roots);
 
         for (size_t position = 0; position < live.size(); position++)
@@ -121,18 +144,26 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
             const int index = live[position];
             SnakeEnv& game = games[index];
 
+            // The record is written before the move is taken: it describes the
+            // position the search was given, not the one the move led to.
             TrainingRecord record;
             record.position = game.snapshot();
             for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
             {
                 record.policy[action] = results[position].policy[action];
+                record.death_risk_target[action] = results[position].death_risk[action];
             }
+            record.death_risk_usable = results[position].all_actions_visited;
             record.value_target = 0.0f;  // filled once the game ends
 
+            // Sampled early and greedy later, so a batch explores without throwing
+            // away its endgames.
             int action = sampleAction(results[position].policy, moves_played[index]);
             SnakeEnv::StepResult outcome = game.step(static_cast<SnakeEnv::Action>(action));
 
             trajectories[index].push_back(std::move(record));
+            // The reward for leaving this position, which is what the backward walk
+            // below discounts into every earlier one.
             rewards[index].push_back(outcome.reward + config_.step_reward);
             moves_played[index]++;
             moves_played_total++;
@@ -204,11 +235,14 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
             trajectories[index][position].steps_target = std::min(remaining / budget, 1.0f);
         }
 
+        // Moved out rather than copied: a record carries a snapshot with a heap
+        // allocation in it.
         for (TrainingRecord& record : trajectories[index])
         {
             records_out.push_back(std::move(record));
         }
 
+        // Undiscounted, unlike the value target above - this one is for the log.
         GameSummary summary;
         summary.score = games[index].score();
         summary.steps = games[index].steps();
@@ -222,5 +256,7 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
         summaries_out.push_back(summary);
     }
 
+    // Read before the search goes out of scope; it is the caller's only route to
+    // this count.
     sealed_choices_ = search.sealedChoices();
 }

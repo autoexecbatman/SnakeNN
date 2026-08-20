@@ -1,10 +1,33 @@
 #pragma once
 
-// The paper's hyperparameters and the quantities derived from them, for every
-// program in the AlphaZero stack - trainer, evaluator and visual alike.
+// The paper's hyperparameters and the quantities derived from them, for every program
+// in the AlphaZero stack - trainer, evaluator and visual alike.
 //
 // Du, Gemp, Wu and Wu 2022 (arXiv:2211.09622). Deviating from these knowingly is
-// allowed; deviating by accident is what a single definition prevents.
+// allowed; deviating by accident is what a single definition prevents. A constant only
+// one program reads is how self-play and evaluation come to search differently, so
+// every caller sets every field from here even where the default already matches.
+//
+// Constants, not settings: nothing here is read from a file or a flag, so changing one
+// is a rebuild and a new run rather than a knob. Anything a run varies - board size,
+// simulation count, game count - is a command-line argument instead, and lives in
+// trainer_options or eval_options.
+//
+// Usage:
+//
+//     #include "az_parameters.h"
+//
+//     search_config.discount = az::DISCOUNT;         // 0.98, the paper's
+//     search_config.exploration = az::EXPLORATION;   // c_puct, 0.5
+//     play_config.temperature = az::VISIT_TEMPERATURE;
+//
+//     const int step_limit = az::deriveStepLimit(10);  // 12 steps a cell -> 1200
+//
+// The switches default off, so a checkpoint trained before one existed still plays as
+// it did: TRAP_GUARD, AVERAGE_EDGES, DEATH_CAP, DEATH_RISK_FROM_NETWORK. TRAP_REPORT
+// is the exception and is on, because counting costs nothing and changes no move.
+//
+// deriveStepLimit refuses a board above LARGEST_BOARD, and asserts on one below 2x2.
 namespace az
 {
 
@@ -55,6 +78,15 @@ constexpr float STEPS_TIEBREAK_MARGIN = 0.05f;
 // Below them because it steers nothing on its own - it informs a tie-break - and
 // a trunk pulled hard toward predicting duration is a trunk not learning to play.
 constexpr float STEPS_LOSS_WEIGHT = 0.25f;
+
+// Weight on the death head's cross entropy, against the policy and value losses.
+//
+// Matched to the steps head rather than chosen: both are auxiliary signals on a
+// shared trunk, neither picks a move on its own, and a trunk pulled hard toward
+// either is a trunk not learning to play. Equal to STEPS_LOSS_WEIGHT is the
+// assumption, not a measurement - the first training run that uses it should
+// report the two losses side by side before this number is defended.
+constexpr float DEATH_LOSS_WEIGHT = 0.25f;
 
 // Whether the search refuses a root move that seals the head away from its own
 // tail. Algorithmic assistance rather than a learned skill: the seal proves fatal

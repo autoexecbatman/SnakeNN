@@ -1,3 +1,29 @@
+// AlphaZeroTrainer: the training loop. Plays a batch of self-play games, appends them
+// to a replay buffer, takes gradient steps on samples from it, writes a checkpoint,
+// and repeats. One main(); the pieces it drives are testable and it is not.
+//
+// Hyperparameters follow Du, Gemp, Wu and Wu 2022 (arXiv:2211.09622) and are named
+// once, in az_parameters.h. Settings, the step-limit derivation and the progress line
+// are in trainer_options.{h,cpp}, where they can be tested.
+//
+// Usage - starts from scratch, or from a checkpoint with --resume:
+//
+//     AlphaZeroTrainer.exe --board 10 --iterations 20 --games 256 --batch 128
+//       --samples-per-game 3000 --simulations 200 --step-limit 1200 --replay-mb 1024
+//       --resume az10_rawvalue348.pt --checkpoint az10_death368.pt
+//       --start-iteration 349 --ledger ../../docs/runs.tsv
+//
+//     # --board 10        10x10; the curriculum starts smaller and resumes upward
+//     # --games 256       self-play games per iteration, stepped together
+//     # --replay-mb 1024  buffer ceiling; the oldest records are dropped at it
+//     # --ledger          appends a started row and a finished row with the cost
+//
+// Board size is an argument so the curriculum can start small: 708k evaluations/s at
+// 6x6 against 55k at 20x20, and cost scales with area, so the cheap signal is small.
+//
+// The score it prints is self-play, which carries root noise and sampled openings.
+// It is not the agent's win rate - AlphaZeroEvaluate gives that.
+
 #include <torch/torch.h>
 
 #include <process.h>
@@ -19,24 +45,6 @@
 #include "selfplay.h"
 #include "snake_env.h"
 #include "trainer_options.h"
-
-// AlphaZero training loop for Snake.
-//
-// Hyperparameters follow Du, Gemp, Wu and Wu 2022 (arXiv:2211.09622), which
-// reached 944/1000 wins on 10x10 with 200 search states per move over 6,000
-// games: discount 0.98, c_puct 0.5, visit-count temperature 0.5, learning rate
-// 0.001, minibatches of 100 drawn from a window of recent games. They are named
-// once, in trainer_options.h, because the discount was written out twice here and
-// two copies of one number are two numbers waiting to disagree.
-//
-// Board size is an argument so the curriculum can start small. Measured here:
-// the network does 708k evaluations/s at 6x6 and 55k at 20x20, and cost scales
-// with board area, so the small boards are where the cheap signal is.
-//
-// The settings, the step-limit derivation and the progress line live in
-// trainer_options.{h,cpp}. They were in here, which meant nothing about them
-// could be tested - this file is one main() and links LibTorch, so it has neither
-// a test target nor reachable assertions.
 
 namespace
 {
@@ -299,6 +307,8 @@ int main(int argc, char** argv)
         network->train();
         double policy_loss_total = 0.0;
         double value_loss_total = 0.0;
+        double death_loss_total = 0.0;
+        double usable_labels_total = 0.0;
         int batches_run = 0;
 
         if (static_cast<int>(replay.size()) >= settings.batch_size)
@@ -310,6 +320,12 @@ int main(int argc, char** argv)
                                         SnakeEnv::ACTION_COUNT);
             std::vector<float> values(settings.batch_size);
             std::vector<float> steps(settings.batch_size);
+            std::vector<float> death_risks(static_cast<size_t>(settings.batch_size) *
+                                           SnakeEnv::ACTION_COUNT);
+            // One per record: whether its risk label is worth learning from. A
+            // batch can be almost entirely masked out, which is why the loss
+            // divides by what survived rather than by the batch size.
+            std::vector<float> death_mask(settings.batch_size);
 
             for (int batch = 0; batch < settings.batches_per_iteration; batch++)
             {
@@ -326,9 +342,12 @@ int main(int argc, char** argv)
                     {
                         policies[static_cast<size_t>(item) * SnakeEnv::ACTION_COUNT + action] =
                             record.policy[action];
+                        death_risks[static_cast<size_t>(item) * SnakeEnv::ACTION_COUNT + action] =
+                            record.death_risk_target[action];
                     }
                     values[item] = record.value_target;
                     steps[item] = record.steps_target;
+                    death_mask[item] = record.death_risk_usable ? 1.0f : 0.0f;
                 }
 
                 torch::Tensor input =
@@ -343,6 +362,12 @@ int main(int argc, char** argv)
                     torch::from_blob(values.data(), { settings.batch_size, 1 }).to(device);
                 torch::Tensor steps_target =
                     torch::from_blob(steps.data(), { settings.batch_size, 1 }).to(device);
+                torch::Tensor death_target =
+                    torch::from_blob(death_risks.data(),
+                                     { settings.batch_size, SnakeEnv::ACTION_COUNT })
+                        .to(device);
+                torch::Tensor death_weight =
+                    torch::from_blob(death_mask.data(), { settings.batch_size, 1 }).to(device);
 
                 // The target is the return itself. The head is bounded at
                 // VALUE_SCALE rather than at 1, so no squashing is needed to make
@@ -361,7 +386,18 @@ int main(int argc, char** argv)
                 // Undiscounted, unlike the value: this is the only estimate here
                 // that can see as far as the deadline.
                 torch::Tensor steps_loss = torch::mse_loss(prediction.steps_to_go, steps_target);
-                torch::Tensor loss = policy_loss + value_loss + az::STEPS_LOSS_WEIGHT * steps_loss;
+                // Cross entropy rather than squared error, because the head is a
+                // sigmoid and the target is a probability. Averaged over the
+                // records whose label survived the mask, not over the batch: with
+                // a fixed denominator a batch of mostly unusable labels would
+                // report a small loss and take a correspondingly small step.
+                torch::Tensor death_elementwise = torch::binary_cross_entropy(
+                    prediction.death_risk, death_target, {}, at::Reduction::None);
+                torch::Tensor usable = death_weight.sum().clamp_min(1.0f);
+                torch::Tensor death_loss =
+                    (death_elementwise.mean(1, true) * death_weight).sum() / usable;
+                torch::Tensor loss = policy_loss + value_loss + az::STEPS_LOSS_WEIGHT * steps_loss +
+                                     az::DEATH_LOSS_WEIGHT * death_loss;
 
                 // A non-finite loss trains every weight into NaN and the run
                 // continues printing plausible-looking iterations afterwards, so
@@ -371,7 +407,8 @@ int main(int argc, char** argv)
                 TORCH_CHECK(std::isfinite(loss.item<double>()), "loss is not finite at iteration ",
                             iteration, " batch ", batch, " - policy ", policy_loss.item<double>(),
                             " value ", value_loss.item<double>(), " steps ",
-                            steps_loss.item<double>());
+                            steps_loss.item<double>(), " death ", death_loss.item<double>(),
+                            " usable labels ", usable.item<double>());
 
                 optimizer.zero_grad();
                 loss.backward();
@@ -379,6 +416,13 @@ int main(int argc, char** argv)
 
                 policy_loss_total += policy_loss.item<double>();
                 value_loss_total += value_loss.item<double>();
+                // Both read every batch rather than only on failure. The death
+                // loss is meaningless without the count beside it: a mask that
+                // keeps almost nothing reports a small loss and takes a
+                // correspondingly small step, which reads in the log exactly like
+                // a head that has already learned its target.
+                death_loss_total += death_loss.item<double>();
+                usable_labels_total += usable.item<double>();
                 batches_run++;
             }
         }
@@ -403,8 +447,10 @@ int main(int argc, char** argv)
             replay_bytes_used / (1024 * 1024));
         if (batches_run > 0)
         {
-            summary += std::format("  loss p {:.6f} v {:.6f}", policy_loss_total / batches_run,
-                                   value_loss_total / batches_run);
+            summary += std::format("  loss p {:.6f} v {:.6f} d {:.6f}  labels {:.1f}/{}",
+                                   policy_loss_total / batches_run, value_loss_total / batches_run,
+                                   death_loss_total / batches_run,
+                                   usable_labels_total / batches_run, settings.batch_size);
         }
         summary += std::format("  {:.2f}s (play {:.3f}s, {} evals/s)", total_seconds, play_seconds,
                                static_cast<long long>(evaluations / std::max(0.001, play_seconds)));

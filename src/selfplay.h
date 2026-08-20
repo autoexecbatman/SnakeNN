@@ -1,5 +1,37 @@
 #pragma once
 
+// Self-play: the agent generating its own training data.
+//
+// Plays a batch of real games under the search, and records each position with
+// what the search decided there. Those labels beat the network that produced
+// them - one forward pass against that guess plus hundreds of lookaheads - so
+// training toward them moves the network up.
+//
+// One phase of a training iteration, not the whole run. Its win rate measures the
+// exploration policy, not the agent, because the games carry root noise and
+// sampled early moves; az_evaluate.cpp gives the real number.
+//
+// Usage, from az_trainer.cpp:
+//
+//     SelfPlay::Config play_config;                // every field is set explicitly
+//     play_config.games_in_parallel = 256;         // games stepped together
+//     play_config.step_limit = 1200;               // a game cut off here is a timeout
+//     play_config.discount = 0.98f;                // for the value target only
+//     play_config.timeout_reward = -10.0f;         // charged to a cut-off game's last move
+//     play_config.step_reward = 0.0f;              // charged on every move
+//     play_config.temperature = 0.5f;              // visits sampled this hot, early
+//     play_config.temperature_moves = 50;          // for this many moves, then argmax
+//     play_config.seed = 12345;                    // seeds action sampling, not the games
+//
+//     SelfPlay play(evaluator, search_config, play_config);
+//
+//     std::vector<TrainingRecord> records;
+//     std::vector<GameSummary> summaries;
+//     play.playBatch(10, 10, batch_seed, records, summaries);  // 10x10, appends to both
+//     // records: one per position visited; summaries: one per game, so 256.
+//
+// Refuses a Config with fewer than one game in flight, from the constructor.
+
 #include <functional>
 #include <random>
 #include <vector>
@@ -8,54 +40,46 @@
 #include "mcts.h"
 #include "snake_env.h"
 
-// One training record: what the network saw, what the search concluded, and
-// what actually happened afterwards.
+// One training record: what the network saw, what the search concluded, and what
+// happened afterwards.
 struct TrainingRecord
 {
-    // The position, not its encoding. Storing encoded planes cost 3.2KB per
-    // move at 10x10 and drove a long run into swap; a snapshot is a sixteenth
-    // of that and the planes are regenerated when a batch is drawn.
+    // The position, not its encoding - encoded planes cost 3.2KB a move and swapped.
     SnakeEnv::Snapshot position;
     float policy[SnakeEnv::ACTION_COUNT]{};
     float value_target{ 0.0f };  // discounted return from this position onward
-    // Steps still needed from this position to fill the board, as a fraction of
-    // the step budget. Undiscounted and taken from what the game actually did, so
-    // unlike the value target it carries information about the deadline.
-    // One when the game never finished - it needed at least the whole budget.
+    // Steps left to fill the board, as a fraction of the budget; 1 if it never won.
     float steps_target{ 1.0f };
+    // The search's backed-up death risk per action, undiscounted.
+    float death_risk_target[SnakeEnv::ACTION_COUNT]{};
+    // False unless the search visited every root action; an unvisited one reads safe.
+    bool death_risk_usable{ false };
 
-    // Roughly what this record costs, for a buffer that is capped by memory
-    // rather than by a record count that means different things per board.
+    // Roughly what this record costs, for a buffer capped by memory not by count.
     size_t bytesUsed() const
     {
         return sizeof(TrainingRecord) + position.body_cells.capacity() * sizeof(unsigned short);
     }
 };
 
+// How one game ended. One per game in a batch, in the order the games were created.
 struct GameSummary
 {
     int score{ 0 };
     int steps{ 0 };
+    // Exclusive with hit_step_limit; both false means the snake died.
     bool won{ false };
     bool hit_step_limit{ false };
+    // Undiscounted, for the log; the value head trains on the discounted return.
     float total_reward{ 0.0f };
 };
 
-// Plays games with the search and records what it learns from them.
-//
-// The step limit is part of the task, not a safety valve. Du et al. 2022 cap a
-// 10x10 game at 1,200 steps, and under that cap the Hamiltonian cycle strategy
-// wins zero games out of a thousand - which is the point. Without a limit,
-// "wins" fails to distinguish a policy that plays well from one that shuffles
-// safely for a hundred thousand steps, and the value head learns that stalling
-// is as good as winning.
+// Plays games with the search and records what it learns from them. The step limit
+// is part of the task: uncapped, "wins" cannot tell good play from safe shuffling.
 class SelfPlay
 {
 public:
-    // Reported while a batch is in flight, because an iteration takes minutes
-    // and a terminal that prints nothing for minutes is indistinguishable from
-    // one that has hung. Emitted once per move-batch; throttling is the
-    // caller's business, since only the caller knows what it is drawing to.
+    // Emitted once per move-batch; the caller does its own throttling.
     struct Progress
     {
         int games_total{ 0 };
@@ -64,48 +88,36 @@ public:
         double elapsed_seconds{ 0.0 };
     };
 
-    // Every field is set explicitly by the caller. The initializers exist so that
-    // forgetting one is a wrong number rather than undefined behaviour - a garbage
-    // discount reads as a plausible run that cannot be reproduced.
+    // Every field is set by the caller; the initializers make a miss a wrong number.
     struct Config
     {
         int games_in_parallel{ 0 };
         int step_limit{ 0 };
         float discount{ 0.0f };
-        // Paid once by a game the step limit cut off, added to the reward of its
-        // last move so the discounted return carries it backwards.
-        //
-        // Zero reproduces the behaviour this replaced, in which a timeout was worth
-        // more than a death and stalling was therefore the safe play. A game that
-        // won or died is untouched - it reached an outcome of its own.
+        // Charged to a cut-off game's last move, so stalling costs what dying costs.
         float timeout_reward{ 0.0f };
-        // Paid on every step. Prices a slow route to an apple against a fast one,
-        // locally, where the discount can still see it.
+        // Charged every step, pricing a slow route to an apple against a fast one.
         float step_reward{ 0.0f };
-        // Visit counts are sampled at this temperature for the first moves and
-        // greedily after, which is how self-play stays varied early without
-        // throwing away the endgame.
+        // Visits are sampled this hot for temperature_moves moves, then argmax.
         float temperature{ 0.0f };
         int temperature_moves{ 0 };
         unsigned int seed{ 0 };
     };
 
+    // The evaluator is borrowed and must outlive this; throws below one game.
     SelfPlay(Evaluator& evaluator, const MonteCarloSearch::Config& search_config,
              const Config& config);
 
     // Pass an empty function to report nothing.
     void setProgressCallback(std::function<void(const Progress&)> callback);
 
-    // Plays one batch of games to completion, appending every visited position
-    // to `records_out` and one entry per game to `summaries_out`.
+    // Plays one batch to completion, appending positions and one entry per game.
+    // Neither vector is cleared; game `index` is seeded `game_seed_base + index`.
     void playBatch(int board_width, int board_height, unsigned int game_seed_base,
                    std::vector<TrainingRecord>& records_out,
                    std::vector<GameSummary>& summaries_out);
 
     // Root moves in the last batch that sealed the head away from its own tail.
-    // Zero before the first batch, and zero always unless the search was
-    // configured to count them. The search is built per batch, so this is the
-    // only way the number reaches the caller.
     long long sealedChoices() const { return sealed_choices_; }
 
 private:
@@ -116,5 +128,6 @@ private:
     std::function<void(const Progress&)> progress_callback_;
     long long sealed_choices_{ 0 };
 
+    // Sampled at temperature for the opening, argmax after; a zero policy picks 0.
     int sampleAction(const std::vector<float>& policy, int moves_played);
 };
