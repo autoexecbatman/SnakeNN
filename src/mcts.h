@@ -196,8 +196,9 @@ private:
         // Engaged when the descent ended on a terminal, which is owed no evaluation;
         // empty means this tree has a leaf in the batch awaiting the network.
         std::optional<float> known_leaf_value;
-        // The values selection has compared in this tree, for normalising the next
-        // comparison. Per tree rather than per search: two trees hold different games.
+        // Every value backup has produced in this tree, for normalising the next
+        // comparison. Tree-wide rather than per node: one node's children give no width
+        // until two of them are visited, and a sharp policy visits one.
         ValueRange value_range;
     };
 
@@ -221,9 +222,7 @@ private:
     // The PUCT score for one child, given the parent's attention to distribute and the
     // range to measure its value against. An unestablished range leaves the value alone.
     float actionScore(const Node& child, float parent_weight, const ValueRange& range) const;
-    // Widens the tree's range with what it compares, so the next descent normalises
-    // against values this tree has actually produced.
-    int selectChild(Tree& tree, int node_index);
+    int selectChild(const Tree& tree, int node_index) const;
     // Spans rather than bare pointers, so the callee can check the lengths.
     void expand(Tree& tree, int node_index, std::span<const float> priors,
                 std::span<const float> death_risks);

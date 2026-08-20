@@ -495,6 +495,81 @@ void testNormalisingMakesSelectionScaleInvariant()
     }
 }
 
+// A prior that puts almost everything on one action, which is what a long-trained policy
+// emits: measured on az10_death368, 46 percent of positions have a top prior above 0.999.
+class SaturatedPriorEvaluator : public Evaluator
+{
+public:
+    void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
+                  float* steps_out, float* death_risk_out) override
+    {
+        for (size_t index = 0; index < states.size(); index++)
+        {
+            for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+            {
+                priors_out[index * SnakeEnv::ACTION_COUNT + action] = 0.0005f;
+                death_risk_out[index * SnakeEnv::ACTION_COUNT + action] = 0.0f;
+            }
+            priors_out[index * SnakeEnv::ACTION_COUNT] = 0.999f;
+            // Varies with depth, so the tree produces a width to normalise against even
+            // when one root action takes every visit.
+            values_out[index] = 4.0f + 0.5f * static_cast<float>(states[index]->steps() % 9);
+            steps_out[index] = 1.0f;
+        }
+    }
+};
+
+// The defect this pins: a range built only from one node's children has no width until two
+// of them are visited, and under a saturated prior two never are - so normalising would be
+// switched on and do nothing anywhere in the tree. Built from every node the backup
+// touches instead, the range has a width from the first descent and reaches the deep
+// selections.
+//
+// It is the backed-up root value that has to move, not the root policy. Normalising is
+// monotonic, so it cannot reorder the visited children, and an unvisited child still
+// scores zero against a normalised best of about one while its exploration term is
+// thousandths. The root policy is therefore (1, 0, 0) either way, by construction -
+// normalising does not rescue a saturated prior and asserting that it does was wrong.
+// What it can reach is which descendants get explored, and that changes what comes back.
+void testNormalisingReachesASaturatedRoot()
+{
+    SnakeEnv board = boardWithDistantFood(6, 1);
+
+    SaturatedPriorEvaluator plain_evaluator;
+    MonteCarloSearch::Config plain = testConfig(200);
+    plain.normalize_values = false;
+    MonteCarloSearch plain_search(plain_evaluator, plain);
+    const std::vector<const SnakeEnv*> plain_roots{ &board };
+    const MonteCarloSearch::Result without = plain_search.search(plain_roots).front();
+
+    SaturatedPriorEvaluator scaled_evaluator;
+    MonteCarloSearch::Config normalised = testConfig(200);
+    normalised.normalize_values = true;
+    MonteCarloSearch normalised_search(scaled_evaluator, normalised);
+    const std::vector<const SnakeEnv*> normalised_roots{ &board };
+    const MonteCarloSearch::Result with = normalised_search.search(normalised_roots).front();
+
+    // The root policy cannot move, and that is what the comment above is about.
+    if (largestPolicyGap(without.policy, with.policy) != 0.0f)
+    {
+        std::cout << "[FAIL] the root policy moved under a saturated prior, which "
+                     "normalising cannot do - something else changed\n";
+        failures++;
+    }
+
+    // The backed-up value must move: an established range changes which descendants the
+    // descent picks. If the range never establishes, the two searches are identical and
+    // these agree exactly - which is the inert wiring this replaced.
+    if (without.value == with.value)
+    {
+        std::cout << std::format(
+            "[FAIL] normalising reached nothing under a saturated prior - the range never "
+            "established, so the switch is inert where it matters: value {:.6f}\n",
+            with.value);
+        failures++;
+    }
+}
+
 void testRootNoiseIsAppliedAndKeepsADistribution()
 {
     // Every other config sets the fraction to zero, so this body ran only inside the
@@ -1403,6 +1478,7 @@ int main()
     testDoomedPositionIsSearchedNotExpandedPastDeath();
     testBackupDiscountsByEdgeLength();
     testNormalisingMakesSelectionScaleInvariant();
+    testNormalisingReachesASaturatedRoot();
     testRootNoiseIsAppliedAndKeepsADistribution();
     testSearchReusesBuffersWithoutLeakingState();
     testAvoidsAnImmediateWall();

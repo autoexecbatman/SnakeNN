@@ -128,7 +128,7 @@ float MonteCarloSearch::actionScore(const Node& child, float parent_weight,
     return score;
 }
 
-int MonteCarloSearch::selectChild(Tree& tree, int node_index)
+int MonteCarloSearch::selectChild(const Tree& tree, int node_index) const
 {
     assert(node_index >= 0 && node_index < static_cast<int>(tree.nodes.size()) &&
            "selectChild given a node index outside the arena");
@@ -151,21 +151,6 @@ int MonteCarloSearch::selectChild(Tree& tree, int node_index)
 
     // Its square root keeps a promising unvisited action in contention.
     const float parent_weight = std::sqrt(static_cast<float>(parent.visit_count));
-
-    // Widened before anything is scored, so every child in this comparison is measured
-    // against a range that already contains all of them. Only visited children have a
-    // value; an unvisited one contributes nothing but its prior.
-    if (config_.normalize_values)
-    {
-        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
-        {
-            const Node& child = tree.nodes[first_child + action];
-            if (child.visit_count > 0)
-            {
-                tree.value_range.observe(rawActionValue(child));
-            }
-        }
-    }
 
     // Seeded with a real score, so no sentinel stands in for "nothing chosen yet".
     int best_action = 0;
@@ -282,6 +267,16 @@ void MonteCarloSearch::backup(Tree& tree, float leaf_value, float leaf_steps)
         node.visit_count++;
         node.value_sum += carried;
         node.steps_sum += carried_steps;
+
+        // Every node this simulation touched, not just the siblings of one decision.
+        // A range built from one node's children is empty until two of them have been
+        // visited, which on a sharp policy never happens - so it would normalise
+        // nothing in exactly the position it exists for. Skips the root, which is
+        // nobody's child and so is never a term in a comparison.
+        if (config_.normalize_values && position > 0)
+        {
+            tree.value_range.observe(rawActionValue(node));
+        }
 
         // Refreshed, not accumulated: unavoidability is a property of the position.
         refreshDeathRisk(tree, tree.path[position]);
