@@ -1,30 +1,66 @@
-﻿// AlphaZeroCoverage: how often does the search visit every root action, with root noise
-// and without?
+// AlphaZeroCoverage: does the search give the death head anything to learn from?
 //
-// A death-risk label is trainable only on a position where every root action was visited.
-// The probe measured 4 percent coverage on a trained network - but it ran with noise off,
-// as evaluation does, while self-play runs with it on (az_trainer.cpp sets
-// root_noise_fraction to az::ROOT_NOISE_FRACTION). Dirichlet noise at the root is exactly
-// what spreads visits across actions, so whether the death head is starved during
-// training turns on this comparison and on nothing else.
+// A diagnostic, not part of training or evaluation. It answers that one question in
+// minutes, so a change to the search can be priced before an hour of GPU is spent finding
+// out the slow way.
 //
-// The positions are fixed before the arms run. One trajectory is played, every root
-// position along it is stored, and both arms then search those same positions without
-// playing a move. Arms that each played their own games would compare different
-// populations, because a change to the search changes which move is played.
+// What it measures. When the search picks a move it has three options - straight, left and
+// right, relative to the heading - and spends its simulations among them from the position
+// the snake is actually in, the root of its tree. Coverage is the share of positions where
+// all three got at least one simulation.
+//
+// It need not spread them evenly, and by construction it does not. Each simulation goes to
+// whichever move scores highest on what it is worth so far plus an exploration term, and
+// that exploration term is multiplied by how likely the network thinks the move is. A move
+// the network has written off - a preference of a thousandth - therefore gets a thousandth
+// of the push toward being tried, and the search can spend every simulation without once
+// looking at it. The move is not rejected on evidence. It is never examined.
+//
+// That tightens as the agent improves. Training sharpens the policy, so the top preference
+// climbs toward one and the other two collapse - and coverage falls exactly as the network
+// gets better. The death head is fed least when the rest of the agent is doing best, which
+// is why the starvation does not announce itself: every other number in the training log
+// is improving while this one quietly goes to nothing.
+//
+// It also rules out the obvious remedy. Raising the exploration constant cannot help,
+// because that constant multiplies the preference too - scaling up a thousandth scales up
+// nothing. Anything that widens a root here has to add, not multiply.
+//
+// Why that number decides something. The death head predicts, per move, the chance the
+// move leads to a death no later play can avoid. Its training target - the death label -
+// is whatever the search backed up for that move, so a move nobody tried has no evidence
+// attached and the trainer discards the whole position rather than label it wrongly. Low
+// coverage therefore starves the head however long training runs, and no amount of
+// training curve can tell you that is what is happening. This can.
+//
+// It measures several arms, an arm being one search configuration with everything else
+// held fixed. Each is a setting that could spread the simulations wider: Dirichlet noise,
+// which perturbs the network's move preferences at the root and which self-play uses but
+// evaluation does not, and the exploration floor, which makes root selection ignore its
+// own scores a fixed share of the time.
+//
+// The positions are fixed before any arm runs. One trajectory is played, every root
+// position along it is stored, and every arm searches those same positions without playing
+// a move. Arms that each played their own games would be scored on different populations,
+// because a change to the search changes which move is played.
 //
 // Usage:
 //
-//     AlphaZeroCoverage.exe --checkpoint az10_death368.pt --board 10 \
+//     AlphaZeroCoverage.exe --checkpoint az10_long308.pt --board 10 \
 //       --games 2 --simulations 200 --max-positions 300 --seed-offset 0
 //
-//     # --games 2          held-out games played once to generate the positions
+//     # --games 2          games played once, to generate the positions
 //     # --max-positions    cap, sampled evenly along the trajectory; 0 means all
-//     # --simulations 200  budget for both arms, so noise is the only difference
+//     # --simulations 200  the budget every arm shares, so the setting is the difference
+//     # --skip-arms on     print the two no-search measurements and stop
+//     # --position-checkpoint  read positions from another network, to hold the
+//     #                        population fixed while the network under test changes
 //
-// It prints coverage and label yield for each arm, under the current all-or-nothing rule
-// and under a per-action rule that would keep every visited action. Read the ratio: it is
-// what a redesign of the rule would buy at the same search cost.
+// Prints two measurements taken with no search at all - how many moves were survivable,
+// and how concentrated the network's preferences are - then one block per arm giving
+// coverage and label yield under the current all-or-nothing rule and under a per-action
+// rule that would keep every visited move. Read the yield ratio: it is what changing the
+// rule would buy at the same search cost.
 
 #include <torch/torch.h>
 
@@ -36,6 +72,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "az_network.h"
@@ -44,22 +81,58 @@
 #include "flag_parser.h"
 #include "mcts.h"
 #include "network_evaluator.h"
+#include "network_setup.h"
 #include "seed_policy.h"
 #include "snake_env.h"
 
 namespace
 {
 
+// Which network to read, which positions to read it on, and how hard to search them.
+// Filled by parseSettings from the command line.
+//
+// Coverage is the share of positions where the search visited every root action. It is
+// worth measuring because a death-risk label is trainable only where all three were
+// visited - an unvisited action keeps its start value and reads as safe - so coverage
+// is the fraction of positions that yield any label at all.
+//
+//     const CoverageSettings settings =
+//         parseSettings(std::vector<std::string>(argv + 1, argv + argc));
+//
+//     // The positions every arm is scored on, so the population is identical across arms.
+//     const std::vector<SnakeEnv> positions =
+//         collectPositions(network, device, settings, step_limit);
+//
+//     // No root noise, the paper's exploration constant, no exploration floor.
+//     const ArmResult baseline =
+//         measureArm(network, device, settings, 0.0f, az::EXPLORATION, 0.0f, positions);
+//     report("baseline", baseline);
+//
+// Two runs are comparable only when board, games, simulations and seed_offset all match:
+// coverage is a function of how hard the search looked and of which positions it looked
+// at, so a run changing either is measuring something else.
 struct CoverageSettings
 {
+    // The network under test. Required.
     std::string checkpoint;
+    // Side of the square board the positions are drawn on.
     int board{ 10 };
+    // Trunk width and depth. Both must match the checkpoint, or loading it fails.
     int channels{ 64 };
+    // Residual blocks in the trunk. Must match the checkpoint for the same reason.
     int blocks{ 4 };
+    // Games played to collect positions from.
     int games{ 2 };
+    // Search simulations per position. Coverage is a function of this: more
+    // simulations reach more actions, so two runs at different counts are not
+    // comparable.
     int simulations{ 200 };
+    // Ceiling on positions kept. Zero keeps none.
     int max_positions{ 300 };
+    // Offset into the reserved evaluation seed band.
     unsigned int seed_offset{ 0 };
+    // Whether to skip the treatment arms and report the baseline alone. Set by
+    // --skip-arms on; any other value reads as off.
     bool skip_arms{ false };
     // Whose play generates the positions. Empty means the checkpoint under test.
     // Set it to hold the population fixed while the network being read changes -
@@ -68,63 +141,182 @@ struct CoverageSettings
     std::string position_checkpoint;
 };
 
+// Every flag this program accepts. C++ cannot switch on a string, so the command line is
+// turned into one of these first and the switch below does the rest.
+enum class Flag
+{
+    Checkpoint,
+    Board,
+    Channels,
+    Blocks,
+    Games,
+    Simulations,
+    MaxPositions,
+    SeedOffset,
+    SkipArms,
+    PositionCheckpoint
+};
+
+// One spelling and the enumerator it names.
+struct FlagName
+{
+    // As written on the command line, leading dashes included.
+    std::string_view text;
+    // What applySetting will do with it.
+    Flag flag;
+};
+
+// The whole command line, in one place. Adding a flag is a row here, an enumerator above
+// and a case below - and leaving out the case is a compiler diagnostic.
+constexpr FlagName FLAG_NAMES[] = {
+    { "--checkpoint", Flag::Checkpoint },
+    { "--board", Flag::Board },
+    { "--channels", Flag::Channels },
+    { "--blocks", Flag::Blocks },
+    { "--games", Flag::Games },
+    { "--simulations", Flag::Simulations },
+    { "--max-positions", Flag::MaxPositions },
+    { "--seed-offset", Flag::SeedOffset },
+    { "--skip-arms", Flag::SkipArms },
+    { "--position-checkpoint", Flag::PositionCheckpoint },
+};
+
+// Which Flag `text` names, or std::invalid_argument when it names none.
+//
+//     lookupFlag("--board")   // Flag::Board
+//
+// Linear over ten entries, which costs less than building a map for one pass.
+Flag lookupFlag(std::string_view text)
+{
+    for (const FlagName& candidate : FLAG_NAMES)
+    {
+        if (candidate.text == text)
+        {
+            return candidate.flag;
+        }
+    }
+    throw std::invalid_argument(std::format("unknown flag {}", text));
+}
+
+// Applies one parsed flag to the settings, or throws naming the flag when the value is
+// not what that flag accepts.
+//
+//     applySetting(settings, Flag::Board, "--board", "10");   // settings.board == 10
+//
+// No default case on purpose: the value comes from lookupFlag and can only be an
+// enumerator, so the switch is exhaustive and a new enumerator without a case is caught
+// at compile time rather than falling through in silence.
+void applySetting(CoverageSettings& settings, Flag flag, std::string_view name,
+                  std::string_view value)
+{
+    switch (flag)
+    {
+        case Flag::Checkpoint:
+        {
+            settings.checkpoint = std::string(value);
+            break;
+        }
+        case Flag::Board:
+        {
+            settings.board = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Channels:
+        {
+            settings.channels = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Blocks:
+        {
+            settings.blocks = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Games:
+        {
+            settings.games = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Simulations:
+        {
+            settings.simulations = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::MaxPositions:
+        {
+            settings.max_positions = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::SeedOffset:
+        {
+            settings.seed_offset = flags::parseWholeUnsigned(name, value);
+            break;
+        }
+        case Flag::SkipArms:
+        {
+            settings.skip_arms = flags::parseOnOff(name, value);
+            break;
+        }
+        case Flag::PositionCheckpoint:
+        {
+            settings.position_checkpoint = std::string(value);
+            break;
+        }
+    }
+}
+
+// Everything that has to hold before a checkpoint is read or a game is played.
+//
+// The board, channel and block bounds are checked here rather than left to the network
+// constructor, so a rejection names the flag the operator typed. The seed guard is the
+// one that matters most: an offset running past the reserved band wraps into training
+// seeds, which is silent and turns a held-out measurement into one that is not.
+void requireUsable(const CoverageSettings& settings)
+{
+    if (settings.checkpoint.empty())
+    {
+        throw std::invalid_argument("--checkpoint is required");
+    }
+    flags::requireAtLeast("--board", settings.board, 2);
+    if (settings.board > az::LARGEST_BOARD)
+    {
+        throw std::invalid_argument(
+            std::format("--board must be at most {}, got {}", az::LARGEST_BOARD, settings.board));
+    }
+    flags::requireAtLeast("--channels", settings.channels, 1);
+    // Zero is legal: a trunk with no residual blocks is shallow, not broken.
+    flags::requireAtLeast("--blocks", settings.blocks, 0);
+    flags::requireAtLeast("--games", settings.games, 1);
+    flags::requireAtLeast("--simulations", settings.simulations, 1);
+    flags::requireAtLeast("--max-positions", settings.max_positions, 0);
+
+    const long long last_seed_index =
+        static_cast<long long>(settings.seed_offset) + settings.games - 1;
+    if (last_seed_index >= static_cast<long long>(seeds::RESERVED_BAND_WIDTH))
+    {
+        throw std::invalid_argument(
+            std::format("--seed-offset {} with {} games runs past the reserved evaluation band "
+                        "of {} seeds and wraps into the training range",
+                        settings.seed_offset, settings.games, seeds::RESERVED_BAND_WIDTH));
+    }
+}
+
+// Parses the command line, or throws std::invalid_argument naming the flag.
+//
+//     const CoverageSettings settings =
+//         parseSettings(std::vector<std::string>(argv + 1, argv + argc));
+//
+// `arguments` excludes argv[0]. Requires --checkpoint. Rejects an unknown flag, a board
+// outside 2..az::LARGEST_BOARD, non-positive channels, games or simulations, negative
+// blocks or max-positions, a --skip-arms value that is not "on" or "off", and a seed
+// offset whose games would run past the reserved evaluation band.
 CoverageSettings parseSettings(std::span<const std::string> arguments)
 {
     CoverageSettings settings;
     for (const flags::FlagValue& entry : flags::readFlags(arguments))
     {
-        if (entry.flag == "--checkpoint")
-        {
-            settings.checkpoint = std::string(entry.value);
-        }
-        else if (entry.flag == "--board")
-        {
-            settings.board = flags::parseWholeInt(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--channels")
-        {
-            settings.channels = flags::parseWholeInt(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--blocks")
-        {
-            settings.blocks = flags::parseWholeInt(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--games")
-        {
-            settings.games = flags::parseWholeInt(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--simulations")
-        {
-            settings.simulations = flags::parseWholeInt(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--max-positions")
-        {
-            settings.max_positions = flags::parseWholeInt(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--seed-offset")
-        {
-            settings.seed_offset = flags::parseWholeUnsigned(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--skip-arms")
-        {
-            settings.skip_arms = entry.value == "on";
-        }
-        else if (entry.flag == "--position-checkpoint")
-        {
-            settings.position_checkpoint = std::string(entry.value);
-        }
-        else
-        {
-            throw std::invalid_argument(std::format("unknown flag {}", entry.flag));
-        }
+        applySetting(settings, lookupFlag(entry.flag), entry.flag, entry.value);
     }
-    if (settings.checkpoint.empty())
-    {
-        throw std::invalid_argument("--checkpoint is required");
-    }
-    flags::requireAtLeast("--games", settings.games, 1);
-    flags::requireAtLeast("--simulations", settings.simulations, 1);
-    flags::requireAtLeast("--max-positions", settings.max_positions, 0);
+    requireUsable(settings);
     return settings;
 }
 
@@ -206,8 +398,10 @@ std::vector<SnakeEnv> sampleEvenly(const std::vector<SnakeEnv>& positions, int c
     return sampled;
 }
 
+// What one arm measured.
 struct ArmResult
 {
+    // Coverage counts accumulated over every position this arm searched.
     CoverageTally tally;
     // Times the per-action count disagreed with the search's own coverage flag. A
     // non-zero value means one of the two readings is wrong and the report is not
@@ -250,6 +444,12 @@ ArmResult measureArm(AlphaZeroNet& network, torch::Device device, const Coverage
     return arm;
 }
 
+// Prints one arm's scored coverage under `label`, as an indented block.
+//
+// Prints the yield ratio only when it is defined, and says why in words when it is
+// not - a rule admitting no labels has unbounded gain, not zero. A non-zero
+// disagreement count is printed as a warning: the two readings contradict each
+// other, so the numbers above it cannot be trusted.
 void report(const std::string& label, const ArmResult& arm)
 {
     const CoverageReport scored = scoreCoverage(arm.tally);
@@ -277,94 +477,34 @@ void report(const std::string& label, const ArmResult& arm)
     }
 }
 
-}  // namespace
-
-int main(int argc, char** argv)
+// A network of this run's shape with `checkpoint_path` loaded into it, moved to `device`
+// and put in evaluation mode.
+//
+//     AlphaZeroNet network = loadNetwork(settings, settings.checkpoint, "", device);
+//
+// `report_prefix` distinguishes the two networks a run can hold; pass "" for the one
+// under test. Prints every parameter the file did not carry, because a mistyped module
+// name looks exactly like a head added after the checkpoint was written.
+//
+// Throws std::runtime_error naming the path when the file cannot be read.
+AlphaZeroNet loadNetwork(const CoverageSettings& settings, const std::string& checkpoint_path,
+                         const std::string& report_prefix, torch::Device device)
 {
-    CoverageSettings settings;
-    try
-    {
-        settings = parseSettings(std::vector<std::string>(argv + 1, argv + argc));
-    }
-    catch (const std::exception& error)
-    {
-        std::cerr << "bad arguments: " << error.what() << std::endl;
-        return 1;
-    }
-
-    const int step_limit = az::deriveStepLimit(settings.board);
-    const bool cuda = torch::cuda::is_available();
-    torch::Device device = cuda ? torch::Device(torch::kCUDA) : torch::Device(torch::kCPU);
-
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
-    try
-    {
-        const std::vector<std::string> missing = network->loadNarrowerStem(settings.checkpoint);
-        for (const std::string& name : missing)
-        {
-            std::cout << std::format("  fresh, absent from the checkpoint: {}\n", name);
-        }
-    }
-    catch (const std::exception& error)
-    {
-        std::cerr << "could not load " << settings.checkpoint << ": " << error.what() << std::endl;
-        return 1;
-    }
+    loadCheckpoint(network, checkpoint_path, report_prefix);
     network->to(device);
     network->eval();
+    return network;
+}
 
-    std::cout << std::format("coverage: {} on {}x{}, {} games, {} simulations, device {}\n",
-                             settings.checkpoint, settings.board, settings.board, settings.games,
-                             settings.simulations, cuda ? "cuda" : "cpu");
-
-    const auto started = std::chrono::high_resolution_clock::now();
-
-    // Positions come from whichever network is named for the job. Comparing several
-    // checkpoints means holding this one fixed, so every prior is read on the same
-    // boards and the difference is the policy rather than the population.
-    AlphaZeroNet position_network(settings.board, settings.board, settings.channels,
-                                  settings.blocks);
-    AlphaZeroNet* position_source = &network;
-    if (!settings.position_checkpoint.empty())
-    {
-        try
-        {
-            const std::vector<std::string> missing =
-                position_network->loadNarrowerStem(settings.position_checkpoint);
-            for (const std::string& name : missing)
-            {
-                std::cout << std::format("  positions: fresh, absent from {}: {}\n",
-                                         settings.position_checkpoint, name);
-            }
-        }
-        catch (const std::exception& error)
-        {
-            std::cerr << "could not load " << settings.position_checkpoint << ": " << error.what()
-                      << std::endl;
-            return 1;
-        }
-        position_network->to(device);
-        position_network->eval();
-        position_source = &position_network;
-        std::cout << std::format("positions generated by {}\n", settings.position_checkpoint);
-    }
-
-    const std::vector<SnakeEnv> played =
-        collectPositions(*position_source, device, settings, step_limit);
-    const std::vector<SnakeEnv> positions = sampleEvenly(played, settings.max_positions);
-    std::cout << std::format("{} positions played, {} sampled evenly along the trajectory\n",
-                             played.size(), positions.size());
-    if (positions.empty())
-    {
-        std::cerr << "no positions were generated" << std::endl;
-        return 1;
-    }
-
-    // How many actions were survivable at all, before any search ran. This is the
-    // denominator every coverage number above is really against: an action that kills on
-    // this tick cannot be visited by a search that prunes fatal moves, and no exploration
-    // constant can recover it. Free - wouldDie copies nothing.
-    std::size_t survivable_histogram[SnakeEnv::ACTION_COUNT + 1] = { 0, 0, 0, 0 };
+// How many root actions were survivable before any search ran.
+//
+// This is the denominator every coverage number is really against: an action that kills
+// on this tick cannot be visited by a search that prunes fatal moves, and no exploration
+// constant recovers it. Free - wouldDie copies nothing.
+void reportSurvivableActions(const std::vector<SnakeEnv>& played)
+{
+    std::size_t histogram[SnakeEnv::ACTION_COUNT + 1] = { 0, 0, 0, 0 };
     for (const SnakeEnv& position : played)
     {
         int survivable = 0;
@@ -375,87 +515,86 @@ int main(int argc, char** argv)
                 survivable++;
             }
         }
-        survivable_histogram[survivable]++;
+        histogram[survivable]++;
     }
+
     std::cout << "\nSURVIVABLE ROOT ACTIONS - measured without any search\n";
     for (int count = 0; count <= SnakeEnv::ACTION_COUNT; count++)
     {
         std::cout << std::format(
-            "  {} survivable   {:6} positions  {:.4f}\n", count, survivable_histogram[count],
-            static_cast<double>(survivable_histogram[count]) / static_cast<double>(played.size()));
+            "  {} survivable   {:6} positions  {:.4f}\n", count, histogram[count],
+            static_cast<double>(histogram[count]) / static_cast<double>(played.size()));
     }
+}
 
-    // The priors themselves, straight off the network - no search. If the top prior is
-    // saturated then c_puct * prior * sqrt(N) is negligible for every other action no
-    // matter how large c_puct is, which is the one story consistent with a hundredfold
-    // sweep of that constant changing nothing.
+// What the policy head alone says about each position, with no search involved.
+//
+// A saturated top prior is the one story consistent with a hundredfold sweep of c_puct
+// changing nothing: exploration enters the score as c_puct * prior * sqrt(N), so a prior
+// near zero cannot be raised by any constant.
+void reportPriorSaturation(AlphaZeroNet& network, torch::Device device,
+                           const CoverageSettings& settings, const std::vector<SnakeEnv>& played)
+{
+    double top_total = 0.0;
+    double entropy_total = 0.0;
+    std::size_t above_99 = 0;
+    std::size_t above_999 = 0;
+    double lowest_top = 1.0;
+
+    for (const SnakeEnv& position : played)
     {
-        double top_total = 0.0;
-        double entropy_total = 0.0;
-        std::size_t above_99 = 0;
-        std::size_t above_999 = 0;
-        double lowest_top = 1.0;
-        for (const SnakeEnv& position : played)
-        {
-            std::vector<float> planes(static_cast<std::size_t>(position.encodedSize()));
-            position.encode(planes.data());
-            torch::NoGradGuard no_grad;
-            const torch::Tensor input =
-                torch::from_blob(planes.data(),
-                                 { 1, SnakeEnv::PLANE_COUNT, settings.board, settings.board },
-                                 torch::kFloat)
-                    .to(device);
-            const torch::Tensor probabilities =
-                torch::softmax(network->forward(input).policy_logits, 1)
-                    .to(torch::kCPU)
-                    .contiguous();
-            const float* prior = probabilities.data_ptr<float>();
+        std::vector<float> planes(static_cast<std::size_t>(position.encodedSize()));
+        position.encode(planes.data());
 
-            double top = 0.0;
-            double entropy = 0.0;
-            for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        torch::NoGradGuard no_grad;
+        const torch::Tensor input =
+            torch::from_blob(planes.data(),
+                             { 1, SnakeEnv::PLANE_COUNT, settings.board, settings.board },
+                             torch::kFloat)
+                .to(device);
+        const torch::Tensor probabilities =
+            torch::softmax(network->forward(input).policy_logits, 1).to(torch::kCPU).contiguous();
+        const float* prior = probabilities.data_ptr<float>();
+
+        double top = 0.0;
+        double entropy = 0.0;
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            top = std::max(top, static_cast<double>(prior[action]));
+            if (prior[action] > 0.0f)
             {
-                top = std::max(top, static_cast<double>(prior[action]));
-                if (prior[action] > 0.0f)
-                {
-                    entropy -= static_cast<double>(prior[action]) *
-                               std::log(static_cast<double>(prior[action]));
-                }
-            }
-            top_total += top;
-            entropy_total += entropy;
-            lowest_top = std::min(lowest_top, top);
-            if (top > 0.99)
-            {
-                above_99++;
-            }
-            if (top > 0.999)
-            {
-                above_999++;
+                entropy -= static_cast<double>(prior[action]) *
+                           std::log(static_cast<double>(prior[action]));
             }
         }
-        const double count = static_cast<double>(played.size());
-        std::cout << "\nPOLICY PRIORS - straight off the network, no search\n";
-        std::cout << std::format("  mean top prior      {:.6f}\n", top_total / count);
-        std::cout << std::format("  lowest top prior    {:.6f}\n", lowest_top);
-        std::cout << std::format("  mean entropy        {:.6f}  (uniform over 3 is {:.6f})\n",
-                                 entropy_total / count, std::log(3.0));
-        std::cout << std::format("  top prior > 0.99    {:.4f}\n",
-                                 static_cast<double>(above_99) / count);
-        std::cout << std::format("  top prior > 0.999   {:.4f}\n",
-                                 static_cast<double>(above_999) / count);
+        top_total += top;
+        entropy_total += entropy;
+        lowest_top = std::min(lowest_top, top);
+        above_99 += top > 0.99 ? 1u : 0u;
+        above_999 += top > 0.999 ? 1u : 0u;
     }
 
-    if (settings.skip_arms)
-    {
-        std::cout << "\n--skip-arms given; no search arms were run\n";
-        return 0;
-    }
+    const double count = static_cast<double>(played.size());
+    std::cout << "\nPOLICY PRIORS - straight off the network, no search\n";
+    std::cout << std::format("  mean top prior      {:.6f}\n", top_total / count);
+    std::cout << std::format("  lowest top prior    {:.6f}\n", lowest_top);
+    std::cout << std::format("  mean entropy        {:.6f}  (uniform over 3 is {:.6f})\n",
+                             entropy_total / count, std::log(3.0));
+    std::cout << std::format("  top prior > 0.99    {:.4f}\n",
+                             static_cast<double>(above_99) / count);
+    std::cout << std::format("  top prior > 0.999   {:.4f}\n",
+                             static_cast<double>(above_999) / count);
+}
 
-    // The two configurations the project actually runs, then the exploration constant
-    // swept upward. c_puct enters the score as c * prior * sqrt(N) while values live in
-    // (-VALUE_SCALE, VALUE_SCALE), so 0.5 - the paper's number, chosen for values in
-    // [-1, 1] - is the suspect. If coverage climbs with it, the constant is the cause.
+// Searches the same positions under each configuration and reports every arm.
+//
+// The two the project actually runs come first - evaluation conditions and self-play
+// conditions - then the exploration floor swept upward. c_puct is held at the paper's
+// value throughout: sweeping it was already measured to move coverage from 1.13 to 1.24
+// actions, because every term it appears in multiplies the prior.
+void runArms(AlphaZeroNet& network, torch::Device device, const CoverageSettings& settings,
+             const std::vector<SnakeEnv>& positions)
+{
     const ArmResult baseline =
         measureArm(network, device, settings, 0.0f, az::EXPLORATION, 0.0f, positions);
     report("NOISE OFF, c_puct 0.5 - evaluation conditions", baseline);
@@ -466,19 +605,86 @@ int main(int argc, char** argv)
         std::format("NOISE ON at {}, c_puct 0.5 - self-play conditions", az::ROOT_NOISE_FRACTION),
         noisy);
 
-    // The exploration floor, which is the arm this program was extended for. c_puct is
-    // left alone: sweeping it was already measured to move coverage from 1.13 to 1.24
-    // actions, because every term it appears in multiplies the prior.
     for (const float epsilon : { 0.05f, 0.1f, 0.3f })
     {
         const ArmResult swept =
             measureArm(network, device, settings, 0.0f, az::EXPLORATION, epsilon, positions);
         report(std::format("NOISE OFF, exploration floor epsilon {}", epsilon), swept);
     }
+}
 
-    const auto finished = std::chrono::high_resolution_clock::now();
-    std::cout << std::format("\nelapsed {:.2f}s\n",
-                             std::chrono::duration<double>(finished - started).count());
-    std::cout << "both arms searched the same positions; no move was played from either\n";
-    return 0;
+}  // namespace
+
+// Measures how often the search reaches every root action, and what the current label
+// rule gives away. Reads a checkpoint, plays games, then searches the same positions
+// under several exploration settings without ever playing a move from them.
+//
+//     AlphaZeroCoverage.exe --checkpoint az10_long308.pt --board 10 --games 8
+//
+// Returns 1 on a bad flag or an unreadable checkpoint, 0 otherwise.
+int main(int argc, char** argv)
+{
+    try
+    {
+        const CoverageSettings settings =
+            parseSettings(std::vector<std::string>(argv + 1, argv + argc));
+        const Compute compute = chooseDevice();
+        const int step_limit = az::deriveStepLimit(settings.board);
+
+        AlphaZeroNet network = loadNetwork(settings, settings.checkpoint, "", compute.device);
+        std::cout << std::format("coverage: {} on {}x{}, {} games, {} simulations, device {}\n",
+                                 settings.checkpoint, settings.board, settings.board,
+                                 settings.games, settings.simulations,
+                                 compute.cuda ? "cuda" : "cpu");
+
+        const auto started = std::chrono::high_resolution_clock::now();
+
+        // Positions come from whichever network is named for the job. Comparing several
+        // checkpoints means holding this one fixed, so every prior is read on the same
+        // boards and the difference is the policy rather than the population.
+        AlphaZeroNet position_network = network;
+        if (!settings.position_checkpoint.empty())
+        {
+            position_network =
+                loadNetwork(settings, settings.position_checkpoint, "positions: ", compute.device);
+            std::cout << std::format("positions generated by {}\n", settings.position_checkpoint);
+        }
+
+        const std::vector<SnakeEnv> played =
+            collectPositions(position_network, compute.device, settings, step_limit);
+        const std::vector<SnakeEnv> positions = sampleEvenly(played, settings.max_positions);
+        std::cout << std::format("{} positions played, {} sampled evenly along the trajectory\n",
+                                 played.size(), positions.size());
+        if (positions.empty())
+        {
+            throw std::runtime_error("no positions were generated");
+        }
+
+        reportSurvivableActions(played);
+        reportPriorSaturation(network, compute.device, settings, played);
+
+        if (settings.skip_arms)
+        {
+            std::cout << "\n--skip-arms given; no search arms were run\n";
+            return 0;
+        }
+
+        runArms(network, compute.device, settings, positions);
+
+        const auto finished = std::chrono::high_resolution_clock::now();
+        std::cout << std::format("\nelapsed {:.2f}s\n",
+                                 std::chrono::duration<double>(finished - started).count());
+        std::cout << "every arm searched the same positions; no move was played from any\n";
+        return 0;
+    }
+    catch (const std::invalid_argument& error)
+    {
+        std::cerr << "bad arguments: " << error.what() << std::endl;
+        return 1;
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << error.what() << std::endl;
+        return 1;
+    }
 }

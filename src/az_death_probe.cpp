@@ -1,28 +1,51 @@
-﻿// AlphaZeroDeathProbe: does the trained death head contain anything?
+﻿// AlphaZeroDeathProbe: has the death head learned anything, and is it worth using?
 //
-// az10_death368.pt cost 4.8 hours and its logs cannot say, because the death loss was
-// never printed. This scores the head directly instead of the run that produced it:
-// it plays held-out games with the search, and for every root position pairs the
-// network's raw death output against the risk the search backed up for the same action.
+// A diagnostic, not part of training or evaluation. It scores the head directly instead of
+// reading the training curve of the run that produced it, which is the only way to tell a
+// head that learned nothing from one that was never given anything to learn from.
 //
-// The head is read from the network, not through NetworkEvaluator, which zeroes this
-// output whenever az::DEATH_RISK_FROM_NETWORK is false - as it is. A probe reading
-// through the evaluator scores a vector of zeros and reports a dead head either way.
+// What it pairs. The death head predicts, for each of the three moves out of a position,
+// the chance that move leads to a death no later play can avoid. The probe plays held-out
+// games with the search and, at every position along them, records two numbers for each
+// move: what the head said, and what the search backed up for that same move after its
+// simulations. The search's number is the reference - not truth, but hundreds of lookaheads
+// against the head's single forward pass - so a head that learned something ranks the moves
+// the way the search does, and one that learned nothing does not.
+//
+// Read the floor first. Every run also scores a freshly initialised network of the same
+// shape. An untrained head emits nearly the same number everywhere, and a rank correlation
+// computed over a near-constant vector is normalisation noise rather than a weak signal. A
+// trained number that does not clear the untrained one is not evidence of learning, it is
+// evidence of the architecture. The head's spread is printed above its correlation so the
+// near-constant case is visible before the number that would misrepresent it.
+//
+// It reads the head off the network, not through NetworkEvaluator. The evaluator
+// substitutes zero for this output while az::DEATH_RISK_FROM_NETWORK is off, so a probe
+// going through it scores a vector of zeros and calls every head dead, trained or not.
+//
+// Two label rules, four reports. The trainer keeps a position's labels only when the search
+// visited all three moves - a move nobody tried has no evidence attached. The looser rule
+// keeps every move the search did visit, whatever the others did. Both are scored on the
+// same positions, for the trained head and for the untrained one, so the four blocks are
+// the two rules crossed with the two networks, and the pair counts show what the looser
+// rule would yield.
 //
 // Usage:
 //
 //     AlphaZeroDeathProbe.exe --checkpoint az10_death368.pt --board 10 \
 //       --games 32 --simulations 200 --seed-offset 0 --threshold 0.5
 //
-//     # --games 32        held-out games; every move of each contributes pairs
-//     # --simulations 200 search budget per move, as in evaluation
-//     # --threshold 0.5   binarises the search target for the AUC only
+//     # --games 32        held-out games; every move of every position contributes a pair
+//     # --simulations 200 search budget per move, matched to evaluation
 //     # --seed-offset 0   offset into the reserved evaluation seed band
+//     # --threshold 0.5   where the search's number counts as doomed, for the ROC only
 //
-// It prints two reports. The trained head, and the same measurement against a freshly
-// initialised network of the same shape - the noise floor. An untrained head scores
-// whatever this architecture scores by construction, and a trained number that does not
-// clear it is not evidence of learning. Read the floor before the result.
+// Output, per block: how many pairs were kept and how many rejected, the head's mean and
+// spread, its rank correlation against the search's continuous number, and the area under
+// the ROC curve with the search's number split at --threshold. That threshold changes the
+// ROC figure and nothing else - the correlation uses the continuous number. The ROC figure
+// is undefined when every target falls on one side of the split, and says so rather than
+// printing a value nobody can read.
 
 #include <torch/torch.h>
 
@@ -32,6 +55,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "az_network.h"
@@ -40,72 +64,208 @@
 #include "flag_parser.h"
 #include "mcts.h"
 #include "network_evaluator.h"
+#include "network_setup.h"
 #include "seed_policy.h"
 #include "snake_env.h"
 
 namespace
 {
 
+// Which network's death head to score, on how many held-out games, at what search
+// budget. Filled by parseSettings from the command line.
+//
+//     const ProbeSettings settings =
+//         parseSettings(std::vector<std::string>(argv + 1, argv + argc));
+//
+//     const ProbeSamples samples =
+//         collectSamples(network, device, settings, az::deriveStepLimit(settings.board));
+//     report("trained head", "positions", samples.all_or_nothing, settings.threshold);
 struct ProbeSettings
 {
+    // The network whose head is scored. Required.
     std::string checkpoint;
+    // Side of the square board the games are played on.
     int board{ 10 };
+    // Trunk width, in convolution channels. Must match the checkpoint, or loading fails.
     int channels{ 64 };
+    // Residual blocks in the trunk. Must match the checkpoint for the same reason.
     int blocks{ 4 };
+    // Held-out games to play. Every move of each contributes pairs, so this is the
+    // sample size only indirectly - a game that dies early contributes few.
     int games{ 32 };
+    // Search simulations per move, matched to evaluation so what is scored is the agent.
     int simulations{ 200 };
+    // Offset into the reserved evaluation seed band.
     unsigned int seed_offset{ 0 };
+    // Where the search's backed-up risk counts as "doomed", for the area under the ROC
+    // curve and nothing else. The rank correlation uses the continuous target, so this
+    // changes one reported number and leaves the rest alone.
     float threshold{ 0.5f };
 };
 
+// Every flag this program accepts. C++ cannot switch on a string, so the command line is
+// turned into one of these first and the switch below does the rest.
+enum class Flag
+{
+    Checkpoint,
+    Board,
+    Channels,
+    Blocks,
+    Games,
+    Simulations,
+    SeedOffset,
+    Threshold
+};
+
+// One spelling and the enumerator it names.
+struct FlagName
+{
+    // As written on the command line, leading dashes included.
+    std::string_view text;
+    // What applySetting will do with it.
+    Flag flag;
+};
+
+// The whole command line, in one place. Adding a flag is a row here, an enumerator above
+// and a case below - and leaving out the case is a compiler diagnostic.
+constexpr FlagName FLAG_NAMES[] = {
+    { "--checkpoint", Flag::Checkpoint },
+    { "--board", Flag::Board },
+    { "--channels", Flag::Channels },
+    { "--blocks", Flag::Blocks },
+    { "--games", Flag::Games },
+    { "--simulations", Flag::Simulations },
+    { "--seed-offset", Flag::SeedOffset },
+    { "--threshold", Flag::Threshold },
+};
+
+// Which Flag `text` names, or std::invalid_argument when it names none.
+//
+//     lookupFlag("--threshold")   // Flag::Threshold
+//
+// Linear over eight entries, which costs less than building a map for one pass.
+Flag lookupFlag(std::string_view text)
+{
+    for (const FlagName& candidate : FLAG_NAMES)
+    {
+        if (candidate.text == text)
+        {
+            return candidate.flag;
+        }
+    }
+    throw std::invalid_argument(std::format("unknown flag {}", text));
+}
+
+// Applies one parsed flag to the settings, or throws naming the flag when the value is
+// not what that flag accepts.
+//
+//     applySetting(settings, Flag::Games, "--games", "32");   // settings.games == 32
+//
+// No default case on purpose: the value comes from lookupFlag and can only be an
+// enumerator, so the switch is exhaustive and a new enumerator without a case is caught
+// at compile time rather than falling through in silence.
+void applySetting(ProbeSettings& settings, Flag flag, std::string_view name, std::string_view value)
+{
+    switch (flag)
+    {
+        case Flag::Checkpoint:
+        {
+            settings.checkpoint = std::string(value);
+            break;
+        }
+        case Flag::Board:
+        {
+            settings.board = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Channels:
+        {
+            settings.channels = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Blocks:
+        {
+            settings.blocks = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Games:
+        {
+            settings.games = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Simulations:
+        {
+            settings.simulations = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::SeedOffset:
+        {
+            settings.seed_offset = flags::parseWholeUnsigned(name, value);
+            break;
+        }
+        case Flag::Threshold:
+        {
+            // parseUnitFloat, not std::stof: stof stops at the first character it cannot
+            // use, so "0.5x" read as 0.5, and a value outside [0, 1] was refused by
+            // scoreDeathProbe only after every game had been played.
+            settings.threshold = flags::parseUnitFloat(name, value);
+            break;
+        }
+    }
+}
+
+// Everything that has to hold before a checkpoint is read or a game is played.
+//
+// The board, channel and block bounds are checked here rather than left to the network
+// constructor, so a rejection names the flag the operator typed. The seed guard is the
+// one that matters most: an offset running past the reserved band wraps into training
+// seeds, which is silent and turns a held-out measurement into one that is not.
+void requireUsable(const ProbeSettings& settings)
+{
+    if (settings.checkpoint.empty())
+    {
+        throw std::invalid_argument("--checkpoint is required");
+    }
+    flags::requireAtLeast("--board", settings.board, 2);
+    if (settings.board > az::LARGEST_BOARD)
+    {
+        throw std::invalid_argument(
+            std::format("--board must be at most {}, got {}", az::LARGEST_BOARD, settings.board));
+    }
+    flags::requireAtLeast("--channels", settings.channels, 1);
+    // Zero is legal: a trunk with no residual blocks is shallow, not broken.
+    flags::requireAtLeast("--blocks", settings.blocks, 0);
+    flags::requireAtLeast("--games", settings.games, 1);
+    flags::requireAtLeast("--simulations", settings.simulations, 1);
+
+    const long long last_seed_index =
+        static_cast<long long>(settings.seed_offset) + settings.games - 1;
+    if (last_seed_index >= static_cast<long long>(seeds::RESERVED_BAND_WIDTH))
+    {
+        throw std::invalid_argument(
+            std::format("--seed-offset {} with {} games runs past the reserved evaluation band "
+                        "of {} seeds and wraps into the training range",
+                        settings.seed_offset, settings.games, seeds::RESERVED_BAND_WIDTH));
+    }
+}
+
+// Parses the command line, or throws std::invalid_argument naming the flag.
+//
+//     const ProbeSettings settings =
+//         parseSettings(std::vector<std::string>(argv + 1, argv + argc));
+//
+// `arguments` excludes argv[0]. Requires --checkpoint. Rejects an unknown flag, a board
+// outside 2..az::LARGEST_BOARD, non-positive channels, games or simulations, negative
+// blocks, a --threshold outside [0, 1] or carrying trailing text, and a seed offset whose
+// games would run past the reserved evaluation band.
 ProbeSettings parseSettings(std::span<const std::string> arguments)
 {
     ProbeSettings settings;
     for (const flags::FlagValue& entry : flags::readFlags(arguments))
     {
-        if (entry.flag == "--checkpoint")
-        {
-            settings.checkpoint = std::string(entry.value);
-        }
-        else if (entry.flag == "--board")
-        {
-            settings.board = flags::parseWholeInt(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--channels")
-        {
-            settings.channels = flags::parseWholeInt(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--blocks")
-        {
-            settings.blocks = flags::parseWholeInt(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--games")
-        {
-            settings.games = flags::parseWholeInt(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--simulations")
-        {
-            settings.simulations = flags::parseWholeInt(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--seed-offset")
-        {
-            settings.seed_offset = flags::parseWholeUnsigned(entry.flag, entry.value);
-        }
-        else if (entry.flag == "--threshold")
-        {
-            settings.threshold = std::stof(std::string(entry.value));
-        }
-        else
-        {
-            throw std::invalid_argument(std::format("unknown flag {}", entry.flag));
-        }
+        applySetting(settings, lookupFlag(entry.flag), entry.flag, entry.value);
     }
-    if (settings.checkpoint.empty())
-    {
-        throw std::invalid_argument("--checkpoint is required");
-    }
-    flags::requireAtLeast("--games", settings.games, 1);
-    flags::requireAtLeast("--simulations", settings.simulations, 1);
+    requireUsable(settings);
     return settings;
 }
 
@@ -147,9 +307,18 @@ MonteCarloSearch::Config searchConfig(const ProbeSettings& settings)
 //
 // The two rejection counters differ in kind: all_or_nothing counts whole positions,
 // per_visited_action counts single actions. Neither is comparable to the other.
+// The same positions scored under both label rules, from one walk of the games.
+//
+// Both are filled together so the two rules are never compared across different
+// populations - which is what would happen if each were collected by its own run.
 struct ProbeSamples
 {
+    // Pairs kept under the rule the trainer uses today: a position contributes every
+    // action, or nothing, according to whether the search visited all of them.
     DeathProbeSamples all_or_nothing;
+    // Pairs kept under the looser rule: every action the search visited contributes,
+    // whatever the others did. The difference between the two is what changing the
+    // rule would yield at the same search cost.
     DeathProbeSamples per_visited_action;
 };
 
@@ -272,6 +441,18 @@ ProbeSamples collectSamples(AlphaZeroNet& network, torch::Device device,
     return samples;
 }
 
+// Prints one scored block under `label`, as an indented report.
+//
+//     report("trained head", "positions", samples.all_or_nothing, settings.threshold);
+//
+// `rejected_unit` names what the rejected count counts - positions under the
+// all-or-nothing rule, actions under the per-action rule - because the two rules reject
+// different things and one word for both would misread by a factor of three.
+//
+// Says so and returns without scoring when fewer than two pairs survived: a correlation
+// over one point is not a weak result, it is not a result. Prints the head's spread
+// before its correlation, because a rank correlation over a near-constant vector is
+// normalisation noise rather than a weak signal.
 void report(const std::string& label, const std::string& rejected_unit,
             const DeathProbeSamples& samples, float threshold)
 {
@@ -315,8 +496,9 @@ int main(int argc, char** argv)
     }
 
     const int step_limit = az::deriveStepLimit(settings.board);
-    const bool cuda = torch::cuda::is_available();
-    torch::Device device = cuda ? torch::Device(torch::kCUDA) : torch::Device(torch::kCPU);
+    const Compute compute = chooseDevice();
+    const torch::Device device = compute.device;
+    const bool cuda = compute.cuda;
 
     std::cout << std::format("death probe: {} on {}x{}, {} games, {} simulations, threshold {}\n",
                              settings.checkpoint, settings.board, settings.board, settings.games,
@@ -331,15 +513,11 @@ int main(int argc, char** argv)
     AlphaZeroNet trained(settings.board, settings.board, settings.channels, settings.blocks);
     try
     {
-        const std::vector<std::string> missing = trained->loadNarrowerStem(settings.checkpoint);
-        for (const std::string& name : missing)
-        {
-            std::cout << std::format("  fresh, absent from the checkpoint: {}\n", name);
-        }
+        loadCheckpoint(trained, settings.checkpoint, "");
     }
     catch (const std::exception& error)
     {
-        std::cerr << "could not load " << settings.checkpoint << ": " << error.what() << std::endl;
+        std::cerr << error.what() << std::endl;
         return 1;
     }
     trained->to(device);

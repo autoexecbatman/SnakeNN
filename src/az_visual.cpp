@@ -13,6 +13,7 @@
 #include "eval_options.h"
 #include "mcts.h"
 #include "network_evaluator.h"
+#include "network_setup.h"
 #include "snake_env.h"
 
 // Watch a trained network play.
@@ -31,6 +32,8 @@ constexpr int PANEL_HEIGHT = 150;
 // Narrowest the window is allowed to get, so the header text still fits.
 constexpr int MIN_WINDOW_WIDTH = 440;
 
+// One labelled figure in the header panel: a small-caps label at the top left, the
+// value centred under it in the fixed-width face. `width` is the tile's, for centring.
 void drawStatTile(const ui::Fonts& fonts, const char* label, const char* value, float x, float y,
                   float width, Color value_color)
 {
@@ -58,8 +61,7 @@ int main(int argc, char** argv)
     }
     const int step_limit = settings.stepLimit();
 
-    torch::Device device =
-        torch::cuda::is_available() ? torch::Device(torch::kCUDA) : torch::Device(torch::kCPU);
+    const torch::Device device = chooseDevice().device;
 
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
     try

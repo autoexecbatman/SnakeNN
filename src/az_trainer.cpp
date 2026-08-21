@@ -40,6 +40,7 @@
 #include "az_network.h"
 #include "az_parameters.h"
 #include "network_evaluator.h"
+#include "network_setup.h"
 #include "run_ledger.h"
 #include "seed_policy.h"
 #include "selfplay.h"
@@ -101,8 +102,9 @@ int main(int argc, char** argv)
                        0 };
     ledger::append(settings.ledger_path, run);
 
-    const bool cuda = torch::cuda::is_available();
-    torch::Device device = cuda ? torch::Device(torch::kCUDA) : torch::Device(torch::kCPU);
+    const Compute compute = chooseDevice();
+    torch::Device device = compute.device;
+    const bool cuda = compute.cuda;
 
     std::cout << "=== AlphaZero Snake ===" << std::endl;
     std::cout << std::format("board {}x{}  step limit {}  simulations {}\n", settings.board,
@@ -133,21 +135,15 @@ int main(int argc, char** argv)
     {
         try
         {
-            // Widened rather than loaded flat, so a checkpoint saved before the
-            // clock plane resumes into a 9-plane network with the new channel
-            // zeroed - a fine-tune from where it left off rather than a retrain.
-            const std::vector<std::string> missing = network->loadNarrowerStem(settings.resume);
+            // Widening is what lets a checkpoint saved before the clock plane resume
+            // into a 9-plane network with the new channel zeroed - a fine-tune from
+            // where it left off rather than a retrain.
+            loadCheckpoint(network, settings.resume, "");
             std::cout << "resumed from " << settings.resume << std::endl;
-            // Printed rather than swallowed: a head added since the checkpoint was
-            // written looks exactly like a mistyped module name from here.
-            for (const std::string& name : missing)
-            {
-                std::cout << std::format("  fresh, absent from the checkpoint: {}\n", name);
-            }
         }
         catch (const std::exception& error)
         {
-            std::cerr << "could not load " << settings.resume << ": " << error.what() << std::endl;
+            std::cerr << error.what() << std::endl;
             run.outcome = ledger::Outcome::Failed;
             ledger::append(settings.ledger_path, run);
             return 1;

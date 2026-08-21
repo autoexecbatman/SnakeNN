@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.18)
 project(SnakeNN CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -852,6 +852,7 @@ add_executable(AlphaZeroTrainer
     src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
+    src/network_setup.cpp
     src/snake_env.cpp
 )
 
@@ -880,6 +881,7 @@ add_executable(AlphaZeroEvaluate
     src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
+    src/network_setup.cpp
     src/snake_env.cpp
 )
 
@@ -909,6 +911,7 @@ add_executable(AlphaZeroDeathProbe
     src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
+    src/network_setup.cpp
     src/snake_env.cpp
 )
 
@@ -937,6 +940,7 @@ add_executable(AlphaZeroCoverage
     src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
+    src/network_setup.cpp
     src/snake_env.cpp
 )
 
@@ -964,6 +968,7 @@ add_executable(AlphaZeroVisual
     src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
+    src/network_setup.cpp
     src/snake_env.cpp
 )
 
