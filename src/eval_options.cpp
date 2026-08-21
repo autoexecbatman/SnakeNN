@@ -47,12 +47,6 @@ namespace evaluation
 namespace
 {
 
-// Seeds from EVALUATION_BASE to the top of the unsigned range. A run whose last
-// game falls outside this does not error - it wraps to a low seed, which is a
-// training seed, which is how the held-out set stopped being held out once before.
-constexpr unsigned int RESERVED_BAND_WIDTH =
-    std::numeric_limits<unsigned int>::max() - seeds::EVALUATION_BASE + 1u;
-
 // Everything that has to hold before a checkpoint is read or a game is played.
 void requireUsable(const Settings& settings)
 {
@@ -83,12 +77,12 @@ void requireUsable(const Settings& settings)
     // Compared in 64 bits, since the sum in 32 is the wraparound being rejected.
     const long long last_seed_index =
         static_cast<long long>(settings.seed_offset) + settings.games - 1;
-    if (last_seed_index >= static_cast<long long>(RESERVED_BAND_WIDTH))
+    if (last_seed_index >= static_cast<long long>(seeds::RESERVED_BAND_WIDTH))
     {
         throw std::invalid_argument(
             std::format("--seed {} with {} games runs past the reserved evaluation band of {} "
                         "seeds and wraps into the training range",
-                        settings.seed_offset, settings.games, RESERVED_BAND_WIDTH));
+                        settings.seed_offset, settings.games, seeds::RESERVED_BAND_WIDTH));
     }
 }
 

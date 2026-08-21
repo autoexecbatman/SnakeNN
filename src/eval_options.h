@@ -6,36 +6,51 @@
 
 #include "az_parameters.h"
 
-// The evaluator's settings, and the rejections that happen before a checkpoint is
-// read.
+// Settings for the two programs that play a trained network: the evaluator, which
+// scores a checkpoint over held-out seeds, and the visual demo, which renders one game.
+// Each has its own Settings and its own parseArguments, in its own namespace.
 //
-// Extracted from az_evaluate.cpp, whose parser warned on an unknown flag and then
-// scored a run with the default, dropped a flag in final position in silence, and
-// reached std::stoi for every number - so "--board 10x10" trained the reading of a
-// 10x10 board onto whatever the operator believed they had asked for. Every number
-// this project quotes comes out of that program.
+// Usage - what az_evaluate.cpp's main does:
 //
-// Free of LibTorch, so its assertions are reachable. A debug binary linked against
-// this repository's LibTorch dies before main, so an assert in a Torch-linked file
-// here is dead in both configurations.
+//     const std::vector<std::string> arguments(argv + 1, argv + argc);
+//     const evaluation::Settings settings = evaluation::parseArguments(arguments);
+//
+//     std::cout << evaluation::formatHeader(settings);
+//     std::cout << evaluation::formatGameLine(seed, evaluation::Outcome::Won, score, steps);
+//
+// Every rejection is a throw naming the flag, so a mistyped setting stops the run
+// before a checkpoint is read. Free of LibTorch, so its assertions are reachable.
 namespace evaluation
 {
 
-// Plain aggregate: no member owns a resource, so the compiler's copy is correct
-// and there is nothing to delete.
+// Which checkpoint to score, over how many held-out games, at what search budget.
+// Filled by parseArguments from the command line.
+//
+// This is the program that produces every number this project quotes: noise off, the
+// visit-count argmax played, and seeds drawn from a band reserved from training.
 struct Settings
 {
     // Required. There is no default worth guessing and an empty one is a rejection,
     // not a fallback.
     std::string checkpoint;
+    // Side of the square board. Must match the board the checkpoint was trained for
+    // only in spirit - no weight depends on it, so a 6x6 network scores at 20x20.
     int board{ 6 };
+    // Games to play. The measurement noise floor here is large: the search stream
+    // alone flips about a fifth of 1000 games, so a difference under 3 points is
+    // invisible at that count.
     int games{ 64 };
+    // Search simulations per move. A win rate quoted without this number means
+    // nothing - four times the simulations doubled the rate here with no retraining.
     int simulations{ 200 };
     // Empty means derive it from the board. The field it replaces was an int whose
     // zero meant "not given", resolved by overwriting itself during parsing, so no
     // caller could tell which of the two things it was holding.
     std::optional<int> step_limit_override;
+    // Trunk width, in convolution channels. Must match what the checkpoint was built
+    // with, or loading it fails.
     int channels{ 64 };
+    // Residual blocks in the trunk. Must match the checkpoint for the same reason.
     int blocks{ 4 };
     // An offset within the reserved evaluation band, not an absolute seed. See
     // seed_policy.h: the absolute default this replaced was 900000, which was a
@@ -88,6 +103,7 @@ struct Settings
     // binary, so they differ by the setting and not also by a rebuild.
     bool death_cap{ az::DEATH_CAP };
 
+    // Cells on the board.
     int cellCount() const noexcept;
     // The snake starts one segment long, so this many apples fills the board.
     int foodsToWin() const noexcept;
@@ -144,24 +160,28 @@ std::string formatGameLine(unsigned int seed, Outcome outcome, int score, int st
 
 }  // namespace evaluation
 
-// The visual demo's settings.
+// The visual demo: one game, rendered, at a frame rate.
 //
-// Separate from evaluation::Settings although six of the eight fields match. They
-// are two programs, not one program twice: this one has a frame rate and a single
-// absolute seed, that one has a game count, a batch and an offset into a reserved
-// band. A shared base would couple them to force-fit the part a free function
-// already shares.
+//     const visual::Settings settings = visual::parseArguments(arguments);
 namespace visual
 {
 
+// Everything the demo was told to do. Six fields match evaluation::Settings; the two
+// that differ are the ones that make it a demo rather than a measurement - an absolute
+// seed instead of an offset, and a frame rate instead of a game count.
 struct Settings
 {
     // Required, as in evaluation.
     std::string checkpoint;
+    // Side of the square board.
     int board{ 6 };
+    // Search simulations per move. Higher plays better and renders slower.
     int simulations{ 200 };
+    // Empty derives the step budget from the board.
     std::optional<int> step_limit_override;
+    // Trunk width, in convolution channels. Must match the checkpoint.
     int channels{ 64 };
+    // Residual blocks in the trunk. Must match the checkpoint.
     int blocks{ 4 };
     // An absolute seed, unlike evaluation's offset, and 900000 is a training seed
     // - see seed_policy.h. So the default shows a game the agent may have learned
@@ -172,7 +192,9 @@ struct Settings
     // demo advances at the frame rate.
     int moves_per_frame{ 1 };
 
+    // Cells on the board.
     int cellCount() const noexcept;
+    // The snake starts one segment long, so this many apples fills the board.
     int foodsToWin() const noexcept;
     // The override if one was given, az::deriveStepLimit(board) otherwise.
     int stepLimit() const;

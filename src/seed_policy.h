@@ -1,5 +1,7 @@
 #pragma once
 
+#include <limits>
+
 #include <cstdint>
 #include <stdexcept>
 
@@ -23,6 +25,16 @@ namespace seeds
 // training seed: at 100003 per iteration a run would need ~37,000 iterations to
 // arrive, and iterations take minutes.
 constexpr unsigned int EVALUATION_BASE = 0xE0000000u;
+
+// Seeds evaluation owns: EVALUATION_BASE up to the top of the unsigned range.
+//
+//     if (offset + games - 1 >= seeds::RESERVED_BAND_WIDTH) { /* would wrap */ }
+//
+// A run whose last game falls outside this does not error - it wraps to a low
+// seed, which is a training seed, which is how the held-out set stopped being
+// held out once before. Every program deriving evaluation seeds checks it.
+constexpr unsigned int RESERVED_BAND_WIDTH =
+    std::numeric_limits<unsigned int>::max() - EVALUATION_BASE + 1u;
 
 // Distinct iterations must not collide, and 256 games per iteration must not
 // run into the next iteration's block. 100003 is prime and far above any
