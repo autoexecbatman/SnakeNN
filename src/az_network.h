@@ -1,28 +1,59 @@
-#pragma once
+﻿#pragma once
 
 #include <torch/torch.h>
 
 #include <string>
 #include <vector>
 
-// Policy and value network for the search.
+// Policy and value network for the search: one convolutional trunk and four heads - a
+// prior over the three relative actions, a value, a steps-to-go estimate, and a death
+// risk per action.
 //
-// Convolutional, because the observation is a board and the thing that has to
-// be recognised - a region about to be sealed off - is spatial and appears
-// anywhere on it. The old network was three hand-rolled weight matrices over
-// eight scalars; nothing about that shape can express the position.
+// Board size is a constructor argument and no weight depends on it, so a network trained
+// at 6x6 loads at 20x20. Transfer means constructing at the new size and copying weights
+// in; feeding a different size to an existing network is refused by forward.
 //
-// One trunk, two heads, as in AlphaZero: a prior over the three relative
-// actions to order the search, and a value to stand in for the rest of the game
-// at a leaf. Board size is a constructor argument, so the same architecture
-// trains at 6x6 and transfers up - only the head's linear layers depend on it.
-// What one forward pass produces. A struct rather than a pair, because `first`
-// and `second` name the order the two were written in and nothing else - and the
-// two are not interchangeable: one is unnormalised logits over actions and the
-// other a bounded scalar. Reading `.first` at a call site tells you neither.
+// Usage:
 //
-// Structured bindings work on this exactly as they did on the pair, so callers
-// that already wrote `auto [policy, value] = ...` are unaffected.
+//     // Board width, board height, trunk channels, residual blocks.
+//     AlphaZeroNet network(10, 10, 64, 4);
+//     network->to(torch::kCUDA);   // arrow, not dot - the holder is a shared pointer
+//     network->eval();             // train() instead, inside a training step
+//
+//     // Resuming. Returns the parameters the checkpoint did not carry; print them,
+//     // because a mistyped module name looks the same as a head added later.
+//     for (const std::string& name : network->loadNarrowerStem("az10.pt"))
+//     {
+//         std::cout << "fresh: " << name << "\n";
+//     }
+//
+//     // [batch, PLANE_COUNT, height, width]. from_blob does not copy, so the buffer
+//     // has to outlive the call.
+//     torch::Tensor planes = torch::from_blob(
+//         encoded.data(), { batch, SnakeEnv::PLANE_COUNT, 10, 10 }, torch::kFloat)
+//         .to(torch::kCUDA);
+//
+//     torch::NoGradGuard no_grad;   // no autograd graph - inference only
+//     const Prediction prediction = network->forward(planes);
+//
+//     torch::save(network, "checkpoint.pt");   // the holder, never the Impl
+//
+// Reading prediction.death_risk gives what the head emits. NetworkEvaluator substitutes
+// zero for it while az::DEATH_RISK_FROM_NETWORK is false, so a consumer going through
+// the evaluator sees zeros whatever the head has learned.
+
+// What one forward pass returns: four tensors, one row each per state of the batch, in
+// the order the planes were given. Every field below states its own shape and range.
+//
+//     const Prediction prediction = network->forward(planes);
+//
+//     // Logits, not probabilities. Dimension 1 is the action axis.
+//     const torch::Tensor priors = torch::softmax(prediction.policy_logits, 1);
+//     // Row 0 is the first state of the batch.
+//     const float value = prediction.value[0].item<float>();
+//
+//     // Or bind all four at once, in declaration order.
+//     const auto [logits, values, steps, risks] = prediction;
 struct Prediction
 {
     // [N, ACTION_COUNT]. Logits, not probabilities - no softmax has been applied,
@@ -52,63 +83,68 @@ struct Prediction
     torch::Tensor death_risk;
 };
 
-// A stem weight widened to accept more input planes, with the new ones zeroed.
+// A copy of `target`'s shape holding `saved` in its leading input channels, with the
+// rest zero - so the widened convolution computes what the narrow one did.
 //
-// Shaped like `target`, holding `saved` in its leading input channels. Zero in the
-// rest is what makes the widened convolution compute exactly what the narrower one
-// did until training moves them.
+//     parameter.copy_(widenStemWeight(saved, parameter));   // from loadNarrowerStem
 //
-// Throws std::invalid_argument unless `saved` has at most as many input channels as
-// `target` and agrees with it in every other dimension. Free rather than a member
-// because it is arithmetic on two tensors and needs no network to be tested.
+// Throws std::invalid_argument unless `saved` fits inside `target`: at most as many
+// input channels, and equal in every other dimension.
 torch::Tensor widenStemWeight(const torch::Tensor& saved, const torch::Tensor& target);
 
+// The network itself. Callers hold AlphaZeroNet, the shared-pointer holder declared at
+// the end of this file; this is what it points at.
 struct AlphaZeroNetImpl : torch::nn::Module
 {
+    // Builds the trunk and the four heads for one board size.
+    //
+    //     AlphaZeroNet network(10, 10, 64, 4);   // width, height, channels, blocks
+    //
+    // Throws on a board smaller than 2x2, a trunk of fewer than one channel, or a
+    // negative block count - each is a size that arrives from a command line, and a
+    // wrong one builds and trains and means nothing.
     AlphaZeroNetImpl(int board_width, int board_height, int channels, int blocks);
 
-    // Not copyable and not movable, and nothing is defined: the base class owns
-    // the parameters through shared pointers and its destructor releases them, so
-    // this is the rule of zero and the deletions are an interface decision.
-    //
-    // A copy would be the dangerous kind - it would duplicate the bookkeeping and
-    // share every parameter tensor, so two networks would appear independent and
-    // train each other's weights. Callers pass the TORCH_MODULE holder below,
-    // which is a shared pointer and copyable on purpose; that is the value type
-    // here, and this is not.
+    // The parameters are shared pointers, so a copy would train one set of weights
+    // through two objects that look independent. Pass the AlphaZeroNet holder instead.
     AlphaZeroNetImpl(const AlphaZeroNetImpl&) = delete;
     AlphaZeroNetImpl& operator=(const AlphaZeroNetImpl&) = delete;
     AlphaZeroNetImpl(AlphaZeroNetImpl&&) = delete;
     AlphaZeroNetImpl& operator=(AlphaZeroNetImpl&&) = delete;
 
-    // Checks its input and throws on a mismatch rather than asserting it. Nothing
-    // in this file can be exercised in a debug build: LibTorch here ships
-    // release-only libraries, and a debug binary linked against them dies of an
-    // access violation before it reaches any assertion. Measured, not assumed.
-    // TORCH_CHECK is live in the configuration this code actually runs in.
+    // Runs one batch of encoded boards through the trunk and the four heads.
+    //
+    //     // A scope guard: while it is alive autograd records nothing. Without it a
+    //     // search retains every leaf it evaluates and runs out of memory.
+    //     torch::NoGradGuard no_grad;
+    //     const Prediction prediction = network->forward(planes);
+    //
+    // A training step leaves it out - backward needs the graph this suppresses.
+    //
+    // Throws unless planes is [N, PLANE_COUNT, height, width] for the board this network
+    // was built for, with N at least one.
     Prediction forward(torch::Tensor planes);
 
+    // Width of the board this network was built for.
     int boardWidth() const { return board_width_; }
+    // Height of the same board. forward refuses a batch shaped for any other.
     int boardHeight() const { return board_height_; }
 
-    // Widens the stem to accept more input planes than the checkpoint was trained
-    // with, copying the old weights and zeroing the new channels.
+    // Loads a checkpoint whose stem accepts fewer input planes than this network, copying
+    // the saved weights and zeroing the new channels, so the widened network computes what
+    // the saved one did until training moves them.
     //
-    // The clock plane took PLANE_COUNT from 8 to 9, which changes the stem's input
-    // channel count, so torch::load rejects every checkpoint trained before it.
-    // Zeroed new channels mean the widened network computes exactly what the old
-    // one did on the same position - the clock starts ignored and is learned from
-    // there, which is a fine-tune rather than a retrain from nothing.
+    //     for (const std::string& name : network->loadNarrowerStem("az10.pt"))
+    //     {
+    //         std::cout << "fresh: " << name << "\n";
+    //     }
     //
-    // Throws if the checkpoint is wider than this network or differs anywhere but
-    // the stem's input channels.
+    // Returns the parameters and buffers the checkpoint did not contain; those keep their
+    // constructed values. Print them - a mistyped module name looks the same as a head
+    // added after the checkpoint was written.
     //
-    // Returns the names of parameters and buffers the checkpoint did not contain;
-    // those keep the values they were constructed with. That is what lets a head
-    // added after a checkpoint was written start from its initialization instead
-    // of refusing the whole file. The names are returned rather than swallowed
-    // because a mistyped module name looks exactly like a new head from here, and
-    // only the caller printing the list makes the difference visible.
+    // Throws if the checkpoint is wider than this network, or differs anywhere but the
+    // stem's input channels.
     std::vector<std::string> loadNarrowerStem(const std::string& checkpoint_path);
 
 private:
@@ -143,4 +179,6 @@ private:
     torch::nn::Linear death_out{ nullptr };
 };
 
+// The value type callers pass around: a shared pointer to AlphaZeroNetImpl, so a copy
+// shares one network. Reach its members with -> rather than a dot.
 TORCH_MODULE(AlphaZeroNet);

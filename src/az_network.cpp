@@ -1,3 +1,12 @@
+﻿// Implementation of AlphaZeroNet. What it is and how to call it are in az_network.h.
+//
+// Every head pools to a fixed grid before its linear layers, so no weight depends on
+// board size. forward throws on a batch shaped for a different board; loadNarrowerStem
+// loads a checkpoint with fewer input planes and zeroes the new channels.
+//
+// LibTorch ships release-only libraries, so nothing here is reachable in a debug build -
+// the checks are TORCH_CHECK and std::invalid_argument, never assert.
+
 #include <torch/torch.h>
 
 #include <format>

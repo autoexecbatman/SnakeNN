@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>snakeNN - death labels</title>
+<style>
+  :root {
+    --ink: #1a1c1e;
+    --dim: #5b6167;
+    --rule: #d8dce0;
+    --panel: #f5f6f8;
+    --accent: #8a4b2a;
+    --good: #2f6b3f;
+    --bad: #9a3324;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e6e8ea;
+      --dim: #a0a6ac;
+      --rule: #33383d;
+      --panel: #1c1f22;
+      --accent: #d59a76;
+      --good: #7fc08f;
+      --bad: #e08475;
+    }
+    body { background: #131517; }
+  }
+  body {
+    margin: 0 auto;
+    padding: 2.5rem 1.25rem 5rem;
+    max-width: 52rem;
+    background: #ffffff;
+    color: var(--ink);
+    font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) { body { background: #131517; } }
+  h1 { font-size: 1.75rem; line-height: 1.25; margin: 0 0 .25rem; }
+  h2 {
+    font-size: 1.2rem;
+    margin: 2.75rem 0 .75rem;
+    padding-top: .75rem;
+    border-top: 1px solid var(--rule);
+  }
+  h3 { font-size: 1rem; margin: 1.75rem 0 .5rem; }
+  .sub { color: var(--dim); margin: 0 0 2rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  .scroll { overflow-x: auto; margin: 1rem 0; }
+  th, td { text-align: right; padding: .4rem .6rem; border-bottom: 1px solid var(--rule); }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { border-bottom: 2px solid var(--rule); font-weight: 600; }
+  tbody tr:hover { background: var(--panel); }
+  code { font-family: "Cascadia Mono", Consolas, monospace; font-size: .875em; }
+  .note {
+    background: var(--panel);
+    border-left: 3px solid var(--accent);
+    padding: .8rem 1rem;
+    margin: 1.25rem 0;
+  }
+  .note p { margin: .4rem 0; }
+  .verdict { font-weight: 600; }
+  .yes { color: var(--good); }
+  .no { color: var(--bad); }
+  .meta { color: var(--dim); font-size: .85rem; }
+  ul { padding-left: 1.2rem; }
+  li { margin: .35rem 0; }
+</style>
+</head>
+<body>
+
+<h1>Where the death head's labels come from</h1>
+<p class="sub">snakeNN, 2026-08-21. Every number below was produced by a run named beside it.</p>
+
+<div class="note">
+  <p><strong>The question.</strong> The death head predicts, per action, how likely that
+  move is to kill the snake. It can only be trained where the search measured every root
+  action - and the search measures 1.14 of 3. So the head learns from about four percent
+  of the positions it is shown.</p>
+  <p><strong>What would make this the wrong framing:</strong> assuming the answer is more
+  coverage. That is one of two routes and it is the one that costs play strength.</p>
+</div>
+
+<h2>The state, measured</h2>
+
+<p class="meta">AlphaZeroCoverage on az10_death368.pt, 10x10, 300 positions sampled evenly
+along two held-out games, 200 simulations. Cost 573.05s.</p>
+
+<p>Two of three actions are survivable in 49.14 percent of positions and all three in
+24.28 percent, so the missing visits are on real alternatives rather than on walls.</p>
+
+<h3>The cause is a saturated prior, not the exploration constant</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Prior statistic</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>mean top prior</td><td>0.937204</td></tr>
+    <tr><td>lowest top prior</td><td>0.367459</td></tr>
+    <tr><td>mean entropy</td><td>0.132152</td></tr>
+    <tr><td>entropy of uniform over 3</td><td>1.098612</td></tr>
+    <tr><td>fraction with top prior above 0.99</td><td>0.7395</td></tr>
+    <tr><td>fraction with top prior above 0.999</td><td>0.4551</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Every term of PUCT's exploration half multiplies the prior, so a prior near zero yields
+an exploration term near zero. Sweeping <code>c_puct</code> a hundredfold moved coverage
+from 1.13 to 1.24 actions. No constant recovers it.</p>
+
+<h2>Route one: force the visits</h2>
+
+<p>An additive uniform mixture on selection, after Xiao et al. 2019. It does not multiply
+the prior, which is what lets it fire at all.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Arm</th><th>Fully covered</th><th>Actions visited</th><th>Labels</th></tr></thead>
+  <tbody>
+    <tr><td>floor off, evaluation settings</td><td>0.0100</td><td>1.1367</td><td>9</td></tr>
+    <tr><td>root noise 0.25, self-play settings</td><td>0.0333</td><td>1.2233</td><td>30</td></tr>
+    <tr><td>floor at epsilon 0.05</td><td>0.8767</td><td>2.8733</td><td>789</td></tr>
+    <tr><td>floor at epsilon 0.1</td><td>0.9900</td><td>2.9900</td><td>891</td></tr>
+    <tr><td>floor at epsilon 0.3</td><td>1.0000</td><td>3.0000</td><td>900</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Applied at every node it destroys play</h3>
+
+<p>Self-play fell from 97.5 apples to 3.8 with no wins, degrading between iterations, while
+the labels did arrive at 126 of 128 per batch. The mix weight is
+<code>eps |A| / log(N + 1)</code> in the node's <em>own</em> visit count: 0.057 at a root
+with 200 visits, <strong>0.433 at a node with one</strong> - and 200 simulations leave most
+of the tree at one visit.</p>
+
+<h3>Restricted to the root it is free, in coverage terms</h3>
+
+<p><code>descentMixWeight</code> returns zero below depth 0. Root-only at epsilon 0.1
+reaches 0.9900 where the floor at every node reached 0.9967, so the deep half was buying
+nothing.</p>
+
+<p class="verdict"><span class="yes">Coverage condition met.</span> The score condition -
+self-play back near baseline rather than 3.8 - is <span class="no">not yet measured</span>.
+That is one training run.</p>
+
+<h2>Route two: stop needing the visits</h2>
+
+<p class="meta">AlphaZeroDeathProbe on az10_death368.pt, 10x10, 2 games, 200 simulations,
+threshold 0.5. Cost 452.94s. Both rules read one walk of 2092 positions.</p>
+
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Arm</th><th>Pairs</th><th>Rejected</th><th>Spread</th><th>Rank corr</th><th>AUC</th><th>Doomed</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>trained, all-or-nothing</td><td>87</td><td>2063 positions</td><td>0.420987</td><td>0.729106</td><td>1.000000</td><td>0.229885</td></tr>
+    <tr><td>trained, per-visited-action</td><td>2405</td><td>3871 actions</td><td>0.109950</td><td>0.157291</td><td>1.000000</td><td>0.008316</td></tr>
+    <tr><td>untrained, the noise floor</td><td>2439</td><td>0</td><td>0.012023</td><td>0.018779</td><td>0.550014</td><td>0.011890</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <p><strong>The finding that guts it.</strong> 87 x 0.229885 = 20.0.
+  2405 x 0.008316 = 20.0. The widened rule multiplies the labels 27.6-fold and adds
+  <strong>not one additional doomed action</strong>. Every positive example already sits
+  inside the fully-covered positions; the extra 2318 pairs are all negatives.</p>
+  <p>For a head whose job is to flag rare death, more negatives is not the scarce thing.</p>
+</div>
+
+<p>That also explains the rank correlation falling from 0.729106 to 0.157291: the 87 pairs
+come from fully-covered positions, which are the positions the head was trained on, so
+0.729106 is close to in-sample. Spread 0.109950 still clears the 0.012023 floor nine times
+over, so the head does say something everywhere - just much less.</p>
+
+<h3>Two cautions on these numbers</h3>
+<ul>
+  <li>The AUC of 1.000000 rests on <strong>20 positives</strong>. Perfect separation on 20
+  is thin evidence.</li>
+  <li>The floor is not position-paired - the untrained network played its own games. Its
+  coverage is telling anyway: <strong>2439 kept, 0 rejected</strong>. A network with
+  uniform priors covers every root action, which confirms saturation as the cause from the
+  opposite direction.</li>
+</ul>
+
+<h2>What the literature settled, and what it did not</h2>
+
+<h3>Willemsen, Baier and Kaisers 2020, "Value targets in off-policy AlphaZero"</h3>
+
+<p>Sorts four AlphaZero value targets into one family by three numbers: how far to
+bootstrap in the real game, how far in the simulated tree, and whether a backup averages
+the subtree or takes a single sample.</p>
+
+<p><strong>A one-visit backup is not noise.</strong> Their best target, A0GB, backs up from
+a node with exactly one visit and wins - it is the only one of four that picks the right
+move in every state of a tabular gridworld after 40,000 games. So a single visit is a
+<em>variance</em> claim, not a validity claim. Our forced root child is A0C's shape, the
+middle member on both bias and variance.</p>
+
+<p><strong>The larger lever is not the floor at all.</strong> This project's value target
+is the discounted real-game return, which is the original AlphaZero target - the member
+they measure as worst on both bias and variance, beaten by all three alternatives on
+Connect-Four and 6x6 Breakthrough. That is a change to the target in
+<code>selfplay.cpp</code> and nothing else. Untested here.</p>
+
+<h3>Veness, Silver, Blair and Uther 2009, "Bootstrapping from Game Tree Search"</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Algorithm</th><th>Elo (95 percent interval)</th></tr></thead>
+  <tbody>
+    <tr><td>TreeStrap(alpha-beta)</td><td>2157 +/- 31</td></tr>
+    <tr><td>TreeStrap(minimax)</td><td>1807 +/- 32</td></tr>
+    <tr><td>RootStrap(alpha-beta)</td><td>1362 +/- 59</td></tr>
+    <tr><td>TD-Leaf</td><td>1068 +/- 36</td></tr>
+    <tr><td>untrained</td><td>250 +/- 63</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Training on every node of the tree against the root alone, search held fixed, is 2157
+against 1362 - about 795 Elo.</p>
+
+<div class="note">
+  <p><strong>A correction to an earlier draft of this document.</strong> It called an
+  unvisited action TreeStrap's bounded case. It is not. In alpha-beta a cut-off node
+  carries a bound the search produced; here an unvisited action carried a hard zero from
+  <code>network_evaluator.cpp:64</code>, because
+  <code>az::DEATH_RISK_FROM_NETWORK</code> is false. A one-sided loss needs a bound to be
+  one-sided about, and there was none. <strong>The 795 Elo does not transfer.</strong></p>
+</div>
+
+<p><strong>A trap with a number on it.</strong> Summing loss over more nodes grows the
+gradient. They cut the step size ten to twenty fold to match - 1.0e-5 for the root-only
+methods against 5.0e-7 for the tree-wide one. Any widened label set here has to move the
+learning rate with it, or the comparison is confounded by an effective step size that grew
+with the label count.</p>
+
+<h2>Two defects this work exposed</h2>
+
+<h3>An unmeasured risk was indistinguishable from a safe one</h3>
+
+<p>An unvisited action's risk was the constant <code>0.0f</code> - not a bound, not an
+estimate, and read by any consumer as a measurement saying the move is safe.
+<code>Result::death_risk</code> is now <code>std::optional&lt;float&gt;</code> per action,
+and the visit counts are the single authority from which the policy and the coverage flag
+are derived.</p>
+
+<h3>A refusal is not an absence of measurement</h3>
+
+<p>The death cap zeroes a refused action's visit count, and the old coverage flag read that
+zero as unvisited. So a position whose search had measured an action as near-certain death
+was discarded from training <em>for producing that label</em> - the most informative label
+on the board. Visits and measurement are separate facts now. <code>DEATH_CAP</code> is
+false in every non-test configuration, so no measured number moved.</p>
+
+<h2>What is still unrun</h2>
+<ul>
+  <li><strong>The score half of route one.</strong> Does self-play recover from 3.8 with
+  the floor at the root only? One training run answers it, and two iterations kill it if
+  it is going to die.</li>
+  <li><strong>The signal that actually decides.</strong> Coverage cannot tell a working
+  route from a broken one - a forced single visit reads as covered either way. The signal
+  is the death loss falling. It sat at 0.0302 and 0.0306 across two iterations, which on
+  two points establishes nothing.</li>
+  <li><strong>The price in play strength.</strong> Nothing has been scored on held-out
+  seeds. The measurement noise floor is 198 flips in 1000 games, so nothing under about 3
+  points is visible at that sample size.</li>
+</ul>
+
+<p class="meta">Generated from docs/death_labels_spec.md and the runs it cites.</p>
+
+</body>
+</html>

@@ -1,3 +1,9 @@
+﻿// Implementation of the shared board renderer. What it draws and how to call it are in
+// board_render.h.
+//
+// Every drawing call here goes through raylib and needs a window: loadFonts bakes a
+// texture, so nothing in this file works before InitWindow.
+
 #include <cmath>
 #include <iostream>
 

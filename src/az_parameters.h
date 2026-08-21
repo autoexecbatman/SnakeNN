@@ -1,41 +1,52 @@
 ﻿#pragma once
 
-// The paper's hyperparameters and the quantities derived from them, for every program
-// in the AlphaZero stack - trainer, evaluator and visual alike.
-//
-// Du, Gemp, Wu and Wu 2022 (arXiv:2211.09622). Deviating from these knowingly is
-// allowed; deviating by accident is what a single definition prevents. A constant only
-// one program reads is how self-play and evaluation come to search differently, so
-// every caller sets every field from here even where the default already matches.
+// The paper's hyperparameters and the quantities derived from them, shared by every
+// program in the AlphaZero stack.
 //
 // Constants, not settings: nothing here is read from a file or a flag, so changing one
-// is a rebuild and a new run rather than a knob. Anything a run varies - board size,
-// simulation count, game count - is a command-line argument instead, and lives in
-// trainer_options or eval_options.
+// means a rebuild and a new run. What a run varies - board size, simulation count, game
+// count - is a command-line argument in trainer_options or eval_options instead.
 //
 // Usage:
 //
 //     #include "az_parameters.h"
 //
-//     search_config.discount = az::DISCOUNT;         // 0.98, the paper's
-//     search_config.exploration = az::EXPLORATION;   // c_puct, 0.5
+//     search_config.discount = az::DISCOUNT;
+//     search_config.exploration = az::EXPLORATION;
 //     play_config.temperature = az::VISIT_TEMPERATURE;
 //
-//     const int step_limit = az::deriveStepLimit(10);  // 12 steps a cell -> 1200
+//     const int step_limit = az::deriveStepLimit(10);   // 1200 for a 10x10 board
 //
-// The switches default off, so a checkpoint trained before one existed still plays as
-// it did: TRAP_GUARD, AVERAGE_EDGES, DEATH_CAP, DEATH_RISK_FROM_NETWORK. TRAP_REPORT
-// is the exception and is on, because counting costs nothing and changes no move.
+// Every caller sets every field from here, even where a default already matches: a
+// constant only one program reads is how self-play and evaluation come to search
+// differently.
 //
-// deriveStepLimit refuses a board above LARGEST_BOARD, and asserts on one below 2x2.
+// Source: Du, Gemp, Wu and Wu 2022 (arXiv:2211.09622).
 namespace az
 {
 
+// How much a reward one step further away is worth. At 0.98 a return stops moving
+// after roughly 200 steps, which is the horizon every value estimate here has.
 constexpr float DISCOUNT = 0.98f;
-constexpr float EXPLORATION = 0.5f;  // c_puct
+
+// c_puct: how hard the prior pulls selection toward an action the search has not
+// tried. Multiplies the prior, so it cannot rescue an action the network scores near
+// zero - see exploration_floor.h for the term that can.
+constexpr float EXPLORATION = 0.5f;
+
+// How hot self-play samples its opening moves from the root visit counts. Below 1
+// sharpens toward the argmax; PlayConfig::temperature_moves says for how many moves.
 constexpr float VISIT_TEMPERATURE = 0.5f;
+
+// Adam step size for the trainer.
 constexpr float LEARNING_RATE = 0.001f;
+
+// The share of the root prior replaced by Dirichlet noise during self-play, so a game
+// explores openings the policy has stopped considering. Evaluation sets it to zero.
 constexpr float ROOT_NOISE_FRACTION = 0.25f;
+
+// Concentration of that noise. Below 1 concentrates it on a few actions per game
+// rather than spreading it evenly over all of them.
 constexpr float ROOT_NOISE_ALPHA = 0.3f;
 
 // What a game pays for running out of steps. A deliberate deviation: the paper's
@@ -139,7 +150,7 @@ constexpr bool TRAP_REPORT = true;
 constexpr bool AVERAGE_EDGES = false;
 
 // Whether the root refuses an action whose backed-up death risk exceeds
-// DEATH_CAP_THRESHOLD, and the threshold itself.
+// DEATH_CAP_THRESHOLD.
 //
 // Deaths are 62 of the 67 remaining losses, at median 55 percent fill with about 690
 // steps of budget unused and no slow apple before them - a region sealing behind an
@@ -152,6 +163,9 @@ constexpr bool AVERAGE_EDGES = false;
 //
 // Default, not the setting. `AlphaZeroEvaluate` takes --death-cap on|off.
 constexpr bool DEATH_CAP = false;
+
+// The backed-up risk above which the cap refuses an action, in [0, 1]. Read only when
+// DEATH_CAP is on.
 constexpr float DEATH_CAP_THRESHOLD = 0.5f;
 
 // Whether the leaf's death risk comes from the network's head or is left at zero.
