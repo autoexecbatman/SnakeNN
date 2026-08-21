@@ -175,7 +175,11 @@ constexpr float DEATH_CAP_THRESHOLD = 0.5f;
 // simulator's own terminations, which is what the first measurement is of.
 constexpr bool DEATH_RISK_FROM_NETWORK = false;
 
-// The bound on the value head, in the same units as a reward.
+// What the value head's output is multiplied by, in the same units as a reward.
+//
+// The head ends in a tanh, so it emits a number in [-1, 1]; this scales that to the range
+// it may report. At 40 it can say anything from -40 to +40, and those are reward units -
+// the same +1 an apple pays and the -10 a death costs.
 //
 // The head is bounded because the search compares leaves and one bad
 // extrapolation would otherwise dominate every comparison it appears in. What it
@@ -197,6 +201,14 @@ constexpr bool DEATH_RISK_FROM_NETWORK = false;
 // so the unreachable 3.75 of headroom is not worth a retrain to recover. Raise
 // this above 44 if the reward scale changes, since that argument is about this
 // reward structure and not about the constant.
+//
+// What the units are worth, measured 2026-08-22. Before this constant existed the value
+// head emitted return/10 while backup added raw rewards, so the search discounted its own
+// leaves tenfold and could not price a distant win against a nearby apple. One checkpoint,
+// az10_long308, scored 863 of 1000 held-out games under the old units and 954 under these
+// - the same weights, the same seeds, the same search stream. About +90 wins, from a
+// defect rather than a hyperparameter, and the largest single change this project has
+// made. Do not rescale the head without re-deriving what the search adds it to.
 constexpr float VALUE_SCALE = 40.0f;
 
 // Whether selection normalises an action's value against the range this tree has seen
@@ -245,7 +257,12 @@ static_assert(static_cast<long long>(STEPS_PER_CELL) * (LARGEST_BOARD + 1) * (LA
                   2147483647,
               "LARGEST_BOARD is not the largest that fits");
 
-// STEPS_PER_CELL * board * board.
+// The step budget for a square board: STEPS_PER_CELL * board * board. Every program
+// here derives the limit this way rather than naming a number, so two runs on one
+// board size are comparable.
+//
+//     const int step_limit = az::deriveStepLimit(10);   // 1200, on a 10x10 board
+//     SnakeEnv game(10, 10, seed, step_limit);
 //
 // `board` must be at least 2, which every argument parser here enforces, and is
 // asserted. Above LARGEST_BOARD the result does not fit in an int, which is a
