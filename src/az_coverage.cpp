@@ -232,16 +232,16 @@ ArmResult measureArm(AlphaZeroNet& network, torch::Device device, const Coverage
         const std::vector<MonteCarloSearch::Result> results = search.search(roots);
         const MonteCarloSearch::Result& result = results.front();
 
-        // An action with no visits has no share of the visit distribution.
         int visited = 0;
         for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
         {
-            if (result.policy[static_cast<std::size_t>(action)] > 0.0f)
+            if (result.visits[static_cast<std::size_t>(action)] > 0)
             {
                 visited++;
             }
         }
-        if ((visited == SnakeEnv::ACTION_COUNT) != result.all_actions_visited)
+        // The counts and the derived flag must agree; they are one fact read two ways.
+        if ((visited == SnakeEnv::ACTION_COUNT) != result.allActionsVisited())
         {
             arm.flag_disagreements++;
         }

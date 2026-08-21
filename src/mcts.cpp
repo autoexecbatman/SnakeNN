@@ -176,6 +176,45 @@ int MonteCarloSearch::selectChild(const Tree& tree, int node_index) const
     return best_action;
 }
 
+std::vector<float> MonteCarloSearch::Result::policy() const
+{
+    int total = 0;
+    for (int count : visits)
+    {
+        assert(count >= 0 && "a visit count is negative");
+        total += count;
+    }
+
+    // A childless root - no simulations were asked for - has nothing to prefer, and a
+    // vector of zeros would not be a distribution.
+    if (total == 0)
+    {
+        return std::vector<float>(visits.size(), 1.0f / static_cast<float>(visits.size()));
+    }
+
+    std::vector<float> shares;
+    shares.reserve(visits.size());
+    for (int count : visits)
+    {
+        shares.push_back(static_cast<float>(count) / static_cast<float>(total));
+    }
+    return shares;
+}
+
+bool MonteCarloSearch::Result::allActionsVisited() const
+{
+    // The risks, not the counts: the death cap zeroes a count for a move it refuses,
+    // and a refused move was still measured.
+    for (const std::optional<float>& risk : death_risk)
+    {
+        if (!risk.has_value())
+        {
+            return false;
+        }
+    }
+    return !death_risk.empty();
+}
+
 void MonteCarloSearch::expand(Tree& tree, int node_index, std::span<const float> priors,
                               std::span<const float> death_risks)
 {
@@ -618,30 +657,36 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
     {
         const Tree& tree = trees_[index];
         Result result;
-        result.policy.assign(SnakeEnv::ACTION_COUNT, 0.0f);
 
         // A childless root is a legal case - no search was asked for - and the only
         // reason these visits can all be zero, in which case the policy is uniform.
-        int visits[SnakeEnv::ACTION_COUNT] = { 0, 0, 0 };
-        int total_visits = 0;
-        result.death_risk.assign(SnakeEnv::ACTION_COUNT, 0.0f);
+        result.visits.assign(SnakeEnv::ACTION_COUNT, 0);
+        result.death_risk.assign(SnakeEnv::ACTION_COUNT, std::optional<float>());
         if (tree.nodes[0].first_child.has_value())
         {
             const int first_child = tree.nodes[0].first_child.value();
             for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
             {
-                visits[action] = tree.nodes[first_child + action].visit_count;
-                result.death_risk[action] = tree.nodes[first_child + action].death_risk;
+                const Node& child = tree.nodes[first_child + action];
+                result.visits[action] = child.visit_count;
+                // Read from the child's own count, before any cap zeroes the copy: the
+                // cap refuses a move it disagrees with, which does not unmeasure it.
+                if (child.visit_count > 0)
+                {
+                    result.death_risk[action] = child.death_risk;
+                }
             }
 
             // Applied to the visits before anything reads them, so a refusal is absent
             // from policy and argmax alike. Refuses only when something survives.
             if (config_.death_cap)
             {
+                // An unmeasured action cannot be refused: there is no risk to compare.
                 bool anything_survives = false;
                 for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
                 {
-                    if (result.death_risk[action] <= config_.death_cap_threshold)
+                    const std::optional<float>& risk = result.death_risk[action];
+                    if (risk.has_value() && risk.value() <= config_.death_cap_threshold)
                     {
                         anything_survives = true;
                     }
@@ -650,22 +695,13 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
                 {
                     for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
                     {
-                        if (result.death_risk[action] > config_.death_cap_threshold)
+                        const std::optional<float>& risk = result.death_risk[action];
+                        if (risk.has_value() && risk.value() > config_.death_cap_threshold)
                         {
-                            visits[action] = 0;
+                            result.visits[action] = 0;
                             death_cap_fires_++;
                         }
                     }
-                }
-            }
-
-            result.all_actions_visited = true;
-            for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
-            {
-                total_visits += visits[action];
-                if (visits[action] == 0)
-                {
-                    result.all_actions_visited = false;
                 }
             }
         }
@@ -674,7 +710,7 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         int best_action = 0;
         for (int action = 1; action < SnakeEnv::ACTION_COUNT; action++)
         {
-            if (visits[action] > visits[best_action])
+            if (result.visits[action] > result.visits[best_action])
             {
                 best_action = action;
             }
@@ -685,8 +721,8 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         if (config_.steps_tiebreak_margin > 0.0f && tree.nodes[0].first_child.has_value())
         {
             const int first_child = tree.nodes[0].first_child.value();
-            const float floor_visits =
-                static_cast<float>(visits[best_action]) * (1.0f - config_.steps_tiebreak_margin);
+            const float floor_visits = static_cast<float>(result.visits[best_action]) *
+                                       (1.0f - config_.steps_tiebreak_margin);
             const auto meanSteps = [&tree, first_child](int action)
             {
                 const Node& child = tree.nodes[first_child + action];
@@ -698,11 +734,11 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
             float best_steps = meanSteps(best_action);
             for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
             {
-                if (action == best_action || visits[action] == 0)
+                if (action == best_action || result.visits[action] == 0)
                 {
                     continue;
                 }
-                if (static_cast<float>(visits[action]) >= floor_visits &&
+                if (static_cast<float>(result.visits[action]) >= floor_visits &&
                     meanSteps(action) < best_steps)
                 {
                     best_steps = meanSteps(action);
@@ -730,9 +766,9 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
                 for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
                 {
                     if (root_state.tailReachable(static_cast<SnakeEnv::Action>(action)) &&
-                        visits[action] > rescue_visits)
+                        result.visits[action] > rescue_visits)
                     {
-                        rescue_visits = visits[action];
+                        rescue_visits = result.visits[action];
                         rescue = action;
                     }
                 }
@@ -745,14 +781,6 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
             }
         }
 
-        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
-        {
-            result.policy[action] =
-                (total_visits > 0)
-                    ? static_cast<float>(visits[action]) / static_cast<float>(total_visits)
-                    : 1.0f / static_cast<float>(SnakeEnv::ACTION_COUNT);
-        }
-
         result.value = tree.nodes[0].visit_count > 0
                            ? tree.nodes[0].value_sum / static_cast<float>(tree.nodes[0].visit_count)
                            : 0.0f;
@@ -760,7 +788,7 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
 
         // Checked once here rather than at the trainer, evaluator and demo alike.
         float policy_total = 0.0f;
-        for (float weight : result.policy)
+        for (float weight : result.policy())
         {
             assert(std::isfinite(weight) && weight >= 0.0f && "a visit weight is not a proportion");
             policy_total += weight;

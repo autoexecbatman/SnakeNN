@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <vector>
 
@@ -56,8 +56,10 @@ struct DeathProbePair
 struct DeathProbeSamples
 {
     std::vector<DeathProbePair> pairs;
-    // Positions skipped because the search left a root action unvisited.
-    std::size_t rejected_uncovered{ 0 };
+    // Candidates the caller declined to admit. What one counts is the caller's rule -
+    // a position under an all-or-nothing rule, a single action under a per-action one -
+    // so the unit lives with whoever increments it, never in this struct.
+    std::size_t rejected{ 0 };
 
     void add(float estimate, float target);
 };

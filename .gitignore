@@ -18,3 +18,6 @@ x64/
 /CLAUDE.md
 docs/az_speed_spec.md
 /docs/death_labels_spec.md
+/docs/src_index.html
+__pycache__/
+/docs/src_api.html

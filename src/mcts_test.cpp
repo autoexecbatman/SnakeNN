@@ -212,13 +212,13 @@ void testPriorsSteerTheSearch()
         std::vector<const SnakeEnv*> roots{ &env };
         std::vector<MonteCarloSearch::Result> results = search.search(roots);
 
-        visits_when_favoured[favoured] = results[0].policy[static_cast<size_t>(favoured)];
-        if (indexOfLargest(results[0].policy) == favoured)
+        visits_when_favoured[favoured] = results[0].policy()[static_cast<size_t>(favoured)];
+        if (indexOfLargest(results[0].policy()) == favoured)
         {
             rounds_won++;
         }
-        std::cout << "        favouring " << favoured << ": " << results[0].policy[0] << " / "
-                  << results[0].policy[1] << " / " << results[0].policy[2] << std::endl;
+        std::cout << "        favouring " << favoured << ": " << results[0].policy()[0] << " / "
+                  << results[0].policy()[1] << " / " << results[0].policy()[2] << std::endl;
     }
 
     expect(rounds_won == SnakeEnv::ACTION_COUNT,
@@ -252,10 +252,10 @@ void testNoActionIsStarved()
         }
     }
     expect(all_three_survive, "the test position really does leave all three actions open");
-    expect(results[0].policy[1] > 0.0f && results[0].policy[2] > 0.0f,
+    expect(results[0].policy()[1] > 0.0f && results[0].policy()[2] > 0.0f,
            "even a 0.98 prior leaves visits for the other two actions");
-    std::cout << "        visits " << results[0].policy[0] << " / " << results[0].policy[1] << " / "
-              << results[0].policy[2] << std::endl;
+    std::cout << "        visits " << results[0].policy()[0] << " / " << results[0].policy()[1]
+              << " / " << results[0].policy()[2] << std::endl;
 }
 
 void testDoomedPositionIsSearchedNotExpandedPastDeath()
@@ -331,7 +331,7 @@ void testDoomedPositionIsSearchedNotExpandedPastDeath()
     std::vector<MonteCarloSearch::Result> results = search.search(roots);
 
     float total = 0.0f;
-    for (float weight : results[0].policy)
+    for (float weight : results[0].policy())
     {
         total += weight;
     }
@@ -445,7 +445,7 @@ std::vector<float> policyUnderScale(float scale, bool normalize)
     config.normalize_values = normalize;
     MonteCarloSearch search(evaluator, config);
     const std::vector<const SnakeEnv*> roots{ &board };
-    return search.search(roots).front().policy;
+    return search.search(roots).front().policy();
 }
 
 float largestPolicyGap(const std::vector<float>& left, const std::vector<float>& right)
@@ -550,7 +550,7 @@ void testNormalisingReachesASaturatedRoot()
     const MonteCarloSearch::Result with = normalised_search.search(normalised_roots).front();
 
     // The root policy cannot move, and that is what the comment above is about.
-    if (largestPolicyGap(without.policy, with.policy) != 0.0f)
+    if (largestPolicyGap(without.policy(), with.policy()) != 0.0f)
     {
         std::cout << "[FAIL] the root policy moved under a saturated prior, which "
                      "normalising cannot do - something else changed\n";
@@ -587,7 +587,7 @@ void testTheExplorationFloorCoversTheRoot()
 
     // The falsifier. If this ever reports true the position stopped being the hard case
     // and the assertion below proves nothing.
-    if (bare.all_actions_visited)
+    if (bare.allActionsVisited())
     {
         std::cout << "[FAIL] the saturated position no longer starves the root, so the "
                      "floor below is not being tested against anything\n";
@@ -601,18 +601,18 @@ void testTheExplorationFloorCoversTheRoot()
     const std::vector<const SnakeEnv*> with_roots{ &board };
     const MonteCarloSearch::Result floored = with_search.search(with_roots).front();
 
-    if (!floored.all_actions_visited)
+    if (!floored.allActionsVisited())
     {
         std::cout << std::format(
             "[FAIL] the exploration floor did not cover the root: "
             "policy {:.4f} / {:.4f} / {:.4f}\n",
-            floored.policy[0], floored.policy[1], floored.policy[2]);
+            floored.policy()[0], floored.policy()[1], floored.policy()[2]);
         failures++;
     }
 
     // And it still returns a distribution.
     float total = 0.0f;
-    for (float weight : floored.policy)
+    for (float weight : floored.policy())
     {
         total += weight;
     }
@@ -632,19 +632,19 @@ void testRootNoiseIsAppliedAndKeepsADistribution()
     SilentEvaluator quiet_evaluator;
     MonteCarloSearch quiet_search(quiet_evaluator, noisyConfig(64, 0.0f, 555));
     std::vector<const SnakeEnv*> quiet_roots{ &quiet_board };
-    const std::vector<float> without_noise = quiet_search.search(quiet_roots)[0].policy;
+    const std::vector<float> without_noise = quiet_search.search(quiet_roots)[0].policy();
 
     SnakeEnv noisy_board = boardWithDistantFood(6, 1);
     SilentEvaluator noisy_evaluator;
     MonteCarloSearch noisy_search(noisy_evaluator, noisyConfig(64, 0.25f, 555));
     std::vector<const SnakeEnv*> noisy_roots{ &noisy_board };
-    const std::vector<float> with_noise = noisy_search.search(noisy_roots)[0].policy;
+    const std::vector<float> with_noise = noisy_search.search(noisy_roots)[0].policy();
 
     SnakeEnv other_board = boardWithDistantFood(6, 1);
     SilentEvaluator other_evaluator;
     MonteCarloSearch other_search(other_evaluator, noisyConfig(64, 0.25f, 98765));
     std::vector<const SnakeEnv*> other_roots{ &other_board };
-    const std::vector<float> other_noise = other_search.search(other_roots)[0].policy;
+    const std::vector<float> other_noise = other_search.search(other_roots)[0].policy();
 
     bool noise_changed_the_search = false;
     bool seed_changed_the_noise = false;
@@ -673,7 +673,7 @@ void testRootNoiseIsAppliedAndKeepsADistribution()
     SilentEvaluator pure_evaluator;
     MonteCarloSearch pure_search(pure_evaluator, noisyConfig(64, 1.0f, 4242));
     std::vector<const SnakeEnv*> pure_roots{ &pure_board };
-    const std::vector<float> pure_noise = pure_search.search(pure_roots)[0].policy;
+    const std::vector<float> pure_noise = pure_search.search(pure_roots)[0].policy();
     float pure_total = 0.0f;
     bool pure_non_negative = true;
     for (float weight : pure_noise)
@@ -690,7 +690,7 @@ void testRootNoiseIsAppliedAndKeepsADistribution()
 
 bool sameResult(const MonteCarloSearch::Result& left, const MonteCarloSearch::Result& right)
 {
-    if (left.policy.size() != right.policy.size() || left.best_action != right.best_action)
+    if (left.policy().size() != right.policy().size() || left.best_action != right.best_action)
     {
         return false;
     }
@@ -698,9 +698,9 @@ bool sameResult(const MonteCarloSearch::Result& left, const MonteCarloSearch::Re
     {
         return false;
     }
-    for (size_t slot = 0; slot < left.policy.size(); slot++)
+    for (size_t slot = 0; slot < left.policy().size(); slot++)
     {
-        if (std::fabs(left.policy[slot] - right.policy[slot]) > 1e-6f)
+        if (std::fabs(left.policy()[slot] - right.policy()[slot]) > 1e-6f)
         {
             return false;
         }
@@ -778,14 +778,14 @@ void testPolicyIsADistribution()
     expect(results.size() == 1, "one result per root");
     float total = 0.0f;
     bool non_negative = true;
-    for (float weight : results[0].policy)
+    for (float weight : results[0].policy())
     {
         total += weight;
         non_negative = non_negative && weight >= 0.0f;
     }
     expect(std::fabs(total - 1.0f) < 1e-4f, "the visit policy sums to one");
     expect(non_negative, "no negative visit weights");
-    expect((int)results[0].policy.size() == SnakeEnv::ACTION_COUNT,
+    expect((int)results[0].policy().size() == SnakeEnv::ACTION_COUNT,
            "the policy covers every relative action");
 }
 
@@ -805,9 +805,9 @@ void testAvoidsAnImmediateWall()
 
     // Against the other actions, not a constant: all-zeros satisfies a threshold.
     int straight = (int)SnakeEnv::Action::STRAIGHT;
-    float straight_weight = results[0].policy[straight];
-    float left_weight = results[0].policy[(int)SnakeEnv::Action::LEFT];
-    float right_weight = results[0].policy[(int)SnakeEnv::Action::RIGHT];
+    float straight_weight = results[0].policy()[straight];
+    float left_weight = results[0].policy()[(int)SnakeEnv::Action::LEFT];
+    float right_weight = results[0].policy()[(int)SnakeEnv::Action::RIGHT];
     expect(straight_weight < left_weight && straight_weight < right_weight,
            "search visits the move that walks into a wall strictly less than either alternative");
     expect(results[0].best_action != SnakeEnv::Action::STRAIGHT, "and does not choose it");
@@ -837,8 +837,8 @@ void testPrefersReachableFood()
                 auto results = search.search(roots);
                 // Argmax alone passes by luck one time in three; the share does not.
                 expect(results[0].best_action == static_cast<SnakeEnv::Action>(action) &&
-                           indexOfLargest(results[0].policy) == action &&
-                           results[0].policy[action] > 0.5f,
+                           indexOfLargest(results[0].policy()) == action &&
+                           results[0].policy()[action] > 0.5f,
                        "search concentrates its visits on food one move away");
                 found = true;
                 break;
@@ -909,10 +909,10 @@ void testDeterminism()
     auto left = first.search(roots);
     auto right = second.search(roots);
 
-    bool identical = left[0].policy.size() == right[0].policy.size();
-    for (size_t index = 0; identical && index < left[0].policy.size(); index++)
+    bool identical = left[0].policy().size() == right[0].policy().size();
+    for (size_t index = 0; identical && index < left[0].policy().size(); index++)
     {
-        identical = std::fabs(left[0].policy[index] - right[0].policy[index]) < 1e-6f;
+        identical = std::fabs(left[0].policy()[index] - right[0].policy()[index]) < 1e-6f;
     }
     expect(identical, "two searches on one seed and one position agree");
 }
@@ -1205,10 +1205,10 @@ void testAveragedEdgesAreAnExpectationOverWhatTheNodeStandsFor()
 
         expect(before.best_action == after.best_action,
                "averaging changes no move where every simulation agrees");
-        bool policy_matches = before.policy.size() == after.policy.size();
-        for (size_t action = 0; action < before.policy.size() && policy_matches; action++)
+        bool policy_matches = before.policy().size() == after.policy().size();
+        for (size_t action = 0; action < before.policy().size() && policy_matches; action++)
         {
-            policy_matches = std::abs(before.policy[action] - after.policy[action]) < 1e-6f;
+            policy_matches = std::abs(before.policy()[action] - after.policy()[action]) < 1e-6f;
         }
         expect(policy_matches, "and it changes no visit count there either");
         expect(
@@ -1324,9 +1324,9 @@ void testDeathRiskIsBackedUpAsUnavoidability()
         return;
     }
 
-    const float straight = results[0].death_risk[(int)SnakeEnv::Action::STRAIGHT];
-    const float left = results[0].death_risk[(int)SnakeEnv::Action::LEFT];
-    const float right = results[0].death_risk[(int)SnakeEnv::Action::RIGHT];
+    const float straight = results[0].death_risk[(int)SnakeEnv::Action::STRAIGHT].value();
+    const float left = results[0].death_risk[(int)SnakeEnv::Action::LEFT].value();
+    const float right = results[0].death_risk[(int)SnakeEnv::Action::RIGHT].value();
 
     expect(std::abs(straight - 1.0f) < 1e-6f,
            std::format("walking into the wall is certain death, so its risk is exactly 1 - got "
@@ -1376,10 +1376,10 @@ void testRiskClimbsFromBelowRatherThanStayingAtTheLeafItWasWrittenAt()
     // number written into these nodes at expansion was 0.
     for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
     {
-        expect(std::abs(results[0].death_risk[action] - 1.0f) < 1e-6f,
+        expect(std::abs(results[0].death_risk[action].value() - 1.0f) < 1e-6f,
                std::format("root action {} carries the risk backed up from below, not the 0 "
                            "written at expansion - got {:.6f}",
-                           action, results[0].death_risk[action]));
+                           action, results[0].death_risk[action].value()));
     }
 }
 
@@ -1395,14 +1395,14 @@ void testAllActionsVisitedIsFalseWhereTheSearchDidNotGo()
         auto results = search.search(roots);
 
         float total = 0.0f;
-        for (float weight : results[0].policy)
+        for (float weight : results[0].policy())
         {
             total += weight;
         }
         expect(
             std::abs(total - 1.0f) < 1e-4f,
             std::format("with one simulation the policy is still a distribution - {:.6f}", total));
-        expect(!results[0].all_actions_visited,
+        expect(!results[0].allActionsVisited(),
                "and the search reports that it visited nothing, which the uniform policy hides");
     }
 
@@ -1414,11 +1414,13 @@ void testAllActionsVisitedIsFalseWhereTheSearchDidNotGo()
         MonteCarloSearch search(evaluator, testConfig(64));
         std::vector<const SnakeEnv*> roots{ &env };
         auto results = search.search(roots);
-        expect(results[0].all_actions_visited, "and reports true once every root action was tried");
+        expect(results[0].allActionsVisited(), "and reports true once every root action was tried");
     }
 
-    // A refused action has its visits zeroed, so a capped root is excluded from
-    // the training labels by the same test.
+    // A refusal is not an absence of measurement. The cap zeroes a refused action's
+    // visits so it leaves the policy and the argmax, and the risk that got it refused
+    // stays - that risk is the most informative label on the board, and the old rule
+    // discarded the whole position for having produced it.
     {
         SnakeEnv env = beforeTheWall();
         SilentEvaluator evaluator;
@@ -1428,8 +1430,24 @@ void testAllActionsVisitedIsFalseWhereTheSearchDidNotGo()
         MonteCarloSearch search(evaluator, config);
         std::vector<const SnakeEnv*> roots{ &env };
         auto results = search.search(roots);
-        expect(!results[0].all_actions_visited,
-               "a root where the cap refused an action does not count as fully searched");
+
+        int refused = 0;
+        for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+        {
+            const std::optional<float>& risk = results[0].death_risk[static_cast<size_t>(action)];
+            if (risk.has_value() && risk.value() > config.death_cap_threshold)
+            {
+                refused++;
+                expect(results[0].visits[static_cast<size_t>(action)] == 0,
+                       "a refused action keeps no visits, so it cannot be played");
+                expect(results[0].policy()[static_cast<size_t>(action)] == 0.0f,
+                       "and takes no share of the policy");
+            }
+        }
+        // The falsifier: with nothing refused, both checks above are vacuous.
+        expect(refused > 0, "the cap refused something, so the checks above ran");
+        expect(results[0].allActionsVisited(),
+               "a refused action was still measured, so the root stays fully covered");
     }
 }
 
@@ -1446,9 +1464,9 @@ void testCapDoesNotRefuseAtTheThresholdItself()
     std::vector<const SnakeEnv*> roots{ &env };
     auto results = search.search(roots);
 
-    expect(std::abs(results[0].death_risk[0] - 0.5f) < 1e-6f,
+    expect(std::abs(results[0].death_risk[0].value() - 0.5f) < 1e-6f,
            std::format("the root's risk sits exactly on the threshold - {:.6f}",
-                       results[0].death_risk[0]));
+                       results[0].death_risk[0].value()));
     expect(search.deathCapFires() == 0,
            std::format("an action level with the threshold is not refused - fired {} times",
                        search.deathCapFires()));
@@ -1480,7 +1498,7 @@ void testDeathCapRefusesOnlyWhenAnAlternativeSurvives()
         expect(search.deathCapFires() >= 1,
                std::format("the cap refuses the action that walks into the wall - fired {} times",
                            search.deathCapFires()));
-        expect(results[0].policy[(int)SnakeEnv::Action::STRAIGHT] == 0.0f,
+        expect(results[0].policy()[(int)SnakeEnv::Action::STRAIGHT] == 0.0f,
                "a refused action takes no share of the policy at all");
         expect(results[0].best_action != SnakeEnv::Action::STRAIGHT, "and is not chosen");
     }
@@ -1505,13 +1523,125 @@ void testDeathCapRefusesOnlyWhenAnAlternativeSurvives()
                    std::format("with no survivable action the cap refuses nothing - fired {} times",
                                search.deathCapFires()));
             float total = 0.0f;
-            for (float weight : results[0].policy)
+            for (float weight : results[0].policy())
             {
                 total += weight;
             }
             expect(std::abs(total - 1.0f) < 1e-4f,
                    std::format("and the policy is still a distribution - sums to {:.6f}", total));
         }
+    }
+}
+
+// The visit counts are the authority and the policy is derived from them. Each check
+// below states the claim against an alternative that is not merely "in range": a policy
+// that ignored the counts would still sum to one, and a coverage flag stuck at true
+// would still be a bool.
+void testThePolicyIsDerivedFromTheVisitCounts()
+{
+    SnakeEnv board = boardWithDistantFood(6, 1);
+    SaturatedPriorEvaluator evaluator;
+    MonteCarloSearch::Config config = testConfig(200);
+    config.exploration_epsilon = 0.0f;
+    // Off, so best_action is the plain argmax of the counts and the check below is
+    // about the derivation rather than about the tie-break.
+    config.steps_tiebreak_margin = 0.0f;
+    MonteCarloSearch search(evaluator, config);
+    const std::vector<const SnakeEnv*> roots{ &board };
+    const MonteCarloSearch::Result result = search.search(roots).front();
+
+    int total = 0;
+    for (int count : result.visits)
+    {
+        if (count < 0)
+        {
+            std::cout << "[FAIL] a visit count is negative\n";
+            failures++;
+        }
+        total += count;
+    }
+    // The falsifier for everything below: a root that ran no simulations would make the
+    // uniform fallback the answer and the share-against-count check vacuous.
+    if (total <= 0)
+    {
+        std::cout << "[FAIL] the root recorded no visits, so the derivation is untested\n";
+        failures++;
+        return;
+    }
+
+    const std::vector<float> shares = result.policy();
+    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+    {
+        const float expected = static_cast<float>(result.visits[static_cast<size_t>(action)]) /
+                               static_cast<float>(total);
+        if (std::fabs(shares[static_cast<size_t>(action)] - expected) > 1e-6f)
+        {
+            std::cout << std::format(
+                "[FAIL] share {} is {:.6f} but its count {} of {} makes it {:.6f}\n", action,
+                shares[static_cast<size_t>(action)], result.visits[static_cast<size_t>(action)],
+                total, expected);
+            failures++;
+        }
+    }
+
+    // The argmax reads the same counts, so it cannot name an action the counts do not
+    // lead. A search that took its move from anywhere else passes every check above.
+    const int best = static_cast<int>(result.best_action);
+    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+    {
+        if (result.visits[static_cast<size_t>(action)] > result.visits[static_cast<size_t>(best)])
+        {
+            std::cout << std::format("[FAIL] action {} has more visits than the chosen {}\n",
+                                     action, best);
+            failures++;
+        }
+    }
+}
+
+// A risk nothing measured must be absent rather than zero. Zero is a real answer
+// elsewhere in this field - it is what a winning terminal writes - so a caller reading a
+// number cannot tell "safe" from "never looked", which is the whole point of the type.
+void testAnUnvisitedActionCarriesNoRisk()
+{
+    SnakeEnv board = boardWithDistantFood(6, 1);
+    SaturatedPriorEvaluator evaluator;
+    MonteCarloSearch::Config config = testConfig(200);
+    config.exploration_epsilon = 0.0f;
+    MonteCarloSearch search(evaluator, config);
+    const std::vector<const SnakeEnv*> roots{ &board };
+    const MonteCarloSearch::Result result = search.search(roots).front();
+
+    int unvisited = 0;
+    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
+    {
+        const bool entered = result.visits[static_cast<size_t>(action)] > 0;
+        const bool measured = result.death_risk[static_cast<size_t>(action)].has_value();
+        if (entered != measured)
+        {
+            std::cout << std::format("[FAIL] action {} was {} but its risk is {}\n", action,
+                                     entered ? "entered" : "never entered",
+                                     measured ? "present" : "absent");
+            failures++;
+        }
+        if (!entered)
+        {
+            unvisited++;
+        }
+    }
+
+    // The falsifier. A saturated prior is chosen here precisely because it starves
+    // actions; if it ever stops doing so, the check above proves nothing.
+    if (unvisited == 0)
+    {
+        std::cout << "[FAIL] every action was entered, so absence was never exercised\n";
+        failures++;
+    }
+
+    // Derived, not stored: the flag must follow the risks it summarises.
+    if (result.allActionsVisited() != (unvisited == 0))
+    {
+        std::cout << "[FAIL] the coverage flag disagrees with the risks it summarises\n";
+        failures++;
     }
 }
 
@@ -1534,6 +1664,8 @@ int main()
     testNormalisingMakesSelectionScaleInvariant();
     testNormalisingReachesASaturatedRoot();
     testTheExplorationFloorCoversTheRoot();
+    testThePolicyIsDerivedFromTheVisitCounts();
+    testAnUnvisitedActionCarriesNoRisk();
     testRootNoiseIsAppliedAndKeepsADistribution();
     testSearchReusesBuffersWithoutLeakingState();
     testAvoidsAnImmediateWall();

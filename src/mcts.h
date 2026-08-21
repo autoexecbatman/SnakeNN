@@ -30,10 +30,11 @@
 //
 //     std::vector<const SnakeEnv*> roots{ &game_a, &game_b };  // live games only
 //     std::vector<MonteCarloSearch::Result> results = search.search(roots);
-//     results[0].policy;         // visit shares over the 3 actions, the training target
+//     results[0].policy();       // visit shares over the 3 actions, the training target
 //     results[0].best_action;    // the move to play, after tie-break and any veto
 //     results[0].value;          // the root's mean return after search
-//     results[0].death_risk;     // backed-up risk per action, in [0, 1]
+//     results[0].visits;         // visit count per action - what the shares come from
+//     results[0].death_risk[0];  // optional: empty where the search never went
 //
 //     long long sealed = search.sealedChoices();   // counters run since construction
 //
@@ -101,18 +102,36 @@ public:
         unsigned int seed{ 0 };
     };
 
+    // What one search returned. The visit counts are the authority: the policy, the
+    // coverage question and the argmax are all derived from them rather than stored
+    // beside them, so no two fields can disagree about where the search went.
     struct Result
     {
-        // Visit distribution over actions, the search's improved policy.
-        std::vector<float> policy;
+        // Visit count per action, after any death-cap refusal - a refused action is
+        // zeroed here, which is what keeps it out of the policy and the argmax alike.
+        std::vector<int> visits;
+        // Backed-up death risk per action, in [0, 1]. Empty where the search never
+        // entered the action: nothing measured it, and any number written there would
+        // be read as a measurement saying the move is safe. A death-capped action keeps
+        // its risk, because the cap refuses a move rather than unmeasuring it.
+        std::vector<std::optional<float>> death_risk;
         // Root value estimate after search.
         float value{ 0.0f };
-        // Backed-up death risk per root action, in [0, 1]; reported even when uncapped.
-        std::vector<float> death_risk;
-        // Whether every root action was visited, which is what makes death_risk worth
-        // training on; an unvisited action keeps its start value and reads as safe.
-        bool all_actions_visited{ false };
         SnakeEnv::Action best_action{ SnakeEnv::Action::STRAIGHT };
+
+        // Visit shares over the actions, the search's improved policy and the training
+        // target. Sums to one. Uniform when nothing was visited, which is the childless
+        // root a caller asked no simulations for.
+        //
+        //     const std::vector<float> target = result.policy();  // e.g. 0.1 0.9 0.0
+        //
+        // Builds the vector on each call; hold it in a local rather than indexing the
+        // call inside a loop.
+        std::vector<float> policy() const;
+
+        // Whether every action carries a risk the search measured, which is what makes
+        // the death targets trainable. False as soon as one action went unentered.
+        bool allActionsVisited() const;
     };
 
     MonteCarloSearch(Evaluator& evaluator, const Config& config);

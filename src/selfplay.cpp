@@ -1,4 +1,4 @@
-// Implementation of SelfPlay. The interface, and how to call it, are in selfplay.h.
+﻿// Implementation of SelfPlay. The interface, and how to call it, are in selfplay.h.
 
 #include <algorithm>
 #include <chrono>
@@ -148,17 +148,23 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
             // position the search was given, not the one the move led to.
             TrainingRecord record;
             record.position = game.snapshot();
+            const std::vector<float> shares = results[position].policy();
+            record.death_risk_usable = results[position].allActionsVisited();
             for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
             {
-                record.policy[action] = results[position].policy[action];
-                record.death_risk_target[action] = results[position].death_risk[action];
+                record.policy[action] = shares[action];
+                // Written only where every action carries a measured risk. Otherwise the
+                // record keeps its zeros, which death_risk_usable already forbids reading.
+                if (record.death_risk_usable)
+                {
+                    record.death_risk_target[action] = results[position].death_risk[action].value();
+                }
             }
-            record.death_risk_usable = results[position].all_actions_visited;
             record.value_target = 0.0f;  // filled once the game ends
 
             // Sampled early and greedy later, so a batch explores without throwing
             // away its endgames.
-            int action = sampleAction(results[position].policy, moves_played[index]);
+            int action = sampleAction(shares, moves_played[index]);
             SnakeEnv::StepResult outcome = game.step(static_cast<SnakeEnv::Action>(action));
 
             trajectories[index].push_back(std::move(record));

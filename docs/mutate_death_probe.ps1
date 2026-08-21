@@ -65,7 +65,7 @@ $mutants = @(
 
     # sample_count is what tells a reader the report rests on something. Folding the
     # rejections in inflates it with positions that were never scored.
-    @{ name = "count_includes_rejections"; from = "report.sample_count = samples.pairs.size();"; to = "report.sample_count = samples.pairs.size() + samples.rejected_uncovered;" },
+    @{ name = "count_includes_rejections"; from = "report.sample_count = samples.pairs.size();"; to = "report.sample_count = samples.pairs.size() + samples.rejected;" },
 
     # The floor exists because a sample deviation needs n-1 and one pair admits no
     # ranking. Lowering it produces a divide by zero rather than a refusal.

@@ -1,4 +1,4 @@
-#include <cmath>
+﻿#include <cmath>
 #include <format>
 #include <iostream>
 #include <stdexcept>
@@ -208,10 +208,10 @@ void thresholdMovesOnlyTheBinarisation()
 void rejectionsAreCarriedNotDropped()
 {
     DeathProbeSamples samples = makeSamples({ { 0.2f, 0.0f }, { 0.8f, 1.0f } });
-    samples.rejected_uncovered = 17;
+    samples.rejected = 17;
     const DeathProbeReport report = scoreDeathProbe(samples, 0.5f);
     // sample_count counts pairs, not pairs plus rejections: an implementation that
-    // added rejected_uncovered in would report 19 here.
+    // added rejected in would report 19 here.
     expectTrue("sample count excludes rejections", report.sample_count == 2);
 
     // And it tracks the pairs rather than being a constant.
