@@ -46,6 +46,8 @@ struct TrainingRecord
 {
     // The position, not its encoding - encoded planes cost 3.2KB a move and swapped.
     SnakeEnv::Snapshot position;
+    // The search's visit distribution over the three relative actions, normalised.
+    // This is the training target for the policy head.
     float policy[SnakeEnv::ACTION_COUNT]{};
     float value_target{ 0.0f };  // discounted return from this position onward
     // Steps left to fill the board, as a fraction of the budget; 1 if it never won.
@@ -65,10 +67,14 @@ struct TrainingRecord
 // How one game ended. One per game in a batch, in the order the games were created.
 struct GameSummary
 {
+    // Apples eaten.
     int score{ 0 };
+    // Moves taken before it ended.
     int steps{ 0 };
-    // Exclusive with hit_step_limit; both false means the snake died.
+    // Whether it ended by filling the board.
     bool won{ false };
+    // Whether it was cut off at the step limit. Exclusive with won; both false means
+    // the snake died.
     bool hit_step_limit{ false };
     // Undiscounted, for the log; the value head trains on the discounted return.
     float total_reward{ 0.0f };
@@ -82,17 +88,27 @@ public:
     // Emitted once per move-batch; the caller does its own throttling.
     struct Progress
     {
+        // Games in this batch.
         int games_total{ 0 };
+        // How many have ended.
         int games_finished{ 0 };
+        // Moves taken across all of them.
         long long moves_played{ 0 };
+        // Seconds since the batch started.
         double elapsed_seconds{ 0.0 };
     };
 
     // Every field is set by the caller; the initializers make a miss a wrong number.
     struct Config
     {
+        // Games stepped together. This is the whole of throughput: 32 games measured
+        // 42-50k evaluations a second against 708k at 1024. Keep it in the hundreds.
         int games_in_parallel{ 0 };
+        // Moves a game gets before it is cut off as a timeout. Part of the task, not a
+        // safety valve - uncapped, a win cannot be told from safe shuffling.
         int step_limit{ 0 };
+        // Per-step discount on the return the value head trains toward. At 0.98 it
+        // cannot see much past 200 steps.
         float discount{ 0.0f };
         // Charged to a cut-off game's last move, so stalling costs what dying costs.
         float timeout_reward{ 0.0f };
@@ -100,7 +116,10 @@ public:
         float step_reward{ 0.0f };
         // Visits are sampled this hot for temperature_moves moves, then argmax.
         float temperature{ 0.0f };
+        // How many opening moves are sampled before selection switches to argmax.
         int temperature_moves{ 0 };
+        // Seeds action sampling only. The games themselves are seeded per batch, by
+        // the game_seed_base handed to playBatch.
         unsigned int seed{ 0 };
     };
 

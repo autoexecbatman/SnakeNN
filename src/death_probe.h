@@ -2,18 +2,21 @@
 
 #include <vector>
 
-// Scores a death head against the search's own backed-up risk.
+// Scores a death head against what the search concluded about the same moves.
 //
-// The question it answers: does the death head contain anything, or is it still at
-// its initialisation? az10_death368.pt cost 4.8 hours and its logs cannot say,
-// because the death loss was never printed. This measures the trained head instead
-// of the run that produced it.
+// The death head predicts, for each of the three moves out of a position, the chance that
+// move leads to a death no later play can avoid. This answers whether it has learned that
+// or is still at its initialisation - by comparing it, move by move, against the risk the
+// search arrived at after its simulations. The search's number is the reference: not
+// truth, but hundreds of lookaheads against the head's single forward pass.
 //
-// Pairs come from held-out positions: the network's raw death output for a root
-// action, and the risk the search backed up for that same action. Only positions
-// where the search visited every root action are admissible - an unvisited action
-// keeps its start value and reads as safe, so a pair drawn from one measures the
-// search's coverage rather than the head.
+// A pair is one move: what the head said, and what the search backed up for it.
+//
+// Which pairs are worth feeding in is the caller's decision, not this library's. A move
+// the search never visited keeps its start value and reads as safe, so a pair drawn from
+// one measures the search's coverage rather than the head. az_death_probe.cpp scores two
+// rules side by side - every move only when all three were visited, and every move the
+// search visited whatever the others did - and hands each rule its own samples.
 //
 // Usage:
 //
@@ -29,12 +32,12 @@
 //     report.ranking_auc         // in [0, 1]; 0.5 is a coin flip
 //     report.doomed_fraction     // share of targets at or above the threshold
 //
-// Read estimate_spread first. A head at its initialisation emits nearly the same
-// number everywhere, and a rank correlation computed over a near-constant vector is
-// noise amplified by normalisation, not a weak signal.
+// Read estimate_spread first. A head at its initialisation emits nearly the same number
+// everywhere, and a rank correlation computed over a near-constant vector is noise
+// amplified by normalisation, not a weak signal.
 //
-// scoreDeathProbe refuses fewer than two samples and a threshold outside [0, 1].
-// It asserts that every estimate and target it was given lies in [0, 1].
+// scoreDeathProbe refuses fewer than two samples and a threshold outside [0, 1]. It
+// asserts that every estimate and target it was given lies in [0, 1].
 
 // One held-out position's root action: what the head said, and what the search
 // backed up for the same action.
@@ -55,22 +58,28 @@ struct DeathProbePair
 // report exactly like a head with little to say.
 struct DeathProbeSamples
 {
+    // One pair per measurement: what the head said, and what actually happened.
     std::vector<DeathProbePair> pairs;
     // Candidates the caller declined to admit. What one counts is the caller's rule -
     // a position under an all-or-nothing rule, a single action under a per-action one -
     // so the unit lives with whoever increments it, never in this struct.
     std::size_t rejected{ 0 };
 
+    // Records one pair. `estimate` is the head's output, `target` what the search
+    // backed up. Asserts both are in [0, 1].
     void add(float estimate, float target);
 };
 
 // What the probe measured. Every field is a property of the pairs it was given.
 struct DeathProbeReport
 {
+    // Pairs the report was computed from.
     std::size_t sample_count{ 0 };
     // Sample standard deviation of the head's output. Near zero means the head is
     // constant, which is what an untrained one looks like.
     double estimate_spread{ 0.0 };
+    // Mean of the head's output. Read beside estimate_spread: a mean near zero with
+    // no spread is a head that has learned to say nothing.
     double estimate_mean{ 0.0 };
     // Spearman rank correlation between estimate and target, in [-1, 1].
     double rank_correlation{ 0.0 };
@@ -78,6 +87,8 @@ struct DeathProbeReport
     // a coin flip. Undefined when every target falls on one side, and reported as
     // 0.5 with ranking_auc_defined false rather than as a number nobody can read.
     double ranking_auc{ 0.5 };
+    // Whether ranking_auc means anything. False when every target fell on one side of
+    // the threshold, leaving nothing to rank.
     bool ranking_auc_defined{ false };
     // Share of targets at or above the threshold.
     double doomed_fraction{ 0.0 };

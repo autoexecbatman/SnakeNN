@@ -6,56 +6,76 @@
 
 #include "az_parameters.h"
 
-// The trainer's settings, and the two strings it prints.
+// The trainer's settings, its command line, and the two strings it prints.
 //
-// Extracted from az_trainer.cpp, which was a single main() and therefore had no
-// testable surface at all: the argument parser accepted "--games 0" and produced
-// a division by zero in the summary line eight hundred seconds later, and the
-// step limit was derived inside the parser where nothing could check it.
+// Usage - what az_trainer.cpp's main does:
 //
-// Deliberately free of LibTorch, so assertions are reachable here. A debug
-// binary linked against LibTorch dies of an access violation before running -
-// the shipped libraries are release-only - so every assert in a Torch-linked
-// file in this repository is unreachable, and these would have been too.
+//     // argv without the program name.
+//     const trainer::Settings settings =
+//         trainer::parseArguments({ argv + 1, static_cast<size_t>(argc - 1) });
+//
+//     // Derived, never read from a field: the override if one was given.
+//     const int step_limit = settings.stepLimit();
+//
+//     std::cout << trainer::formatProgressBar(iteration, settings.lastIteration(),
+//                                             progress) << carriage_return;
+//
+// Every rejection is a throw naming the flag, so a mistyped setting stops the run
+// rather than training for hours on a default. Free of LibTorch, so its assertions
+// are reachable in a debug build.
 namespace trainer
 {
 
-// The paper's hyperparameters are in az_parameters.h, which the evaluator and the
-// visual also include. They were here first, which made this header a dependency
-// of two programs that are not the trainer.
-
-// Plain aggregate, so the rule of zero applies as written: no member owns a
-// resource, the compiler's copy is correct, and there is nothing to delete. That
-// is the opposite decision from MonteCarloSearch, and for the opposite reason -
-// settings are a value, a search is not.
+// Which board to train on, for how long, with what network shape and search budget.
+// Filled by parseArguments from the command line.
+//
+// A plain aggregate: copy it, pass it by const reference, and read the derived
+// quantities - the step limit, the last iteration, samples per game - through the
+// member functions, which are the only place their rules are written.
 struct Settings
 {
+    // Side of the square board. The curriculum starts small and resumes upward.
     int board{ 6 };
+    // How many iterations this run plays before stopping.
     int iterations{ 20 };
     // Absolute index of the first iteration. A resumed run must be given the
     // number the previous run stopped at, or it replays that run's games: the
     // seed for a game is derived from the iteration index, and `--resume`
     // restores weights only.
     int start_iteration{ 1 };
+    // Self-play games per iteration. Hundreds in flight is what makes the batch big
+    // enough for the GPU; 32 measured a fifteenth of the throughput of 1024.
     int games_per_iteration{ 32 };
+    // Search simulations per move. Never quote a win rate without it - four times the
+    // simulations doubled the rate here with no retraining.
     int simulations{ 64 };
     // Empty means derive it from the board. This used to be a zero standing in
     // for "not given", resolved by overwriting the field during parsing - so the
     // resolved value and the sentinel occupied one variable and no caller could
     // tell which it was holding.
     std::optional<int> step_limit_override;
+    // Trunk width, in convolution channels.
     int channels{ 64 };
+    // Residual blocks in the trunk.
     int blocks{ 4 };
+    // States per gradient step.
     int batch_size{ 128 };
+    // Gradient steps per iteration, unless samples_per_game_override sets it instead.
     int batches_per_iteration{ 64 };
     // Given instead of --batches, this sets it: batches = samples * games / batch.
     // The paper trains 30 batches of 100 states after every game, so 3,000 per
     // game; the equivalent --batches depends on the game count and the batch size
     // and is therefore the wrong thing to write down. Giving both is refused.
     std::optional<int> samples_per_game_override;
-    size_t replay_bytes{ 1024u * 1024u * 1024u };  // 1 GiB, measured not guessed
+    // Ceiling on the replay buffer, in bytes. It is the resource that goes unbounded
+    // first: encoded observations at 3.2KB a record took an early run into swap.
+    size_t replay_bytes{ 1024u * 1024u * 1024u };  // 1 GiB
+    // Base seed. A game's own seed is derived from this and its iteration index.
     unsigned int seed{ 1 };
+    // Where to write the weights after each iteration. Empty writes nothing.
     std::string checkpoint;
+    // Checkpoint to load before the first iteration. Weights only - the iteration
+    // number comes from start_iteration.
     std::string resume;
     // Where this run records what it cost. Relative to the launch directory, which
     // is build/Release and is not version controlled, so a run meant to leave a
@@ -68,6 +88,7 @@ struct Settings
     // omitting it keeps whatever az_parameters.h says.
     float exploration_epsilon{ az::EXPLORATION_EPSILON };
 
+    // Cells on the board.
     int cellCount() const noexcept { return board * board; }
     // The snake starts one segment long, so this many apples fills the board.
     int foodsToWin() const noexcept { return cellCount() - 1; }
@@ -93,15 +114,22 @@ Settings parseArguments(std::span<const char* const> arguments);
 // Minutes and seconds, or "--:--" when there is nothing meaningful to show.
 std::string formatDuration(double seconds);
 
-// What the trainer knows mid-iteration. Plain numbers rather than
-// SelfPlay::Progress so this stays independent of the self-play layer.
+// What the trainer knows part way through an iteration, as plain numbers. Fill one and
+// hand it to formatProgressBar.
 struct ProgressSnapshot
 {
+    // Games this iteration will play.
     int games_total{ 0 };
+    // How many of them have ended.
     int games_finished{ 0 };
+    // Moves taken across every game so far.
     long long moves_played{ 0 };
+    // Network evaluations so far. Divided by the elapsed time this is the throughput
+    // figure the progress line shows.
     long long evaluations{ 0 };
+    // The step budget each game is playing under, for the moves-remaining estimate.
     int step_limit{ 0 };
+    // Seconds since the iteration started.
     double elapsed_seconds{ 0.0 };
 };
 

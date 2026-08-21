@@ -19,12 +19,16 @@
 namespace
 {
 
+// Seconds elapsed since `start`, as a double.
 double secondsSince(std::chrono::high_resolution_clock::time_point start)
 {
     auto now = std::chrono::high_resolution_clock::now();
     return std::chrono::duration<double>(now - start).count();
 }
 
+// Times the simulator alone - stepping and encoding a block of games, with no network
+// involved - and prints steps and observations a second. This is the ceiling any
+// search throughput is measured against.
 void measureEnvironment(int board_size, int env_count, int steps)
 {
     VectorEnv batch(env_count, board_size, board_size, 1234, az::deriveStepLimit(board_size));
@@ -74,6 +78,8 @@ void measureEnvironment(int board_size, int env_count, int steps)
               << " observations/s" << std::endl;
 }
 
+// Times forward passes at one batch size and prints evaluations a second. Batch size
+// is the whole of throughput here: batch 32 measured a fifteenth of batch 1024.
 void measureNetwork(torch::Device device, int board_size, int channels, int blocks, int batch_size)
 {
     AlphaZeroNet network(board_size, board_size, channels, blocks);

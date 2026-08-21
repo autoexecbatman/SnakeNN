@@ -65,8 +65,11 @@ public:
     // Every field is set by the caller; the initializers make a miss a wrong number.
     struct Config
     {
+        // Simulations run per root, per move. The strongest single lever measured here:
+        // four times the count doubled the win rate with no retraining.
         int simulations{ 0 };
         float exploration{ 0.0f };  // c_puct
+        // Per-step discount applied on backup, matching the training target.
         float discount{ 0.0f };
         // Paid every tick, so the search prices delay as the training target does.
         float step_reward{ 0.0f };
@@ -98,7 +101,11 @@ public:
         float exploration_epsilon{ 0.0f };
         // Dirichlet noise on root priors; set the fraction to zero when evaluating.
         float root_noise_fraction{ 0.0f };
+        // Concentration of that Dirichlet. Lower spreads the noise onto fewer actions.
         float root_noise_alpha{ 0.0f };
+        // Seeds the root noise and the imagined food the search draws down each path.
+        // Two runs differing only here play the same games and search different futures,
+        // which is the noise floor of any comparison between checkpoints.
         unsigned int seed{ 0 };
     };
 
@@ -117,6 +124,8 @@ public:
         std::vector<std::optional<float>> death_risk;
         // Root value estimate after search.
         float value{ 0.0f };
+        // The action to play: the most-visited one, after the steps tie-break and any
+        // veto. Not always the argmax of visits, so read this rather than deriving it.
         SnakeEnv::Action best_action{ SnakeEnv::Action::STRAIGHT };
 
         // Visit shares over the actions, the search's improved policy and the training
@@ -134,6 +143,10 @@ public:
         bool allActionsVisited() const;
     };
 
+    // Builds a search over one evaluator. The evaluator is borrowed and must outlive
+    // this; the config is copied.
+    //
+    //     MonteCarloSearch search(evaluator, search_config);
     MonteCarloSearch(Evaluator& evaluator, const Config& config);
 
     // A search has no value semantics: a copy would duplicate the random stream and
@@ -167,6 +180,8 @@ public:
     // The same two counted per node rather than per traversal, which says how much
     // of the tree is affected rather than how much attention it drew.
     long long revisitedNodes() const { return revisited_nodes_; }
+    // Times two simulations in one batch disagreed about a shared edge. Counted only
+    // while Config::alias_report is on, and zero otherwise.
     long long aliasedNodes() const { return aliased_nodes_; }
 
     // Root actions the cap has refused since construction; zero when it is off.

@@ -7,8 +7,12 @@
 #include "snake_logic.h"  // Use existing Position struct
 
 
+// Hashes a Position, so one can key an unordered_map.
+//
+//     std::unordered_map<Position, Position, PositionHash> next_cell;
 struct PositionHash
 {
+    // Combines the two coordinates. Adequate for a grid; not a strong hash.
     size_t operator()(const Position& pos) const
     {
         return std::hash<int>()(pos.x) ^ (std::hash<int>()(pos.y) << 1);
@@ -20,6 +24,10 @@ struct PositionHash
 class HamiltonianCycle
 {
 public:
+    // Sizes the generator for one grid. Call generateCycle before anything else.
+    //
+    //     HamiltonianCycle cycle(20, 20);
+    //     if (!cycle.generateCycle()) { /* no ordering exists for this grid */ }
     HamiltonianCycle(int width, int height);
 
     // Generate Hamiltonian cycle using Prim's algorithm approach

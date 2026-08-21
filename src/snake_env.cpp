@@ -65,6 +65,7 @@ Position stepFrom(const Position& cell, Direction heading)
     return moved;
 }
 
+// A quarter turn anticlockwise. Asserts the heading changed.
 Direction turnLeft(Direction heading)
 {
     Direction turned = heading;
@@ -104,6 +105,7 @@ Direction turnLeft(Direction heading)
     return turned;
 }
 
+// A quarter turn clockwise. Asserts the heading changed.
 Direction turnRight(Direction heading)
 {
     Direction turned = heading;

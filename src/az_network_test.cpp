@@ -10,10 +10,17 @@
 #include "az_parameters.h"
 #include "snake_env.h"
 
-// The curriculum trains on small boards and moves up, so the property that
-// matters most about this architecture is that its weights do not depend on
-// board size. That is easy to break and silent when broken - a size-dependent
-// head simply fails to load later, after the small-board run has finished.
+// Tests for the policy and value network: that its weights do not depend on board size,
+// that it refuses shapes it cannot serve, and that a checkpoint widens correctly.
+//
+// The board-size property is the one this file exists for. The curriculum trains on a
+// small board and resumes on a larger one, so no weight may depend on the size - and that
+// is easy to break and silent when broken, because a size-dependent head does not fail
+// until the load, after the small-board run has already finished.
+//
+// Run it directly; it returns non-zero on the first property that does not hold.
+//
+//     build\Release\NetworkTest.exe
 
 // The network implementation has no value semantics: copying one would duplicate
 // the module bookkeeping while sharing every parameter tensor, so two networks
@@ -33,15 +40,22 @@ static_assert(!std::is_move_assignable<AlphaZeroNetImpl>::value,
 static_assert(std::is_copy_constructible<AlphaZeroNet>::value,
               "the AlphaZeroNet holder is the value type - it must stay copyable");
 
-// Prediction is a plain aggregate so that structured bindings keep working and
-// the two tensors travel under their own names.
+// Prediction is a plain aggregate so that structured bindings keep working and all four
+// tensors travel under their own names rather than by position.
 static_assert(std::is_copy_constructible<Prediction>::value, "Prediction must be copyable");
 
 namespace
 {
 
+// Properties that did not hold. main returns non-zero when it is not zero.
 int failures = 0;
 
+// Records one property. Prints nothing on success, so the output is the failures.
+//
+//     expect(value.sizes() == torch::IntArrayRef({ batch, 1 }), "the value head emits one scalar");
+//
+// `description` is phrased as the claim being made, so a failure line reads as the thing
+// that turned out to be false.
 void expect(bool condition, const std::string& description)
 {
     if (condition)
@@ -55,6 +69,12 @@ void expect(bool condition, const std::string& description)
     }
 }
 
+// Each head emits the shape its consumer indexes, and the value stays in range.
+//
+// Also asserts az::VALUE_SCALE exceeds SnakeEnv::WIN_REWARD. The search adds a leaf value
+// to raw edge rewards, so a head bounded at 1 could not express a position worth a win and
+// the search would silently discount everything past its own edges - which is the defect
+// whose absence of an assertion let the head and the search run in different units.
 void testOutputShapes()
 {
     AlphaZeroNet network(8, 8, 32, 2);
@@ -106,6 +126,11 @@ bool throwsOnCall(const std::function<void()>& action)
     return false;
 }
 
+// The constructor refuses a board below 2x2, a trunk with no channels and a negative
+// block count, and still allows the smallest legitimate network.
+//
+// These sizes arrive from a command line, so a wrong one otherwise builds, trains and
+// means nothing.
 void testConstructorRejectsImpossibleShapes()
 {
     expect(throwsOnCall([] { AlphaZeroNet bad(1, 8, 32, 2); }),
@@ -120,6 +145,8 @@ void testConstructorRejectsImpossibleShapes()
            "and the smallest legitimate network is still allowed");
 }
 
+// forward refuses a batch that is not [N, PLANE_COUNT, height, width] for the board this
+// network was built for, with N at least one.
 void testForwardRejectsTheWrongInput()
 {
     AlphaZeroNet network(8, 8, 16, 1);
@@ -146,12 +173,12 @@ void testForwardRejectsTheWrongInput()
         "and a correctly shaped batch goes through");
 }
 
+// Every field of Prediction holds what its name says, checked by shape.
 void testPredictionFieldsAreTheOnesNamed()
 {
-    // The struct replaced a std::pair, and the risk in that swap is transposition:
-    // .first and .second carried no meaning, so a caller reading them in the wrong
-    // order would have compiled. The two fields have different shapes, which is
-    // what makes the mix-up detectable at all.
+    // Two fields read in the wrong order would compile and train on transposed targets,
+    // so this checks each one is what its name says. The fields have different shapes,
+    // which is what makes the mix-up detectable at all.
     AlphaZeroNet network(6, 6, 16, 1);
     network->eval();
     torch::NoGradGuard no_grad;
@@ -181,6 +208,10 @@ void testPredictionFieldsAreTheOnesNamed()
            "a structured binding still destructures in policy-then-value order");
 }
 
+// A 6x6 network and a 20x20 network have the same parameters, by name and by shape.
+//
+// This is the property the curriculum rests on: if it fails, a trained trunk cannot be
+// carried to a larger board and the whole approach of starting small collapses.
 void testWeightsTransferAcrossBoardSizes()
 {
     AlphaZeroNet small(6, 6, 32, 2);
@@ -241,6 +272,8 @@ void testWeightsTransferAcrossBoardSizes()
 // Widening the stem is what lets a checkpoint trained before the clock plane keep
 // being used. Expected values come from the contract: the saved weights land in the
 // leading input channels and every new one is zero.
+// Widening a stem copies the saved weights into the leading input channels and zeroes
+// the rest, so the widened convolution computes what the narrow one did.
 void testWideningTheStemKeepsTheOldWeightsAndZeroesTheNew()
 {
     // [out_channels, in_planes, kernel, kernel], filled so every element is
@@ -261,6 +294,7 @@ void testWideningTheStemKeepsTheOldWeightsAndZeroesTheNew()
            "the target is left alone - the widened weight is a new tensor");
 }
 
+// A stem that is already the right width comes back exactly as it was.
 void testWideningAnEqualStemChangesNothing()
 {
     torch::Tensor saved = torch::arange(2 * 9 * 3 * 3, torch::kFloat).reshape({ 2, 9, 3, 3 });
@@ -269,6 +303,10 @@ void testWideningAnEqualStemChangesNothing()
            "a stem of the same width comes back exactly as it was");
 }
 
+// Widening refuses a saved stem that does not fit inside the target: more input channels
+// than the network has, or a difference in any other dimension.
+//
+// Dropping the extra planes silently would be a different network wearing the same name.
 void testWideningRefusesWhatItCannotWiden()
 {
     const auto refused = [](const torch::Tensor& saved, const torch::Tensor& target)

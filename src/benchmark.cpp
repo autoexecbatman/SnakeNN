@@ -16,16 +16,22 @@
 
 namespace {
 
+// How one game ended. Exhaustive over what can happen to a cycle-following snake.
 enum class Outcome {
     WON, HIT_WALL, HIT_SELF, STEP_LIMIT
 };
 
+// What one benchmarked game produced.
 struct GameResult {
+    // How it ended.
     Outcome outcome;
+    // Apples eaten.
     int score;
+    // Moves taken. A win takes about 40000 of them at 20x20.
     long long steps;
 };
 
+// The Outcome as the word the report prints.
 const char* outcomeName(Outcome outcome) {
     switch (outcome) {
         case Outcome::WON: return "won";
@@ -36,6 +42,12 @@ const char* outcomeName(Outcome outcome) {
     return "unknown";
 }
 
+// Which of the four endings a finished game reached.
+//
+// A win and the step limit are read off the game directly. A death is separated into
+// wall and self by looking one cell ahead of the head: update() rejects a fatal move
+// without applying it, so the head still sits where it was and the fatal cell is one
+// step along the current heading.
 Outcome classifyEnding(const SnakeGame& game, long long steps, long long step_limit) {
     if (game.isWon()) {
         return Outcome::WON;
@@ -59,6 +71,10 @@ Outcome classifyEnding(const SnakeGame& game, long long steps, long long step_li
     return off_grid ? Outcome::HIT_WALL : Outcome::HIT_SELF;
 }
 
+// Plays one seeded game to its end under the agent, or until `step_limit` moves.
+//
+//     const GameResult result = playOneGame(agent, seed, 200000);
+//     // result.outcome == Outcome::WON on every game measured so far.
 GameResult playOneGame(const CycleAgent& agent, unsigned int seed, long long step_limit) {
     SnakeGame game(seed);
     long long steps = 0;

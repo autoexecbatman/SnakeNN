@@ -26,6 +26,7 @@ std::string withoutSeparators(std::string_view text)
     return cleaned;
 }
 
+// The word a Kind is written as in the ledger.
 std::string_view name(Kind kind) noexcept
 {
     return kind == Kind::Training ? "training" : "evaluation";

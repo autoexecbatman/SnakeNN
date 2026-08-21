@@ -45,6 +45,8 @@ int parseWholeInt(const std::string& flag, const char* text)
     return number;
 }
 
+// Throws std::invalid_argument naming the flag, its bound and what was given, unless
+// value is at or above `floor`.
 void requireAtLeast(const std::string& flag, int value, int floor)
 {
     if (value < floor)
@@ -54,6 +56,7 @@ void requireAtLeast(const std::string& flag, int value, int floor)
     }
 }
 
+// The same, for an upper bound.
 void requireAtMost(const std::string& flag, int value, int ceiling)
 {
     if (value > ceiling)

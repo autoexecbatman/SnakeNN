@@ -17,9 +17,16 @@
 class VectorEnv
 {
 public:
+    // Builds `count` games of one size. Game `index` is seeded `base_seed + index`, so
+    // a block reproduces from one number.
+    //
+    //     VectorEnv games(256, 10, 10, batch_seed, 1200);
     VectorEnv(int count, int width, int height, unsigned int base_seed, int step_limit);
 
+    // Restarts every game, each on the seed it was built with.
     void resetAll();
+    // Restarts one game, leaving the rest running. This is what keeps a block full as
+    // games finish at different times.
     void resetOne(int index);
 
     // Steps every game that is not already finished. `actions` and
@@ -31,11 +38,16 @@ public:
     // within a game, which is the layout a Conv2d batch wants.
     void encodeAll(float* batch_out) const;
 
+    // Games in the block.
     int count() const { return static_cast<int>(envs_.size()); }
+    // Floats one game's encoding occupies.
     int encodedSizePerEnv() const { return envs_[0].encodedSize(); }
+    // Floats the whole block occupies - size the batch buffer with this.
     int encodedSizeTotal() const { return count() * encodedSizePerEnv(); }
 
+    // One game, for reading its score or outcome.
     const SnakeEnv& env(int index) const { return envs_[index]; }
+    // One game, for stepping it.
     SnakeEnv& env(int index) { return envs_[index]; }
 
 private:

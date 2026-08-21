@@ -5,24 +5,39 @@
 
 #include "snake_logic.h"  // Direction, Position
 
-// Eight bytes of generator, because the search copies a whole environment once
-// per simulation and then reseeds it.
+// The Snake the learned agent trains on: runtime board size, an explicit seed, and no
+// state shared between instances, so thousands can be stepped in parallel. Actions are
+// relative to the heading, so no move reverses the snake. It encodes itself into planes
+// for a convolutional network. No LibTorch and no raylib.
 //
-// std::mt19937 carries 624 words - about 2.5KB - so it was being copied on the
-// hottest path in the search, and reseeding one costs a full state
-// initialisation. Neither is affordable here and neither buys anything: the only
-// draw in this environment picks a free cell for an apple.
+// Usage - one episode, taking whichever action a policy chose:
 //
-// splitmix64, which is the standard seeding routine for the xoshiro family and
-// passes BigCrush on its own.
+//     SnakeEnv game(10, 10, seed, step_limit);   // width, height, apple stream, budget
+//
+//     // The step limit bounds the encoding; ending the episode on it is the caller's.
+//     while (!game.done() && game.steps() < step_limit)
+//     {
+//         game.step(SnakeEnv::Action::STRAIGHT);
+//     }
+//     const bool filled_the_board = game.won();
+//
+// Stepping a finished episode throws. reset() replays the same board and seed.
+
+// splitmix64 in eight bytes of state, so copying or reseeding one is an assignment.
+// That is what the search needs: it copies a whole environment per simulation.
+//
+//     SmallRandom rng(seed);
+//     const std::uint32_t cell = rng.below(100);   // uniform in [0, 100)
 class SmallRandom
 {
 public:
+    // Starts the stream at `seed`. Every seed is valid, zero included.
     explicit SmallRandom(unsigned int seed)
         : state_(static_cast<std::uint64_t>(seed) + GOLDEN_GAMMA)
     {
     }
 
+    // The next 64 bits, uniform over the whole range. Use below() for a bounded draw.
     std::uint64_t next()
     {
         std::uint64_t value = (state_ += GOLDEN_GAMMA);
@@ -59,17 +74,7 @@ private:
     std::uint64_t state_{ 0 };
 };
 
-// Training environment. Separate from SnakeGame on purpose:
-//
-//   - board size is a runtime argument, because the curriculum trains on small
-//     boards first and SnakeGame fixes 20x20 at compile time for 25 other files
-//   - all state is per-instance, so thousands of these can step in parallel
-//     (SnakeGame::getReward keeps its previous head position in function-local
-//     statics, which silently couples every game in the process)
-//   - actions are relative, so there is no reverse action to ignore
-//   - it encodes itself into planes for a convolutional network
-//
-// No LibTorch and no raylib, so it builds and tests without the CUDA toolchain.
+// One game. See the top of this file for how to run an episode.
 class SnakeEnv
 {
 public:
@@ -82,6 +87,7 @@ public:
         LEFT,
         RIGHT
     };
+    // How many actions there are. Three, and no reverse.
     static constexpr int ACTION_COUNT = 3;
 
     // body, head, food, tail timer, one plane per heading, and the clock
@@ -94,13 +100,20 @@ public:
     // learned. These are floats rather than an env parameter because a reward
     // scale that varies between runs makes their value heads incomparable.
     static constexpr float FOOD_REWARD = 1.0f;
+    // Charged for dying, and for starving, which is a death.
     static constexpr float DEATH_REWARD = -10.0f;
+    // Paid once, for filling the board.
     static constexpr float WIN_REWARD = 10.0f;
 
+    // What one step produced: what it paid, whether the episode ended, and whether
+    // ending meant filling the board.
     struct StepResult
     {
+        // What the step paid: an apple, a death, a win, or the per-step reward.
         float reward{ 0.0f };
+        // Whether the episode ended on this step.
         bool done{ false };
+        // Whether it ended by filling the board.
         bool won{ false };
     };
 
@@ -117,7 +130,11 @@ public:
     // for every existing caller.
     SnakeEnv(int width, int height, unsigned int seed, int step_limit);
 
+    // Back to a one-segment snake, score zero, a fresh apple. Board size, step limit,
+    // random stream and any ablation freeze all survive it.
     void reset();
+    // Applies one relative action and reports what it paid. Throws if the episode has
+    // already finished - call reset() first.
     StepResult step(Action action);
 
     // Replace the random stream without disturbing the position.
@@ -130,14 +147,20 @@ public:
     // rollout. Eight bytes, so it is an assignment rather than a state rebuild.
     void reseed(unsigned int seed) { rng_ = SmallRandom(seed); }
 
+    // Columns on the board.
     int width() const { return width_; }
+    // Rows on the board.
     int height() const { return height_; }
+    // Cells on the board. A snake this long has filled it.
     int cellCount() const { return width_ * height_; }
     // The snake starts one segment long, so this many foods fills the board.
     int foodsToWin() const { return cellCount() - 1; }
 
+    // Apples eaten so far.
     int score() const { return score_; }
+    // Steps taken so far.
     int steps() const { return steps_; }
+    // The whole step budget, as the constructor was given it.
     int stepLimit() const { return step_limit_; }
     // What the clock plane holds: 1 at the start, 0 once the budget is spent, and
     // never negative even if the caller runs the episode past its limit.
@@ -191,8 +214,12 @@ public:
     // Asserts 0 <= value <= 1. The trainer must never call this - a policy trained
     // against a frozen clock is a different agent, not an ablation of this one.
     void freezeClockForAblation(float value);
+    // Steps since the last apple. Reaching hungerLimit() starves the snake.
     int stepsSinceFood() const { return steps_since_food_; }
+    // Whether the episode is over. Running out of steps does not set it - the caller
+    // owning the episode decides that.
     bool done() const { return done_; }
+    // Whether it ended by filling the board.
     bool won() const { return won_; }
 
     // Starve if the snake goes this long without eating, counted as a death.
@@ -208,13 +235,18 @@ public:
     // rule is meant to punish aimlessness rather than thorough play.
     int hungerLimit() const { return 2 * cellCount(); }
 
+    // The absolute direction the head is travelling.
     Direction heading() const { return heading_; }
+    // The segments, head first. Invalidated by step() and reset().
     const std::vector<Position>& body() const { return body_; }
+    // Where the apple is. Undefined on a won board, where none exists.
     Position food() const { return food_; }
 
     // Where `action` would put the head, without applying it. Search needs this
     // to order children before it commits to expanding them.
     Position headAfter(Action action) const;
+    // Which absolute direction `action` would turn to, without applying it. Never the
+    // reverse of the current heading.
     Direction headingAfter(Action action) const;
 
     // Whether taking `action` ends the episode in death - a wall, the body, or
@@ -230,6 +262,7 @@ public:
     // The caller owns the memory; nothing is allocated here, because this runs
     // once per node visited in the tree.
     void encode(float* planes_out) const;
+    // Floats encode() writes - size the caller's buffer with this.
     int encodedSize() const { return PLANE_COUNT * cellCount(); }
 
     // A position, compactly: cell indices rather than planes.
@@ -243,8 +276,11 @@ public:
     struct Snapshot
     {
         std::vector<unsigned short> body_cells;  // head first
+        // Where the apple sits, as a cell index. Meaningless when won is true.
         unsigned short food_cell{ 0 };
+        // The heading, as the Direction enumerator's value.
         unsigned char heading{ 0 };
+        // Whether this position is a filled board.
         bool won{ false };
         // The clock, already normalised. Carried rather than recomputed because a
         // snapshot outlives its environment: the replay buffer holds these for
@@ -255,6 +291,8 @@ public:
         float budget_remaining{ 1.0f };
     };
 
+    // This position as a snapshot. Throws on a board of more than 65535 cells, which
+    // is past what a 16-bit cell index can hold.
     Snapshot snapshot() const;
 
     // Encodes a snapshot for a board of the given size. Static because the

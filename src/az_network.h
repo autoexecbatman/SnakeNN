@@ -105,11 +105,16 @@ struct AlphaZeroNetImpl : torch::nn::Module
     // wrong one builds and trains and means nothing.
     AlphaZeroNetImpl(int board_width, int board_height, int channels, int blocks);
 
-    // The parameters are shared pointers, so a copy would train one set of weights
-    // through two objects that look independent. Pass the AlphaZeroNet holder instead.
+    // Copying is deleted. The parameters are shared pointers, so a copy would train one
+    // set of weights through two objects that look independent. Pass the AlphaZeroNet
+    // holder instead - it is the shared handle this type is meant to be reached through.
     AlphaZeroNetImpl(const AlphaZeroNetImpl&) = delete;
+    // Copy assignment, deleted for the same reason.
     AlphaZeroNetImpl& operator=(const AlphaZeroNetImpl&) = delete;
+    // Moving is deleted too: a module registered with LibTorch is referred to by
+    // address, so moving one leaves those references behind.
     AlphaZeroNetImpl(AlphaZeroNetImpl&&) = delete;
+    // Move assignment, deleted for the same reason.
     AlphaZeroNetImpl& operator=(AlphaZeroNetImpl&&) = delete;
 
     // Runs one batch of encoded boards through the trunk and the four heads.

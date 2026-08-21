@@ -32,6 +32,7 @@
 // Positions seen, and the visited-action counts accumulated over them.
 struct CoverageTally
 {
+    // Positions observed so far.
     std::size_t positions{ 0 };
     // Positions where every root action was visited.
     std::size_t fully_covered{ 0 };
@@ -48,6 +49,7 @@ struct CoverageTally
 // What the tally says about coverage and about label yield.
 struct CoverageReport
 {
+    // Positions the tally was built from.
     std::size_t positions{ 0 };
     // Share of positions where every root action was visited, in [0, 1]. This is the
     // fraction of positions the current rule admits at all.
@@ -60,6 +62,7 @@ struct CoverageReport
     // a run that admits no labels at all reports 0 with yield_ratio_defined false - the
     // gain from a redesign is unbounded there rather than absent.
     double yield_ratio{ 0.0 };
+    // Whether yield_ratio means anything. False when no labels were admitted at all.
     bool yield_ratio_defined{ false };
     // Mean visited actions per position, whatever the rule.
     double mean_visited_actions{ 0.0 };

@@ -18,8 +18,11 @@
 
 namespace
 {
+// Channels the policy head narrows the trunk to before pooling.
 constexpr int POLICY_HEAD_CHANNELS = 32;
+// The same, for the value, steps and risk heads, which share a stem.
 constexpr int VALUE_HEAD_CHANNELS = 32;
+// Width of the hidden layer the value, steps and risk heads share.
 constexpr int VALUE_HIDDEN = 64;
 // Both heads pool to a fixed grid before their linear layers, so no weight
 // depends on board size and a 6x6 network loads at 20x20 unchanged. Flattening
@@ -27,6 +30,7 @@ constexpr int VALUE_HIDDEN = 64;
 // every step up in board size would have meant discarding the head and
 // relearning it, which is the part that knows what the trunk's features mean.
 constexpr int POOLED_SIDE = 4;
+// Cells a head sees after pooling, which is what fixes its linear layer's input size.
 constexpr int POOLED_CELLS = POOLED_SIDE * POOLED_SIDE;
 }  // namespace
 

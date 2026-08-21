@@ -42,13 +42,23 @@ enum class Outcome
 // row. `run_id` ties a completion back to its start and is unique within a ledger.
 struct Entry
 {
+    // Identifies the run. From makeRunId, so it sorts chronologically.
     std::string run_id;
+    // When it started, as "YYYY-MM-DDTHH:MM:SSZ".
     std::string started_utc;
+    // Which program wrote the row.
     Kind kind{ Kind::Training };
+    // The command line it was launched with, argv[0] excluded. This is what makes a
+    // number reproducible: a setting not on this line is one nobody can recover.
     std::string command;
+    // How it ended. A row written at launch carries Started and is replaced on finish,
+    // so a Started row still present means the run died without recording anything.
     Outcome outcome{ Outcome::Started };
+    // Wall-clock seconds it took.
     double seconds{ 0.0 };
+    // Games played.
     long long games{ 0 };
+    // Training samples consumed. Zero for a run that does not train.
     long long samples{ 0 };
 };
 
