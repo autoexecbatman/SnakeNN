@@ -294,7 +294,7 @@ def render(entries, source_label):
     documented = sum(1 for entry in entries if entry["documented"])
     with_usage = sum(1 for entry in entries if entry["usage"])
     parts = [
-        doc_page.head(f"{source_label} index", "files"),
+        doc_page.head(f"{source_label} index", "files", doc_page.source_stamp(Path("src"))),
         f"<h1>{html.escape(source_label)}</h1>",
         f'<p class="sub">{len(entries)} files. {documented} carry a documentation block, '
         f"{with_usage} show usage. Generated - regenerate rather than edit.</p>",

@@ -12,7 +12,7 @@ Usage:
 
     import doc_page
 
-    parts = [doc_page.head("src index", "files")]      # active tab: files | api
+    parts = [doc_page.head("src index", "files", stamp)]   # active tab: files | api
     parts.append("<p>whatever the page is</p>")
     parts.append(doc_page.foot())
     page = "".join(parts)
@@ -51,6 +51,22 @@ def anchor_exists(header_name):
 
 
 STYLE = """
+details.internal { margin: 18px 0 26px; padding-left: 14px; border-left: 2px solid var(--rule); }
+details.internal > summary { font-size: 13px; color: var(--dim); cursor: pointer;
+    list-style: none; padding: 4px 0; user-select: none; }
+details.internal > summary::-webkit-details-marker { display: none; }
+details.internal > summary::before { content: ""; display: inline-block;
+    width: 0; height: 0; margin-right: 8px; vertical-align: middle;
+    border-left: 5px solid var(--dim); border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent; transition: transform .12s; }
+details.internal[open] > summary::before { transform: rotate(90deg); }
+details.internal > summary:hover { color: var(--ink); }
+details.internal > .scroll { margin-top: 8px; }
+.fileblock { margin: 0 0 22px; padding: 14px 18px; background: var(--panel);
+    border-radius: 6px; font-size: 13px; line-height: 1.55; }
+.fileblock > *:first-child { margin-top: 0; }
+.fileblock > *:last-child { margin-bottom: 0; }
+.stamp { color: #7c8798; font-size: 11px; margin: 0 0 18px; font-family: ui-monospace, monospace; }
 :root{--ink:#1a1c1e;--dim:#5b6167;--rule:#d8dce0;--panel:#f5f6f8;--bad:#9a3324;
 --link:#1f5c8b;--bg:#ffffff;
 --code-bg:#1b1f24;--code-ink:#e3e8ee;--code-rule:#2c3239}
@@ -108,10 +124,10 @@ border-radius:.2rem;padding:0 .3rem}
 .decls td code{overflow-wrap:anywhere}
 td p,.side p{margin:0 0 .5rem}
 td p:last-child,.side p:last-child{margin-bottom:0}
-td pre,.side pre{margin:.5rem 0;padding:.6rem .85rem .6rem 2.15rem;
+td pre,.side pre,.fileblock pre{margin:.5rem 0;padding:.6rem .85rem .6rem 2.15rem;
 text-indent:-1.3rem;background:var(--code-bg);border:1px solid var(--code-rule);
 border-radius:.3rem;max-width:100%}
-td pre code,.side pre code{font-size:.68rem;line-height:1.5;color:var(--code-ink);
+td pre code,.side pre code,.fileblock pre code{font-size:.68rem;line-height:1.5;color:var(--code-ink);
 white-space:pre-wrap;overflow-wrap:break-word;tab-size:2}
 .jump{margin:1rem 0;padding:.75rem 1rem;background:var(--panel);border-radius:.35rem}
 .jump a{display:inline-block;margin:.15rem .5rem .15rem 0;font-size:.85rem;
@@ -228,17 +244,49 @@ def navigation(active):
     )
 
 
-def head(title, active):
+def source_stamp(source_directory):
+    """A short hash of every source file, with the time it was taken.
+
+    A generated page carries no mark of what it was built from, so one three edits
+    behind looks exactly as authoritative as a current one. Printing the digest on the
+    page turns "is this current" into a comparison anyone can make: regenerate, and if
+    the digest did not change, the sources did not either.
+
+    The hash covers file names, sizes and modification times rather than contents -
+    enough to catch an edit, and it does not read a hundred files to build a header.
+
+    Example:
+
+        source_stamp(Path("src"))
+        # 'a41c9f02 - 2026-08-21 21:58'
+
+    Args:
+        source_directory: the directory whose files the page was generated from.
+    """
+    import hashlib
+    from datetime import datetime
+
+    digest = hashlib.sha256()
+    # Sorted, so the digest does not depend on the order the filesystem returns.
+    for entry in sorted(source_directory.glob("*.*")):
+        stat = entry.stat()
+        digest.update(f"{entry.name}:{stat.st_size}:{int(stat.st_mtime)}".encode("utf-8"))
+    return f"{digest.hexdigest()[:8]} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+
+def head(title, active, stamp):
     """Everything above a page's own content, ending with the opening main tag.
 
     Example:
 
-        head("src index", "files").endswith("<main>")   # True
+        head("src index", "files", "a41c9f02 - 2026-08-21 21:58").endswith("<main>")   # True
 
     Args:
         title: what the browser tab says.
         active: which navigation entry to render as current.
+        stamp: the source digest to print, or empty to print none.
     """
+    banner = f'<p class="stamp">source {html.escape(stamp)}</p>' if stamp else ""
     return (
         "<!DOCTYPE html>"
         '<html lang="en"><head><meta charset="utf-8">'
@@ -247,6 +295,7 @@ def head(title, active):
         f"<style>{STYLE}</style></head><body>"
         f"{navigation(active)}"
         "<main>"
+        f"{banner}"
     )
 
 
