@@ -9,6 +9,21 @@
 namespace flags
 {
 
+bool parseOnOff(std::string_view flag, std::string_view text)
+{
+    if (text == "on")
+    {
+        return true;
+    }
+    if (text == "off")
+    {
+        return false;
+    }
+    // No lenient reading: a spelling resolved to false would run the opposite of what
+    // was asked, and nothing in the log would contradict the result.
+    throw std::invalid_argument(std::format("{} must be 'on' or 'off', got '{}'", flag, text));
+}
+
 int parseWholeInt(std::string_view flag, std::string_view text)
 {
     // The flag names the error; an empty one leaves the message pointing at nothing.

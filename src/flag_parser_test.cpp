@@ -431,6 +431,39 @@ void testParseUnitFloat()
     expectRateRejected("--exploration-epsilon", "inf");
 }
 
+// Expected values come from the contract: exactly "on" and exactly "off", and every
+// other spelling is a rejection rather than a silent false.
+void acceptsOnAndOff()
+{
+    expectEquals("parseOnOff on", 1, flags::parseOnOff("--skip-arms", "on") ? 1 : 0);
+    expectEquals("parseOnOff off", 0, flags::parseOnOff("--skip-arms", "off") ? 1 : 0);
+}
+
+// Each of these would otherwise resolve to false and run the opposite of what was asked.
+void rejectsEveryOtherSpelling()
+{
+    for (const std::string_view text : { "ON", "Off", "true", "false", "1", "0", "yes", "", " on" })
+    {
+        try
+        {
+            const bool value = flags::parseOnOff("--skip-arms", text);
+            std::cout << std::format("[FAIL] --skip-arms '{}': accepted, returned {}\n", text,
+                                     value ? "true" : "false");
+            failures++;
+        }
+        catch (const std::invalid_argument& error)
+        {
+            const std::string message = error.what();
+            if (message.find("--skip-arms") == std::string::npos)
+            {
+                std::cout << std::format("[FAIL] --skip-arms '{}': message omits the flag: {}\n",
+                                         text, message);
+                failures++;
+            }
+        }
+    }
+}
+
 int main()
 {
     testParseUnitFloat();
@@ -446,6 +479,8 @@ int main()
     splitsArgumentsIntoPairsInOrder();
     rejectsAFlagWithNoValue();
     rejectsSomethingThatIsNotAFlag();
+    acceptsOnAndOff();
+    rejectsEveryOtherSpelling();
 
     if (failures == 0)
     {

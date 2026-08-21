@@ -41,10 +41,21 @@ float parseUnitFloat(std::string_view flag, std::string_view text);
 // negative one; `value` is what the operator supplied.
 void requireAtLeast(std::string_view flag, int value, int minimum);
 
+// Exactly "on" or "off", as a bool.
+//
+//     settings.skip_arms = flags::parseOnOff("--skip-arms", entry.value);   // "on" -> true
+//
+// Anything else throws std::invalid_argument naming the flag and the text. There is no
+// lenient reading on purpose: a spelling that resolved to false would run the opposite
+// of what the operator asked for, and nothing in the log would contradict the result.
+bool parseOnOff(std::string_view flag, std::string_view text);
+
 // One flag and the value that followed it.
 struct FlagValue
 {
+    // The flag as written, including the leading "--".
     std::string_view flag;
+    // The argument that followed it, unparsed.
     std::string_view value;
 };
 
