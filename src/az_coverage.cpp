@@ -66,8 +66,6 @@ struct CoverageSettings
     // otherwise a weak checkpoint is measured on the short games it plays and a
     // strong one on crowded boards, and the difference is the population.
     std::string position_checkpoint;
-    // Swept rather than fixed: the floor is the thing under test here.
-    float epsilon{ 0.0f };
 };
 
 CoverageSettings parseSettings(std::span<const std::string> arguments)
@@ -115,10 +113,6 @@ CoverageSettings parseSettings(std::span<const std::string> arguments)
         {
             settings.position_checkpoint = std::string(entry.value);
         }
-        else if (entry.flag == "--epsilon")
-        {
-            settings.epsilon = std::stof(std::string(entry.value));
-        }
         else
         {
             throw std::invalid_argument(std::format("unknown flag {}", entry.flag));
@@ -134,10 +128,13 @@ CoverageSettings parseSettings(std::span<const std::string> arguments)
     return settings;
 }
 
-// Arms differ only in the noise fraction and the exploration constant, which are the two
-// things that can widen a root. Everything else is held fixed.
+// Arms differ only in the noise fraction, the exploration constant and the exploration
+// floor, which are the three things that can widen a root. Everything else is held fixed.
+//
+// All three are parameters rather than fields of the settings the arms share, so a
+// treatment cannot reach the control or the trajectory that generates the positions.
 MonteCarloSearch::Config armConfig(const CoverageSettings& settings, float noise_fraction,
-                                   float exploration)
+                                   float exploration, float exploration_epsilon)
 {
     MonteCarloSearch::Config config;
     config.simulations = settings.simulations;
@@ -149,7 +146,7 @@ MonteCarloSearch::Config armConfig(const CoverageSettings& settings, float noise
     config.trap_report = az::TRAP_REPORT;
     config.average_edges = false;
     config.normalize_values = az::NORMALIZE_VALUES;
-    config.exploration_epsilon = settings.epsilon;
+    config.exploration_epsilon = exploration_epsilon;
     config.death_cap = false;
     config.death_cap_threshold = az::DEATH_CAP_THRESHOLD;
     config.alias_report = false;
@@ -168,7 +165,9 @@ std::vector<SnakeEnv> collectPositions(AlphaZeroNet& network, torch::Device devi
                                        const CoverageSettings& settings, int step_limit)
 {
     NetworkEvaluator evaluator(network, device);
-    MonteCarloSearch search(evaluator, armConfig(settings, 0.0f, az::EXPLORATION));
+    // Floor off: the positions are the population every arm is measured on, so a floor
+    // here would move what is being measured along with the thing measuring it.
+    MonteCarloSearch search(evaluator, armConfig(settings, 0.0f, az::EXPLORATION, 0.0f));
 
     std::vector<SnakeEnv> positions;
     for (int index = 0; index < settings.games; index++)
@@ -219,11 +218,12 @@ struct ArmResult
 // Searches every position without playing a move, so the population is identical across
 // arms by construction.
 ArmResult measureArm(AlphaZeroNet& network, torch::Device device, const CoverageSettings& settings,
-                     float noise_fraction, float exploration,
+                     float noise_fraction, float exploration, float exploration_epsilon,
                      const std::vector<SnakeEnv>& positions)
 {
     NetworkEvaluator evaluator(network, device);
-    MonteCarloSearch search(evaluator, armConfig(settings, noise_fraction, exploration));
+    MonteCarloSearch search(evaluator,
+                            armConfig(settings, noise_fraction, exploration, exploration_epsilon));
 
     ArmResult arm;
     for (const SnakeEnv& position : positions)
@@ -457,11 +457,11 @@ int main(int argc, char** argv)
     // (-VALUE_SCALE, VALUE_SCALE), so 0.5 - the paper's number, chosen for values in
     // [-1, 1] - is the suspect. If coverage climbs with it, the constant is the cause.
     const ArmResult baseline =
-        measureArm(network, device, settings, 0.0f, az::EXPLORATION, positions);
+        measureArm(network, device, settings, 0.0f, az::EXPLORATION, 0.0f, positions);
     report("NOISE OFF, c_puct 0.5 - evaluation conditions", baseline);
 
-    const ArmResult noisy =
-        measureArm(network, device, settings, az::ROOT_NOISE_FRACTION, az::EXPLORATION, positions);
+    const ArmResult noisy = measureArm(network, device, settings, az::ROOT_NOISE_FRACTION,
+                                       az::EXPLORATION, 0.0f, positions);
     report(
         std::format("NOISE ON at {}, c_puct 0.5 - self-play conditions", az::ROOT_NOISE_FRACTION),
         noisy);
@@ -471,10 +471,8 @@ int main(int argc, char** argv)
     // actions, because every term it appears in multiplies the prior.
     for (const float epsilon : { 0.05f, 0.1f, 0.3f })
     {
-        CoverageSettings floored = settings;
-        floored.epsilon = epsilon;
         const ArmResult swept =
-            measureArm(network, device, floored, 0.0f, az::EXPLORATION, positions);
+            measureArm(network, device, settings, 0.0f, az::EXPLORATION, epsilon, positions);
         report(std::format("NOISE OFF, exploration floor epsilon {}", epsilon), swept);
     }
 

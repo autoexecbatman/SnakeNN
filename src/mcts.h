@@ -89,10 +89,11 @@ public:
         // before comparing it with the prior term, so c_puct means what it does in the
         // paper. Backup is unaffected.
         bool normalize_values{ false };
-        // How often selection ignores its scores and picks uniformly, as a rate before
-        // the 1/log decay in exploration_floor.h. Zero is off. Unlike every term of the
-        // PUCT exploration half, this does not multiply the prior, which is what lets it
-        // survive a policy that has made up its mind.
+        // How often root selection ignores its scores and picks uniformly, as a rate
+        // before the 1/log decay in exploration_floor.h. Zero is off. Unlike every term
+        // of the PUCT exploration half, this does not multiply the prior, which is what
+        // lets it survive a policy that has made up its mind. Applied at the root and
+        // nowhere below it - see descentMixWeight for what happened when it was not.
         float exploration_epsilon{ 0.0f };
         // Dirichlet noise on root priors; set the fraction to zero when evaluating.
         float root_noise_fraction{ 0.0f };

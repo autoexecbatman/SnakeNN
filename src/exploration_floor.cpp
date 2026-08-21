@@ -1,4 +1,4 @@
-// Implementation of explorationMixWeight. What the floor is for, and why it is additive
+﻿// Implementation of explorationMixWeight. What the floor is for, and why it is additive
 // rather than a change to the prior, are in exploration_floor.h.
 
 #include <algorithm>
@@ -42,4 +42,23 @@ float explorationMixWeight(float epsilon, int action_count, int total_visits)
                          std::log(static_cast<float>(total_visits) + 1.0f);
     // The formula exceeds one at small visit counts, where it means "always explore".
     return std::min(weight, 1.0f);
+}
+
+float descentMixWeight(float epsilon, int action_count, int node_visits, int depth)
+{
+    if (depth < 0)
+    {
+        throw std::invalid_argument("a depth cannot be negative");
+    }
+
+    // Below the root the weight is read from a node with almost no visits, where the
+    // 1/log decay has not started: one visit gives 0.43, and a descent that random-walks
+    // two steps in five is not a lookahead. The label the floor exists for is read at the
+    // root, so that is where the coverage has to be and the only place it is bought.
+    if (depth > 0)
+    {
+        return 0.0f;
+    }
+
+    return explorationMixWeight(epsilon, action_count, node_visits);
 }

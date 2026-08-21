@@ -33,3 +33,23 @@
 // Throws std::invalid_argument on a negative epsilon, an action count below 1, or a
 // negative visit count.
 float explorationMixWeight(float epsilon, int action_count, int total_visits);
+
+// The mix weight for one node of a descent: the floor applies at the root and nowhere
+// below it.
+//
+// The weight above decays in the node's own visit count, so it is 0.057 at a root with
+// 200 visits and 0.433 at a node with one - and 200 simulations leave most of the tree
+// at one visit. A descent that goes uniform at two of every five deep steps is a random
+// walk, and it measures as one: epsilon 0.1 at every node took self-play from 97.5
+// apples to 3.8 with no wins, while the labels the floor was built for did arrive, 126
+// of 128 per batch. The root is where the training label is read, so it is the only
+// place the coverage has to exist.
+//
+// Usage, from the descent in mcts.cpp:
+//
+//     const float weight = descentMixWeight(0.1f, 3, node.visit_count, depth);
+//     // depth 0, 200 visits -> 0.0566;  any depth above 0 -> 0.0 exactly
+//
+// Throws std::invalid_argument on a negative depth, and on whatever
+// explorationMixWeight refuses.
+float descentMixWeight(float epsilon, int action_count, int node_visits, int depth);

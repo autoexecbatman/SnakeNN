@@ -127,6 +127,63 @@ void refusals()
 
 }  // namespace
 
+void expectDescentRefused(const std::string& what, float epsilon, int action_count, int node_visits,
+                          int depth)
+{
+    try
+    {
+        (void)descentMixWeight(epsilon, action_count, node_visits, depth);
+        std::cout << std::format("[FAIL] {}: was accepted\n", what);
+        failures++;
+    }
+    catch (const std::invalid_argument&)
+    {
+    }
+    catch (const std::exception& error)
+    {
+        std::cout << std::format("[FAIL] {}: wrong exception: {}\n", what, error.what());
+        failures++;
+    }
+}
+
+// The root is the only place the floor fires. Every check below states the claim against
+// the alternative it has to beat: a rule that fired everywhere, and a rule that fired
+// nowhere, both satisfy "returns something in [0, 1]".
+void theFloorFiresAtTheRootAndNowhereBelow()
+{
+    // 0.1 * 3 / log(201) = 0.3 / 5.303305 = 0.056568, the same number the mixture gives.
+    expectNear("the root takes the full mix weight", descentMixWeight(0.1f, 3, 200, 0), 0.056568f,
+               1e-5f);
+
+    // The sharp case. One visit would give 0.3 / log(2) = 0.432809, and 200 simulations
+    // leave most of the tree at one visit - that is the weight that made a random walk.
+    expectNear("one level down takes nothing", descentMixWeight(0.1f, 3, 1, 1), 0.0f, 0.0f);
+
+    // Sharper still: no visits at all is where the mixture returns 1.0 outright, so a
+    // rule that forgot the depth would explore every deep step of every descent.
+    expectNear("an unvisited node below the root takes nothing", descentMixWeight(0.1f, 3, 0, 1),
+               0.0f, 0.0f);
+    expectNear("depth stays off however deep", descentMixWeight(1.0f, 3, 0, 7), 0.0f, 0.0f);
+
+    // And the root is not a special case of "unvisited": at depth 0 with no visits the
+    // mixture's own answer stands.
+    expectNear("an unvisited root explores outright", descentMixWeight(0.1f, 3, 0, 0), 1.0f, 0.0f);
+
+    // Off is off at the root too, so a checkpoint trained without the floor plays as it
+    // did rather than differing only below the root.
+    expectNear("zero epsilon is off at the root", descentMixWeight(0.0f, 3, 0, 0), 0.0f, 0.0f);
+}
+
+void theDescentRefusesWhatTheMixtureRefuses()
+{
+    expectDescentRefused("a negative depth", 0.1f, 3, 200, -1);
+    // Delegated, and it must still fire at depth 0 - a guard skipped before the depth
+    // test would hand a negative epsilon to the search unchecked.
+    expectDescentRefused("a negative epsilon at the root", -0.1f, 3, 200, 0);
+    expectDescentRefused("no actions at the root", 0.1f, 0, 200, 0);
+    expectDescentRefused("a negative visit count at the root", 0.1f, 3, -1, 0);
+}
+
 int main()
 {
     theWorkedExample();
@@ -137,6 +194,8 @@ int main()
     theWeightScalesWithTheActionCount();
     theWeightIsLinearInEpsilon();
     refusals();
+    theFloorFiresAtTheRootAndNowhereBelow();
+    theDescentRefusesWhatTheMixtureRefuses();
 
     if (failures > 0)
     {

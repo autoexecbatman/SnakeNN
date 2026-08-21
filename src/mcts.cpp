@@ -440,15 +440,15 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
             while (tree.nodes[node_index].first_child.has_value() &&
                    !tree.nodes[node_index].terminal)
             {
-                // The additive floor, bypassing the argmax rather than feeding it. Every
+                // The additive floor, bypassing the argmax rather than feeding it: every
                 // term of PUCT's exploration half multiplies the prior, so a prior near
-                // zero cannot be rescued from inside the comparison - flooring the prior
-                // there still leaves the value term deciding. This is Xiao et al. 2019's
-                // uniform mixture in the shape an argmax search can take.
+                // zero cannot be rescued from inside the comparison. Root only, and the
+                // path is the root plus every node stepped through, so its size less one
+                // is this node's depth.
                 int action = 0;
-                const float mix_weight =
-                    explorationMixWeight(config_.exploration_epsilon, SnakeEnv::ACTION_COUNT,
-                                         tree.nodes[node_index].visit_count);
+                const float mix_weight = descentMixWeight(
+                    config_.exploration_epsilon, SnakeEnv::ACTION_COUNT,
+                    tree.nodes[node_index].visit_count, static_cast<int>(tree.path.size()) - 1);
                 if (mix_weight > 0.0f && uniform_unit_(rng_) < mix_weight)
                 {
                     action = uniform_action_(rng_);

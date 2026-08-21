@@ -72,7 +72,16 @@ $mutants = @(
     # The guards. Each refuses an argument that would otherwise produce a plausible number.
     @{ name = "accepts_negative_epsilon"; from = "    if (!(epsilon >= 0.0f))"; to = "    if (false)" },
     @{ name = "accepts_zero_actions"; from = "    if (action_count < 1)"; to = "    if (false)" },
-    @{ name = "accepts_negative_visits"; from = "    if (total_visits < 0)"; to = "    if (false)" }
+    @{ name = "accepts_negative_visits"; from = "    if (total_visits < 0)"; to = "    if (false)" },
+
+    # descentMixWeight, whose whole content is where the floor is allowed to fire. Below
+    # the root the weight is read from a node with one visit or none, where the 1/log decay
+    # has not started - measured, epsilon 0.1 at every node took self-play from 97.5 apples
+    # to 3.8 with no wins.
+    @{ name = "floor_fires_at_every_depth"; from = "    if (depth > 0)"; to = "    if (false)" },
+    @{ name = "floor_off_only_one_level_down"; from = "    if (depth > 0)"; to = "    if (depth == 1)" },
+    @{ name = "floor_off_at_the_root_too"; from = "    if (depth > 0)"; to = "    if (depth >= 0)" },
+    @{ name = "accepts_negative_depth"; from = "    if (depth < 0)"; to = "    if (false)" }
 )
 
 $killed = 0
