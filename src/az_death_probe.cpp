@@ -32,8 +32,8 @@
 //
 // Usage:
 //
-//     AlphaZeroDeathProbe.exe --checkpoint az10_death368.pt --board 10 \
-//       --games 32 --simulations 200 --seed-offset 0 --threshold 0.5
+//     AlphaZeroDeathProbe.exe --checkpoint az10_death368.pt --board 10 --games 32
+//        --simulations 200 --seed-offset 0 --threshold 0.5
 //
 //     # --games 32        held-out games; every move of every position contributes a pair
 //     # --simulations 200 search budget per move, matched to evaluation
@@ -65,6 +65,7 @@
 #include "mcts.h"
 #include "network_evaluator.h"
 #include "network_setup.h"
+#include "search_defaults.h"
 #include "seed_policy.h"
 #include "snake_env.h"
 
@@ -273,24 +274,16 @@ ProbeSettings parseSettings(std::span<const std::string> arguments)
 // no root noise, so what is scored is the agent and not the exploration policy.
 MonteCarloSearch::Config searchConfig(const ProbeSettings& settings)
 {
-    MonteCarloSearch::Config config;
+    MonteCarloSearch::Config config = az::paperSearchDefaults();
     config.simulations = settings.simulations;
-    config.exploration = az::EXPLORATION;
-    config.discount = az::DISCOUNT;
-    config.step_reward = az::STEP_REWARD;
-    config.steps_tiebreak_margin = az::STEPS_TIEBREAK_MARGIN;
     config.trap_guard = false;
-    config.trap_report = az::TRAP_REPORT;
     config.average_edges = false;
-    config.normalize_values = az::NORMALIZE_VALUES;
     config.exploration_epsilon = az::EXPLORATION_EPSILON;
     // Off on purpose: the cap changes which move is played, and a probe that let it
     // fire would score the head against a search the head had already steered.
     config.death_cap = false;
-    config.death_cap_threshold = az::DEATH_CAP_THRESHOLD;
     config.alias_report = false;
     config.root_noise_fraction = 0.0f;
-    config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
     config.seed = seeds::evaluationGameSeed(settings.seed_offset, 0);
     return config;
 }

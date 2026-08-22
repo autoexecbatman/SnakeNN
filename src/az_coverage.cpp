@@ -39,15 +39,20 @@
 // evaluation does not, and the exploration floor, which makes root selection ignore its
 // own scores a fixed share of the time.
 //
-// The positions are fixed before any arm runs. One trajectory is played, every root
-// position along it is stored, and every arm searches those same positions without playing
-// a move. Arms that each played their own games would be scored on different populations,
-// because a change to the search changes which move is played.
+// It freezes the board. The games are played once, every root position along them is
+// saved, and every arm then searches that same frozen set. No arm plays a move.
+//
+// Without that, a change to the search changes which moves get played, so each arm ends up
+// looking at different boards. A difference in the numbers could then be the treatment or
+// could be the boards, and nothing distinguishes them.
+//
+// One run measures one checkpoint. To compare checkpoints, run it once per checkpoint with
+// the same --position-checkpoint, so all of them are scored on the same boards.
 //
 // Usage:
 //
-//     AlphaZeroCoverage.exe --checkpoint az10_long308.pt --board 10 \
-//       --games 2 --simulations 200 --max-positions 300 --seed-offset 0
+//     AlphaZeroCoverage.exe --checkpoint az10_long308.pt --board 10 --games 2
+//        --simulations 200 --max-positions 300 --seed-offset 0
 //
 //     # --games 2          games played once, to generate the positions
 //     # --max-positions    cap, sampled evenly along the trajectory; 0 means all
@@ -82,6 +87,7 @@
 #include "mcts.h"
 #include "network_evaluator.h"
 #include "network_setup.h"
+#include "search_defaults.h"
 #include "seed_policy.h"
 #include "snake_env.h"
 
@@ -320,30 +326,53 @@ CoverageSettings parseSettings(std::span<const std::string> arguments)
     return settings;
 }
 
-// Arms differ only in the noise fraction, the exploration constant and the exploration
-// floor, which are the three things that can widen a root. Everything else is held fixed.
+// The search one arm of the sweep runs. An arm is one treatment in the coverage
+// experiment, and the three parameters are the only things that may differ between arms.
 //
-// All three are parameters rather than fields of the settings the arms share, so a
-// treatment cannot reach the control or the trajectory that generates the positions.
+// They are the three that can widen a root. The root is the position being decided, and
+// its children are the three legal actions; a search spends its simulations descending
+// from it, each descent crediting a visit to whichever action it starts down. A wide root
+// is one where those visits are spread over several actions, a narrow one where nearly all
+// of them pour down a single action - measured at 1.13 of 3 on a trained network, because
+// PUCT weighs exploration by the prior and a confident prior leaves the other two actions
+// nothing. That matters here because a death-risk label is only trainable at a position
+// where every root action was visited, so root width is what this program measures.
+//
+// Usage - the control and the two treatments, exactly as runArms calls them:
+//
+//     armConfig(settings, 0.0f, az::EXPLORATION, 0.0f);
+//     armConfig(settings, az::ROOT_NOISE_FRACTION, az::EXPLORATION, 0.0f);
+//     armConfig(settings, 0.0f, az::EXPLORATION, 0.1f);
+//
+//     noise_fraction       Dirichlet noise mixed into the root prior, 0 to disable
+//     exploration          c_puct, the constant PUCT weighs the prior by
+//     exploration_epsilon  additive uniform floor on root selection, 0 to disable
+//
+// Why the three are parameters rather than fields of the shared settings: a treatment must
+// not be able to reach the control, nor the trajectory that generated the positions. Being
+// arguments makes that structural instead of a rule someone has to remember.
+//
+// Why the controls are listed here rather than left to be looked up: this is an
+// instrument, and a reader comparing arms should not need a second file to learn what was
+// held fixed. Set below - simulations, trap guard off, edge averaging off, death cap off,
+// alias reporting off, and the seed. From az::paperSearchDefaults() - discount 0.98, step
+// reward -0.02, steps tie-break margin 0.05, trap reporting on, value normalisation off,
+// death-cap threshold 0.5, root noise alpha 0.3. Between them those two lists account for
+// every field of Config; when that stops being true, an arm is running a search nobody
+// described.
 MonteCarloSearch::Config armConfig(const CoverageSettings& settings, float noise_fraction,
                                    float exploration, float exploration_epsilon)
 {
-    MonteCarloSearch::Config config;
+    MonteCarloSearch::Config config = az::paperSearchDefaults();
     config.simulations = settings.simulations;
+    // Swept across arms, so it overrides the shared default rather than taking it.
     config.exploration = exploration;
-    config.discount = az::DISCOUNT;
-    config.step_reward = az::STEP_REWARD;
-    config.steps_tiebreak_margin = az::STEPS_TIEBREAK_MARGIN;
     config.trap_guard = false;
-    config.trap_report = az::TRAP_REPORT;
     config.average_edges = false;
-    config.normalize_values = az::NORMALIZE_VALUES;
     config.exploration_epsilon = exploration_epsilon;
     config.death_cap = false;
-    config.death_cap_threshold = az::DEATH_CAP_THRESHOLD;
     config.alias_report = false;
     config.root_noise_fraction = noise_fraction;
-    config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
     // Fixed across arms so the only difference is the noise fraction. The stream still
     // advances differently once noise draws from it, which is why the arms are compared
     // on coverage rates rather than position by position.

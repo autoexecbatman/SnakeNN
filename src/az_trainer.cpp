@@ -26,10 +26,7 @@
 
 #include <torch/torch.h>
 
-#include <process.h>
-#include <algorithm>
 #include <chrono>
-#include <deque>
 #include <format>
 #include <fstream>
 #include <iostream>
@@ -39,13 +36,17 @@
 
 #include "az_network.h"
 #include "az_parameters.h"
+#include "iteration_report.h"
 #include "network_evaluator.h"
 #include "network_setup.h"
+#include "progress_printer.h"
+#include "replay_window.h"
 #include "run_ledger.h"
+#include "search_defaults.h"
 #include "seed_policy.h"
 #include "selfplay.h"
-#include "snake_env.h"
 #include "trainer_options.h"
+#include "training_batch.h"
 
 namespace
 {
@@ -65,6 +66,123 @@ void requireWritableCheckpoint(const std::string& path)
         throw std::runtime_error(
             std::format("cannot write the checkpoint '{}' - does its directory exist?", path));
     }
+}
+
+// The run's parameters, printed before any work starts.
+//
+//     printBanner(settings, step_limit, compute.cuda);
+//
+// The paper's own figure is printed beside ours wherever the two can differ, so a
+// deviation shows up in the log of every run rather than only in the source.
+void printBanner(const trainer::Settings& settings, int step_limit, bool cuda)
+{
+    std::cout << "=== AlphaZero Snake ===" << std::endl;
+    std::cout << std::format("board {}x{}  step limit {}  simulations {}\n", settings.board,
+                             settings.board, step_limit, settings.simulations);
+    std::cout << std::format("network {}x{}  device {}\n", settings.channels, settings.blocks,
+                             cuda ? "cuda" : "cpu");
+    std::cout << std::format("iterations {}..{} x {} games  seed {}\n", settings.start_iteration,
+                             settings.lastIteration(), settings.games_per_iteration, settings.seed);
+    // The quantity comparable with the paper's 3,000. --batches alone says nothing about
+    // how many games those batches were spread over.
+    std::cout << std::format("gradient {} batches of {} = {} samples per game (the paper: 3000)\n",
+                             settings.batches_per_iteration, settings.batch_size,
+                             settings.samplesPerGame());
+    // A deviation from the paper that changes what the value head is trained on, so a run
+    // that did not print it could not be told apart from one before it.
+    std::cout << std::format("timeout reward {} (the paper: 0, a timeout was free)\n",
+                             az::TIMEOUT_REWARD);
+    std::cout << std::format("step reward {} per tick, steps head weight {}, tie-break {}\n\n",
+                             az::STEP_REWARD, az::STEPS_LOSS_WEIGHT, az::STEPS_TIEBREAK_MARGIN);
+}
+
+// The search self-play runs with: the paper's constants and this run's flags.
+//
+//     SelfPlay play(evaluator, buildSearchConfig(settings), buildPlayConfig(settings, limit));
+//
+// Every field is set explicitly, including the ones whose Config default already matches.
+// A field only one caller sets is how self-play and evaluation come to search differently,
+// and that difference appears in no log.
+MonteCarloSearch::Config buildSearchConfig(const trainer::Settings& settings)
+{
+    MonteCarloSearch::Config config = az::paperSearchDefaults();
+    config.simulations = settings.simulations;
+    config.trap_guard = az::TRAP_GUARD;
+    config.average_edges = az::AVERAGE_EDGES;
+    // From the flag, which defaults to the constant. The ledger records the command line,
+    // so a run that set this is distinguishable from one that did not - which a
+    // compiled-in constant is not.
+    config.exploration_epsilon = settings.exploration_epsilon;
+    config.death_cap = az::DEATH_CAP;
+    config.root_noise_fraction = az::ROOT_NOISE_FRACTION;
+    config.seed = settings.seed;
+    return config;
+}
+
+// How self-play plays its games: how many at once, how long each may run, and how long
+// moves are sampled before the policy turns greedy.
+//
+//     SelfPlay::Config play_config = buildPlayConfig(settings, settings.stepLimit());
+//
+// Sampling covers the first half of the board's cells, so early moves vary and the data
+// reaches positions the greedy policy would never choose.
+SelfPlay::Config buildPlayConfig(const trainer::Settings& settings, int step_limit)
+{
+    SelfPlay::Config config;
+    config.games_in_parallel = settings.games_per_iteration;
+    config.step_limit = step_limit;
+    config.discount = az::DISCOUNT;
+    config.timeout_reward = az::TIMEOUT_REWARD;
+    config.step_reward = az::STEP_REWARD;
+    config.temperature = az::VISIT_TEMPERATURE;
+    config.temperature_moves = settings.cellCount() / 2;
+    config.seed = settings.seed;
+    return config;
+}
+
+// Loads --resume into `network`, or leaves it at its initial weights when no checkpoint
+// was named.
+//
+//     resumeIfRequested(network, settings);   // prints "resumed from <path>" when it does
+//
+// Resuming is how the curriculum moves up a board size: the heads pool to a fixed grid, so
+// no weight depends on board width and a run at 6x6 loads straight into a run at 10x10.
+// Widening is what lets a checkpoint saved before the clock plane resume into a 9-plane
+// network with the new channel zeroed, a fine-tune rather than a retrain.
+//
+// Throws std::runtime_error naming the path when the file cannot be read.
+void resumeIfRequested(AlphaZeroNet& network, const trainer::Settings& settings)
+{
+    if (settings.resume.empty())
+    {
+        return;
+    }
+    loadCheckpoint(network, settings.resume, "");
+    std::cout << "resumed from " << settings.resume << std::endl;
+}
+
+// Plays one iteration's games, filling `fresh` with training records and `summaries` with
+// outcomes.
+//
+//     playOneBatch(play, settings, iteration, fresh, summaries);
+//
+// The seed is derived from the absolute iteration, so a resumed run continues the sequence
+// instead of replaying it. Both ends of the block are checked against the reserved
+// evaluation band before a single game is played, because a training seed that strays into
+// it silently un-holds-out the evaluation set.
+void playOneBatch(SelfPlay& play, const trainer::Settings& settings, int iteration,
+                  std::vector<TrainingRecord>& fresh, std::vector<GameSummary>& summaries)
+{
+    const unsigned int batch_seed = seeds::trainingGameSeed(settings.seed, iteration, 0);
+    seeds::requireTrainingSeed(batch_seed);
+    seeds::requireTrainingSeed(
+        seeds::trainingGameSeed(settings.seed, iteration, settings.games_per_iteration - 1));
+    play.playBatch(settings.board, settings.board, batch_seed, fresh, summaries);
+
+    // parseArguments refuses --games below 1, so an empty batch means playBatch returned
+    // nothing for a batch it was given - and the summary line divides by this count.
+    TORCH_CHECK(!summaries.empty(), "self-play returned no games for a batch of ",
+                settings.games_per_iteration);
 }
 
 }  // namespace
@@ -90,377 +208,89 @@ int main(int argc, char** argv)
     const int step_limit = settings.stepLimit();
     torch::manual_seed(settings.seed);
 
-    // Opened before any work, so a run that is killed leaves a started row and no
-    // completion - the only way a killed process records what happened to it.
-    ledger::Entry run{ ledger::makeRunId(ledger::utcNow(), static_cast<unsigned int>(_getpid())),
-                       ledger::utcNow(),
-                       ledger::Kind::Training,
-                       ledger::formatCommand(std::vector<std::string>(argv + 1, argv + argc)),
-                       ledger::Outcome::Started,
-                       0.0,
-                       0,
-                       0 };
-    ledger::append(settings.ledger_path, run);
+    ledger::Entry run = ledger::openRun(argc, argv, ledger::Kind::Training, settings.ledger_path);
 
     const Compute compute = chooseDevice();
-    torch::Device device = compute.device;
-    const bool cuda = compute.cuda;
-
-    std::cout << "=== AlphaZero Snake ===" << std::endl;
-    std::cout << std::format("board {}x{}  step limit {}  simulations {}\n", settings.board,
-                             settings.board, step_limit, settings.simulations);
-    std::cout << std::format("network {}x{}  device {}\n", settings.channels, settings.blocks,
-                             cuda ? "cuda" : "cpu");
-    std::cout << std::format("iterations {}..{} x {} games  seed {}\n", settings.start_iteration,
-                             settings.lastIteration(), settings.games_per_iteration, settings.seed);
-    // Printed because it is the quantity comparable with the paper's 3,000, and
-    // --batches on its own is not - it says nothing about how many games those
-    // batches were spread over.
-    std::cout << std::format("gradient {} batches of {} = {} samples per game (the paper: 3000)\n",
-                             settings.batches_per_iteration, settings.batch_size,
-                             settings.samplesPerGame());
-    // A deviation from the paper that changes what the value head is trained on,
-    // so a run that did not print it could not be told apart from one before it.
-    std::cout << std::format("timeout reward {} (the paper: 0, a timeout was free)\n",
-                             az::TIMEOUT_REWARD);
-    std::cout << std::format("step reward {} per tick, steps head weight {}, tie-break {}\n\n",
-                             az::STEP_REWARD, az::STEPS_LOSS_WEIGHT, az::STEPS_TIEBREAK_MARGIN);
+    printBanner(settings, step_limit, compute.cuda);
 
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
-
-    // Resuming is how the curriculum moves up a board size: the heads pool to a
-    // fixed grid, so nothing in the network depends on board width, and a run at
-    // 6x6 loads straight into a run at 10x10.
-    if (!settings.resume.empty())
+    try
     {
-        try
-        {
-            // Widening is what lets a checkpoint saved before the clock plane resume
-            // into a 9-plane network with the new channel zeroed - a fine-tune from
-            // where it left off rather than a retrain.
-            loadCheckpoint(network, settings.resume, "");
-            std::cout << "resumed from " << settings.resume << std::endl;
-        }
-        catch (const std::exception& error)
-        {
-            std::cerr << error.what() << std::endl;
-            run.outcome = ledger::Outcome::Failed;
-            ledger::append(settings.ledger_path, run);
-            return 1;
-        }
+        resumeIfRequested(network, settings);
     }
-    network->to(device);
+    catch (const std::exception& error)
+    {
+        std::cerr << error.what() << std::endl;
+        run.outcome = ledger::Outcome::Failed;
+        ledger::append(settings.ledger_path, run);
+        return 1;
+    }
+    network->to(compute.device);
 
-    NetworkEvaluator evaluator(network, device);
+    NetworkEvaluator evaluator(network, compute.device);
     torch::optim::Adam optimizer(network->parameters(),
                                  torch::optim::AdamOptions(az::LEARNING_RATE));
-
-    MonteCarloSearch::Config search_config;
-    search_config.simulations = settings.simulations;
-    search_config.exploration = az::EXPLORATION;
-    search_config.discount = az::DISCOUNT;
-    search_config.step_reward = az::STEP_REWARD;
-    search_config.steps_tiebreak_margin = az::STEPS_TIEBREAK_MARGIN;
-    search_config.trap_guard = az::TRAP_GUARD;
-    search_config.trap_report = az::TRAP_REPORT;
-    // Set explicitly rather than left to the Config default, which happens to match.
-    // Self-play and evaluation searching differently is a difference no log records,
-    // and a constant only one of them reads is how that arrives.
-    search_config.average_edges = az::AVERAGE_EDGES;
-    // Set here even though the default matches: a field only some callers set is how
-    // self-play and evaluation come to search differently.
-    search_config.normalize_values = az::NORMALIZE_VALUES;
-    // From the flag, which defaults to the constant. The ledger records the command
-    // line, so a run that set this is distinguishable from one that did not - which a
-    // compiled-in constant is not.
-    search_config.exploration_epsilon = settings.exploration_epsilon;
-    search_config.death_cap = az::DEATH_CAP;
-    search_config.death_cap_threshold = az::DEATH_CAP_THRESHOLD;
-    search_config.root_noise_fraction = az::ROOT_NOISE_FRACTION;
-    search_config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
-    search_config.seed = settings.seed;
-
-    SelfPlay::Config play_config;
-    play_config.games_in_parallel = settings.games_per_iteration;
-    play_config.step_limit = step_limit;
-    play_config.discount = az::DISCOUNT;
-    play_config.timeout_reward = az::TIMEOUT_REWARD;
-    play_config.step_reward = az::STEP_REWARD;
-    play_config.temperature = az::VISIT_TEMPERATURE;
-    play_config.temperature_moves = settings.cellCount() / 2;
-    play_config.seed = settings.seed;
-
-    SelfPlay play(evaluator, search_config, play_config);
+    SelfPlay play(evaluator, buildSearchConfig(settings), buildPlayConfig(settings, step_limit));
 
     const int first_iteration = settings.start_iteration;
     const int last_iteration = settings.lastIteration();
 
-    // Throttled so drawing never becomes the bottleneck it is reporting on, and
-    // the length of the last line drawn is kept so the next write can wipe
-    // exactly it. A fixed-width wipe left the tail of anything longer on screen.
-    auto last_drawn = std::chrono::high_resolution_clock::now();
-    int current_iteration = 0;
-    long long evaluations_at_iteration_start = 0;
-    size_t drawn_length = 0;
-    play.setProgressCallback(
-        [&](const SelfPlay::Progress& progress)
-        {
-            auto now = std::chrono::high_resolution_clock::now();
-            if (std::chrono::duration<double>(now - last_drawn).count() < 0.25)
-            {
-                return;
-            }
-            last_drawn = now;
+    ProgressPrinter printer([&evaluator] { return evaluator.evaluations(); }, step_limit,
+                            last_iteration);
+    play.setProgressCallback([&](const SelfPlay::Progress& progress) { printer.draw(progress); });
 
-            trainer::ProgressSnapshot snapshot;
-            snapshot.games_total = progress.games_total;
-            snapshot.games_finished = progress.games_finished;
-            snapshot.moves_played = progress.moves_played;
-            snapshot.evaluations = evaluator.evaluations() - evaluations_at_iteration_start;
-            snapshot.step_limit = step_limit;
-            snapshot.elapsed_seconds = progress.elapsed_seconds;
-
-            const std::string bar =
-                trainer::formatProgressBar(current_iteration, last_iteration, snapshot);
-            std::cout << "\r" << bar;
-            if (bar.size() < drawn_length)
-            {
-                std::cout << std::string(drawn_length - bar.size(), ' ');
-            }
-            drawn_length = bar.size();
-            std::cout << std::flush;
-        });
-
-    std::deque<TrainingRecord> replay;
-    size_t replay_bytes_used = 0;
+    ReplayWindow replay(settings.replay_bytes);
+    BatchBuffers buffers = makeBatchBuffers(settings);
     const int foods_to_win = settings.foodsToWin();
 
-    // Counted rather than derived from the settings: a run reports what it did, not
-    // what it was asked to do.
+    // Counted rather than derived from the settings: a run reports what it did, not what it
+    // was asked to do.
     long long games_played_total = 0;
     long long samples_trained_total = 0;
     const auto run_started = std::chrono::high_resolution_clock::now();
 
     for (int iteration = first_iteration; iteration <= last_iteration; iteration++)
     {
-        auto started = std::chrono::high_resolution_clock::now();
-        long long evaluations_before = evaluator.evaluations();
-        current_iteration = iteration;
-        evaluations_at_iteration_start = evaluations_before;
+        const auto started = std::chrono::high_resolution_clock::now();
+        const long long evaluations_before = evaluator.evaluations();
+        printer.startIteration(iteration, evaluations_before);
 
         std::vector<TrainingRecord> fresh;
         std::vector<GameSummary> summaries;
         network->eval();
-        // Absolute iteration, so a resumed run continues the seed sequence
-        // instead of replaying it, and checked against the reserved evaluation
-        // range before a single game is played.
-        const unsigned int batch_seed = seeds::trainingGameSeed(settings.seed, iteration, 0);
-        seeds::requireTrainingSeed(batch_seed);
-        seeds::requireTrainingSeed(
-            seeds::trainingGameSeed(settings.seed, iteration, settings.games_per_iteration - 1));
-        play.playBatch(settings.board, settings.board, batch_seed, fresh, summaries);
+        playOneBatch(play, settings, iteration, fresh, summaries);
 
-        // parseArguments refuses --games below 1, so an empty batch means
-        // playBatch returned nothing for a batch it was given - and the summary
-        // line below divides by this count.
-        //
-        // TORCH_CHECK rather than assert, and the distinction is not stylistic:
-        // this file links LibTorch, so a debug build of it cannot run at all -
-        // the shipped libraries are release-only and the binary dies of an access
-        // violation before main - while the release build defines NDEBUG and
-        // compiles an assert away. An assert here would be unreachable in both
-        // configurations. Every check in a Torch-linked file in this repository
-        // is a TORCH_CHECK for that reason, and every check in a Torch-free one
-        // is an assert.
-        TORCH_CHECK(!summaries.empty(), "self-play returned no games for a batch of ",
-                    settings.games_per_iteration);
+        replay.absorb(fresh);
 
-        for (TrainingRecord& record : fresh)
-        {
-            replay_bytes_used += record.bytesUsed();
-            replay.push_back(std::move(record));
-        }
-        // Capped by bytes, because a record count means a different amount of
-        // memory on every board size, and the first long run of this trainer
-        // took the machine into swap.
-        while (replay_bytes_used > settings.replay_bytes && !replay.empty())
-        {
-            replay_bytes_used -= replay.front().bytesUsed();
-            replay.pop_front();
-        }
-
-        double play_seconds =
+        const double play_seconds =
             std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - started)
                 .count();
+        const trainer::BatchStats stats = trainer::summariseGames(summaries);
 
-        int wins = 0;
-        int limited = 0;
-        double total_score = 0.0;
-        int best_score = 0;
-        for (const GameSummary& summary : summaries)
-        {
-            wins += summary.won ? 1 : 0;
-            limited += summary.hit_step_limit ? 1 : 0;
-            total_score += summary.score;
-            best_score = std::max(best_score, summary.score);
-        }
-
-        // Training. Sampling with replacement from the recent window, as in the
-        // paper's "minibatches drawn from the last 2,000 games".
         network->train();
-        double policy_loss_total = 0.0;
-        double value_loss_total = 0.0;
-        double death_loss_total = 0.0;
-        double usable_labels_total = 0.0;
-        int batches_run = 0;
+        const trainer::LossTotals totals =
+            trainOnReplay(settings, network, optimizer, replay, buffers, compute.device, iteration);
 
-        if (static_cast<int>(replay.size()) >= settings.batch_size)
-        {
-            const int cells = settings.cellCount();
-            std::vector<float> planes(static_cast<size_t>(settings.batch_size) *
-                                      SnakeEnv::PLANE_COUNT * cells);
-            std::vector<float> policies(static_cast<size_t>(settings.batch_size) *
-                                        SnakeEnv::ACTION_COUNT);
-            std::vector<float> values(settings.batch_size);
-            std::vector<float> steps(settings.batch_size);
-            std::vector<float> death_risks(static_cast<size_t>(settings.batch_size) *
-                                           SnakeEnv::ACTION_COUNT);
-            // One per record: whether its risk label is worth learning from. A
-            // batch can be almost entirely masked out, which is why the loss
-            // divides by what survived rather than by the batch size.
-            std::vector<float> death_mask(settings.batch_size);
-
-            for (int batch = 0; batch < settings.batches_per_iteration; batch++)
-            {
-                for (int item = 0; item < settings.batch_size; item++)
-                {
-                    size_t pick = static_cast<size_t>(
-                        torch::randint(0, static_cast<int64_t>(replay.size()), { 1 })
-                            .item<int64_t>());
-                    const TrainingRecord& record = replay[pick];
-                    SnakeEnv::encodeSnapshot(
-                        settings.board, settings.board, record.position,
-                        planes.data() + static_cast<size_t>(item) * SnakeEnv::PLANE_COUNT * cells);
-                    for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
-                    {
-                        policies[static_cast<size_t>(item) * SnakeEnv::ACTION_COUNT + action] =
-                            record.policy[action];
-                        death_risks[static_cast<size_t>(item) * SnakeEnv::ACTION_COUNT + action] =
-                            record.death_risk_target[action];
-                    }
-                    values[item] = record.value_target;
-                    steps[item] = record.steps_target;
-                    death_mask[item] = record.death_risk_usable ? 1.0f : 0.0f;
-                }
-
-                torch::Tensor input =
-                    torch::from_blob(planes.data(), { settings.batch_size, SnakeEnv::PLANE_COUNT,
-                                                      settings.board, settings.board })
-                        .to(device);
-                torch::Tensor policy_target =
-                    torch::from_blob(policies.data(),
-                                     { settings.batch_size, SnakeEnv::ACTION_COUNT })
-                        .to(device);
-                torch::Tensor value_target =
-                    torch::from_blob(values.data(), { settings.batch_size, 1 }).to(device);
-                torch::Tensor steps_target =
-                    torch::from_blob(steps.data(), { settings.batch_size, 1 }).to(device);
-                torch::Tensor death_target =
-                    torch::from_blob(death_risks.data(),
-                                     { settings.batch_size, SnakeEnv::ACTION_COUNT })
-                        .to(device);
-                torch::Tensor death_weight =
-                    torch::from_blob(death_mask.data(), { settings.batch_size, 1 }).to(device);
-
-                // The target is the return itself. The head is bounded at
-                // VALUE_SCALE rather than at 1, so no squashing is needed to make
-                // the two comparable, and the search receives a value in the same
-                // units as the rewards it adds to it.
-
-                const Prediction prediction = network->forward(input);
-                torch::Tensor log_policy = torch::log_softmax(prediction.policy_logits, 1);
-                torch::Tensor policy_loss = -(policy_target * log_policy).sum(1).mean();
-                // Measured on the normalised scale, which is the same loss the
-                // squashed version produced up to a constant - so the balance
-                // against the policy loss, and every learning rate chosen under
-                // it, carries over unchanged.
-                torch::Tensor value_loss = torch::mse_loss(prediction.value / az::VALUE_SCALE,
-                                                           value_target / az::VALUE_SCALE);
-                // Undiscounted, unlike the value: this is the only estimate here
-                // that can see as far as the deadline.
-                torch::Tensor steps_loss = torch::mse_loss(prediction.steps_to_go, steps_target);
-                // Cross entropy rather than squared error, because the head is a
-                // sigmoid and the target is a probability. Averaged over the
-                // records whose label survived the mask, not over the batch: with
-                // a fixed denominator a batch of mostly unusable labels would
-                // report a small loss and take a correspondingly small step.
-                torch::Tensor death_elementwise = torch::binary_cross_entropy(
-                    prediction.death_risk, death_target, {}, at::Reduction::None);
-                torch::Tensor usable = death_weight.sum().clamp_min(1.0f);
-                torch::Tensor death_loss =
-                    (death_elementwise.mean(1, true) * death_weight).sum() / usable;
-                torch::Tensor loss = policy_loss + value_loss + az::STEPS_LOSS_WEIGHT * steps_loss +
-                                     az::DEATH_LOSS_WEIGHT * death_loss;
-
-                // A non-finite loss trains every weight into NaN and the run
-                // continues printing plausible-looking iterations afterwards, so
-                // it stops here instead. TORCH_CHECK rather than assert: LibTorch
-                // ships release-only libraries, and a debug binary linked against
-                // them dies before reaching any assertion.
-                TORCH_CHECK(std::isfinite(loss.item<double>()), "loss is not finite at iteration ",
-                            iteration, " batch ", batch, " - policy ", policy_loss.item<double>(),
-                            " value ", value_loss.item<double>(), " steps ",
-                            steps_loss.item<double>(), " death ", death_loss.item<double>(),
-                            " usable labels ", usable.item<double>());
-
-                optimizer.zero_grad();
-                loss.backward();
-                optimizer.step();
-
-                policy_loss_total += policy_loss.item<double>();
-                value_loss_total += value_loss.item<double>();
-                // Both read every batch rather than only on failure. The death
-                // loss is meaningless without the count beside it: a mask that
-                // keeps almost nothing reports a small loss and takes a
-                // correspondingly small step, which reads in the log exactly like
-                // a head that has already learned its target.
-                death_loss_total += death_loss.item<double>();
-                usable_labels_total += usable.item<double>();
-                batches_run++;
-            }
-        }
-
-        double total_seconds =
+        trainer::IterationReport report;
+        report.iteration = iteration;
+        report.games = summaries.size();
+        report.foods_to_win = foods_to_win;
+        report.sealed_choices = play.sealedChoices();
+        report.total_seconds =
             std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - started)
                 .count();
-        long long evaluations = evaluator.evaluations() - evaluations_before;
+        report.play_seconds = play_seconds;
+        report.evaluations = evaluator.evaluations() - evaluations_before;
 
-        // Wipe the progress line before the iteration summary lands, or the
-        // summary is printed over a longer bar and inherits its tail.
-        std::cout << "\r" << std::string(drawn_length, ' ') << "\r";
-        drawn_length = 0;
-
-        // Precisions are fixed rather than left to the default so the line keeps
-        // a stable shape across runs - these summaries get parsed out of the log.
-        std::string summary = std::format(
-            "iter {}  score {:.4f}/{}  best {}  wins {}/{}  timeouts {}  sealed {}  buffer {} "
-            "({}MB)",
-            iteration, total_score / summaries.size(), foods_to_win, best_score, wins,
-            summaries.size(), limited, play.sealedChoices(), replay.size(),
-            replay_bytes_used / (1024 * 1024));
-        if (batches_run > 0)
-        {
-            summary += std::format("  loss p {:.6f} v {:.6f} d {:.6f}  labels {:.1f}/{}",
-                                   policy_loss_total / batches_run, value_loss_total / batches_run,
-                                   death_loss_total / batches_run,
-                                   usable_labels_total / batches_run, settings.batch_size);
-        }
-        summary += std::format("  {:.2f}s (play {:.3f}s, {} evals/s)", total_seconds, play_seconds,
-                               static_cast<long long>(evaluations / std::max(0.001, play_seconds)));
-        std::cout << summary << std::endl;
+        // Wiped before the summary lands, or the summary is printed over a longer bar and
+        // inherits its tail.
+        printer.wipe();
+        std::cout << trainer::formatIterationSummary(settings.batch_size, report, stats, replay,
+                                                     totals)
+                  << std::endl;
 
         games_played_total += static_cast<long long>(summaries.size());
-        samples_trained_total += static_cast<long long>(batches_run) * settings.batch_size;
+        samples_trained_total += static_cast<long long>(totals.batches_run) * settings.batch_size;
 
         if (!settings.checkpoint.empty())
         {

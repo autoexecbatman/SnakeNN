@@ -1,9 +1,12 @@
+#include <process.h>
 #include <cassert>
 #include <chrono>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "run_ledger.h"
 
@@ -110,6 +113,20 @@ void append(const std::string& path, const Entry& entry)
     {
         throw std::runtime_error(std::format("cannot write to the run ledger at '{}'", path));
     }
+}
+
+Entry openRun(int argc, char** argv, Kind kind, const std::string& path)
+{
+    Entry run{ makeRunId(utcNow(), static_cast<unsigned int>(_getpid())),
+               utcNow(),
+               kind,
+               formatCommand(std::vector<std::string>(argv + 1, argv + argc)),
+               Outcome::Started,
+               0.0,
+               0,
+               0 };
+    append(path, run);
+    return run;
 }
 
 }  // namespace ledger

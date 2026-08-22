@@ -543,17 +543,28 @@ def render(parsed):
                 f'<span class="tag">{count} file-local</span></summary>'
             )
         else:
+            # The whole section folds, heading included. Shut by default, so the page
+            # opens as an index of files and a reader opens the one they came for
+            # rather than scrolling past 800 declarations to reach it.
+            count = len(entry["declarations"])
+            tag = (
+                f'<span class="tag">{count} declaration{"" if count == 1 else "s"}</span>'
+                if count
+                else ""
+            )
             parts.append(
-                f'<h2 id="{html.escape(entry["file"])}">{html.escape(entry["file"])}'
-                f'<a class="back" href="src_index.html">what it is for</a></h2>'
+                f'<details class="file" id="{html.escape(entry["file"])}">'
+                f'<summary>{html.escape(entry["file"])}{tag}'
+                f'<a class="back" href="src_index.html">what it is for</a></summary>'
             )
         # What the file is, above the list of what it declares.
         if entry["block"]:
             parts.append('<div class="fileblock">')
             parts.append(doc_page.render_comment(entry["block"], ""))
             parts.append("</div>")
-        # A file with only a block has no table to draw.
+        # A file with only a block has no table to draw, but its fold still closes.
         if not entry["declarations"]:
+            parts.append("</details>")
             continue
         # Fixed layout: an example inside a cell would otherwise size the column to its
         # longest line and push the prose column off the page.
@@ -581,8 +592,7 @@ def render(parsed):
                 f"<td>{said}</td></tr>"
             )
         parts.append("</tbody></table></div>")
-        if folded:
-            parts.append("</details>")
+        parts.append("</details>")
     parts.append(
         doc_page.foot(
             "Presence is all this measures. Whether a comment says anything worth "

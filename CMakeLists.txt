@@ -852,6 +852,8 @@ add_executable(AlphaZeroTrainer
     src/value_range.cpp
     src/network_evaluator.cpp
     src/az_network.cpp
+    src/iteration_report.cpp
+    src/training_batch.cpp
     src/network_setup.cpp
     src/snake_env.cpp
 )

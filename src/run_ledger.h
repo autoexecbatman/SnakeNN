@@ -94,4 +94,16 @@ std::string header();
 // survive. Throws std::runtime_error if the file cannot be opened or written.
 void append(const std::string& path, const Entry& entry);
 
+// Opens a run's row and returns it for the caller to complete.
+//
+//     ledger::Entry run = ledger::openRun(argc, argv, ledger::Kind::Training, path);
+//     run.outcome = ledger::Outcome::Finished;   // and whatever else the run measured
+//     ledger::append(path, run);
+//
+// The started row is written here, before any work, so a process that is killed still
+// leaves evidence it ran - the only record a killed run can produce. `argc` and `argv` are
+// the ones main received; the program name is dropped and the rest becomes the command
+// column.
+Entry openRun(int argc, char** argv, Kind kind, const std::string& path);
+
 }  // namespace ledger

@@ -62,6 +62,22 @@ details.internal > summary::before { content: ""; display: inline-block;
 details.internal[open] > summary::before { transform: rotate(90deg); }
 details.internal > summary:hover { color: var(--ink); }
 details.internal > .scroll { margin-top: 8px; }
+details.file { margin: 2.25rem 0 0; border-top: 1px solid var(--rule);
+    scroll-margin-top: 4rem; }
+details.file > summary { font-size: 1.1rem; font-weight: 600; color: var(--ink);
+    cursor: pointer; list-style: none; padding: .6rem 0 .4rem; user-select: none; }
+details.file > summary::-webkit-details-marker { display: none; }
+details.file > summary::before { content: ""; display: inline-block;
+    width: 0; height: 0; margin-right: 8px; vertical-align: middle;
+    border-left: 5px solid var(--dim); border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent; transition: transform .12s; }
+details.file[open] > summary::before { transform: rotate(90deg); }
+details.file > summary:hover { color: var(--link); }
+details.file > summary .back { font-size: .75rem; font-weight: 400; margin-left: .6rem;
+    color: var(--dim); text-decoration: none; }
+details.file > summary .back:hover { text-decoration: underline; }
+details > summary .tag { margin-left: 8px; font-size: 11px; color: var(--dim);
+    border: 1px solid var(--rule); border-radius: 3px; padding: 1px 5px; }
 .fileblock { margin: 0 0 22px; padding: 14px 18px; background: var(--panel);
     border-radius: 6px; font-size: 13px; line-height: 1.55; }
 .fileblock > *:first-child { margin-top: 0; }

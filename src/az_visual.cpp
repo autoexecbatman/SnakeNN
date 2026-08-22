@@ -14,6 +14,7 @@
 #include "mcts.h"
 #include "network_evaluator.h"
 #include "network_setup.h"
+#include "search_defaults.h"
 #include "snake_env.h"
 
 // Watch a trained network play.
@@ -87,18 +88,23 @@ int main(int argc, char** argv)
     ui::Fonts fonts = ui::loadFonts();
 
     NetworkEvaluator evaluator(network, device);
-    MonteCarloSearch::Config search_config;
+    // The point of this program is to show the agent a win rate describes, so its search
+    // has to be the evaluator's search. The shared constants come from one place, and the
+    // rest are named here rather than left to Config's own defaults - three of them were,
+    // and the agent on screen was searching with no step reward and no tie-break.
+    MonteCarloSearch::Config search_config = az::paperSearchDefaults();
     search_config.simulations = settings.simulations;
-    search_config.exploration = az::EXPLORATION;
-    // Set here even though the default matches: a field only some callers set is how
-    // self-play and evaluation come to search differently.
-    search_config.normalize_values = az::NORMALIZE_VALUES;
     search_config.exploration_epsilon = az::EXPLORATION_EPSILON;
-    search_config.discount = az::DISCOUNT;
-    // Off, as in the evaluator, so what is on screen is the agent the win rate
-    // describes rather than the exploration policy.
+    // The evaluator takes these from flags that default to these constants; this program
+    // has no such flags, so it takes the defaults directly.
+    search_config.trap_guard = az::TRAP_GUARD;
+    search_config.average_edges = az::AVERAGE_EDGES;
+    search_config.death_cap = az::DEATH_CAP;
+    // Alias counting is a measurement and nothing here reports it.
+    search_config.alias_report = false;
+    // Off, as in the evaluator, so what is on screen is the agent the win rate describes
+    // rather than the exploration policy.
     search_config.root_noise_fraction = 0.0f;
-    search_config.root_noise_alpha = az::ROOT_NOISE_ALPHA;
     search_config.seed = settings.seed;
     MonteCarloSearch search(evaluator, search_config);
 
