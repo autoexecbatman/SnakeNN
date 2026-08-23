@@ -581,8 +581,12 @@ enable_testing()
 # docs/analyze.ps1. Header self-containment is a third: docs/check_headers.ps1.
 function(enable_strict_warnings target_name)
     if(MSVC)
+        # /w14062 raises C4062 to level 1: a switch over an enum with no default and an
+        # unhandled enumerator. It is off at /W4 despite being documented as level 4, so
+        # the exhaustive-switch pattern used in the option parsers had no guard behind it
+        # until this was added - measured 2026-08-23, a missing case compiled silently.
         target_compile_options(${target_name} PRIVATE
-            /W4 /WX /permissive- /external:anglebrackets /external:W0)
+            /W4 /WX /w14062 /permissive- /external:anglebrackets /external:W0)
     endif()
 endfunction()
 
