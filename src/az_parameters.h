@@ -170,10 +170,21 @@ constexpr float DEATH_CAP_THRESHOLD = 0.5f;
 
 // Whether the leaf's death risk comes from the network's head or is left at zero.
 //
-// Off until the head has a loss behind it: an untrained head emits its initialisation,
-// and a cap acting on that is acting on noise. With it off the risk is entirely the
-// simulator's own terminations, which is what the first measurement is of.
-constexpr bool DEATH_RISK_FROM_NETWORK = false;
+// It was off while the head was untrained, because an untrained head emits its
+// initialisation and a cap acting on that acts on noise. Turned on 2026-08-23, once the
+// head had a loss behind it: az20_steps340 trains it on about 90 usable labels per batch
+// of 256 at a death loss of 0.0039.
+//
+// What turning it on does is bootstrap. Off, a leaf carries no risk, so the only non-zero
+// risk in a tree comes from real terminations inside it - the head learns "within tens of
+// plies, is every continuation dead". On, a leaf carries the head's own estimate, and risk
+// propagates past the tree the way value iteration extends a horizon. That is the point:
+// the deaths being chased happen a median 70 to 90 steps after the last apple, which is
+// outside any tree 200 or even 800 simulations builds.
+//
+// A checkpoint trained with this off is being used in a regime it never saw, so read a
+// null result from one as ambiguous rather than as evidence the head is uninformative.
+constexpr bool DEATH_RISK_FROM_NETWORK = true;
 
 // What the value head's output is multiplied by, in the same units as a reward.
 //
