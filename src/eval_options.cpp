@@ -1,6 +1,26 @@
+﻿// Turns a command line into the settings AlphaZeroEvaluate and AlphaZeroVisual run under.
+//
+// Two programs, one grammar. The evaluator scores a checkpoint on held-out seeds and the
+// visual agent shows the same checkpoint playing, so a flag that means one thing in one and
+// something else in the other would make the picture and the number disagree without
+// anything saying so. Both parse through here.
+//
+// Everything is validated before a checkpoint is opened or a game is played. A run that is
+// going to be refused should cost nothing, and more importantly a refusal that arrives
+// after twenty minutes of self-play arrives when nobody is watching. Refusals throw
+// std::invalid_argument naming the flag; parseArguments never returns a Settings that
+// stepLimit or cellCount would assert on.
+//
+// The seed check is the one worth knowing about. Evaluation seeds live in a reserved band
+// that training cannot reach, and a run whose last game would fall outside it is refused
+// rather than wrapped - because wrapping lands on a training seed, and that is how a
+// held-out set stopped being held out once already.
+//
+// See eval_options.h for the fields and their defaults; this file holds the parsing, the
+// bounds and the header line a run prints about itself.
+
 #include <cassert>
 #include <format>
-#include <limits>
 #include <stdexcept>
 #include <string_view>
 
@@ -22,22 +42,6 @@ void requireAtMost(std::string_view flag, int value, int maximum)
         throw std::invalid_argument(
             std::format("{} must be at most {}, got {}", flag, maximum, value));
     }
-}
-
-// Exactly "on" or "off". Anything else throws rather than resolving to false,
-// because a run scored with the guard the operator did not ask for is a result
-// nothing about the log would contradict.
-bool parseOnOff(std::string_view flag, std::string_view text)
-{
-    if (text == "on")
-    {
-        return true;
-    }
-    if (text == "off")
-    {
-        return false;
-    }
-    throw std::invalid_argument(std::format("{} must be 'on' or 'off', got '{}'", flag, text));
 }
 
 }  // namespace
@@ -111,78 +115,175 @@ int Settings::stepLimit() const
     return az::deriveStepLimit(board);
 }
 
+namespace
+{
+
+// Every flag the evaluator accepts.
+enum class Flag
+{
+    Checkpoint,
+    Board,
+    Games,
+    Simulations,
+    StepLimit,
+    Channels,
+    Blocks,
+    Seed,
+    Batch,
+    Ledger,
+    FreezeClockPercent,
+    TrapGuard,
+    AverageEdges,
+    DeathCap,
+    SearchSeed
+};
+
+// One spelling and the enumerator it names.
+struct FlagName
+{
+    // As written on the command line, leading dashes included.
+    std::string_view text;
+    // What applySetting will do with it.
+    Flag flag;
+};
+
+// The whole command line, in one place. Adding a flag is a row here, an enumerator above
+// and a case below - and leaving out the case is a compiler diagnostic.
+constexpr FlagName FLAG_NAMES[] = {
+    { "--checkpoint", Flag::Checkpoint },
+    { "--board", Flag::Board },
+    { "--games", Flag::Games },
+    { "--simulations", Flag::Simulations },
+    { "--step-limit", Flag::StepLimit },
+    { "--channels", Flag::Channels },
+    { "--blocks", Flag::Blocks },
+    { "--seed", Flag::Seed },
+    { "--batch", Flag::Batch },
+    { "--ledger", Flag::Ledger },
+    { "--freeze-clock-percent", Flag::FreezeClockPercent },
+    { "--trap-guard", Flag::TrapGuard },
+    { "--average-edges", Flag::AverageEdges },
+    { "--death-cap", Flag::DeathCap },
+    { "--search-seed", Flag::SearchSeed },
+};
+
+// Which Flag `text` names, or std::invalid_argument when it names none.
+//
+//     lookupFlag("--board")   // Flag::Board
+//
+// Refused rather than warned about. The parser this replaced printed to stderr and scored
+// the run with the default, so a mistyped flag produced a number that looked configured
+// and was not.
+Flag lookupFlag(std::string_view text)
+{
+    for (const FlagName& candidate : FLAG_NAMES)
+    {
+        if (candidate.text == text)
+        {
+            return candidate.flag;
+        }
+    }
+    throw std::invalid_argument(std::format("unknown flag: {}", text));
+}
+
+// Applies one parsed flag, or throws naming the flag when the value is not what that flag
+// accepts.
+//
+//     applySetting(settings, Flag::Board, "--board", "10");   // settings.board == 10
+//
+// No default case on purpose: the value comes from lookupFlag and can only be an
+// enumerator, so the switch is exhaustive and a new enumerator without a case is caught at
+// compile time rather than falling through in silence.
+void applySetting(Settings& settings, Flag flag, std::string_view name, std::string_view value)
+{
+    switch (flag)
+    {
+        case Flag::Checkpoint:
+        {
+            settings.checkpoint = std::string(value);
+            break;
+        }
+        case Flag::Board:
+        {
+            settings.board = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Games:
+        {
+            settings.games = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Simulations:
+        {
+            settings.simulations = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::StepLimit:
+        {
+            settings.step_limit_override = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Channels:
+        {
+            settings.channels = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Blocks:
+        {
+            settings.blocks = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Seed:
+        {
+            settings.seed_offset = flags::parseWholeUnsigned(name, value);
+            break;
+        }
+        case Flag::Batch:
+        {
+            settings.batch = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Ledger:
+        {
+            settings.ledger_path = std::string(value);
+            break;
+        }
+        case Flag::FreezeClockPercent:
+        {
+            settings.freeze_clock_percent = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::TrapGuard:
+        {
+            settings.trap_guard = flags::parseOnOff(name, value);
+            break;
+        }
+        case Flag::AverageEdges:
+        {
+            settings.average_edges = flags::parseOnOff(name, value);
+            break;
+        }
+        case Flag::DeathCap:
+        {
+            settings.death_cap = flags::parseOnOff(name, value);
+            break;
+        }
+        case Flag::SearchSeed:
+        {
+            settings.search_seed = flags::parseWholeUnsigned(name, value);
+            break;
+        }
+    }
+}
+
+}  // namespace
+
 Settings parseArguments(std::span<const std::string> arguments)
 {
     Settings settings;
     for (const flags::FlagValue& pair : flags::readFlags(arguments))
     {
-        if (pair.flag == "--checkpoint")
-        {
-            settings.checkpoint = pair.value;
-        }
-        else if (pair.flag == "--board")
-        {
-            settings.board = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--games")
-        {
-            settings.games = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--simulations")
-        {
-            settings.simulations = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--step-limit")
-        {
-            settings.step_limit_override = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--channels")
-        {
-            settings.channels = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--blocks")
-        {
-            settings.blocks = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--seed")
-        {
-            settings.seed_offset = flags::parseWholeUnsigned(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--batch")
-        {
-            settings.batch = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--ledger")
-        {
-            settings.ledger_path = pair.value;
-        }
-        else if (pair.flag == "--freeze-clock-percent")
-        {
-            settings.freeze_clock_percent = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--trap-guard")
-        {
-            settings.trap_guard = parseOnOff(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--average-edges")
-        {
-            settings.average_edges = parseOnOff(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--death-cap")
-        {
-            settings.death_cap = parseOnOff(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--search-seed")
-        {
-            settings.search_seed = flags::parseWholeUnsigned(pair.flag, pair.value);
-        }
-        else
-        {
-            // Refused rather than warned about. The previous parser printed to
-            // stderr and scored the run with the default, so a mistyped flag
-            // produced a number that looked configured and was not.
-            throw std::invalid_argument(std::format("unknown flag: {}", pair.flag));
-        }
+        applySetting(settings, lookupFlag(pair.flag), pair.flag, pair.value);
     }
     requireUsable(settings);
     assert(settings.stepLimit() >= 1 && "a validated settings object still has no step limit");
@@ -303,50 +404,119 @@ int Settings::stepLimit() const
     return az::deriveStepLimit(board);
 }
 
+namespace
+{
+
+// Every flag the visual program accepts. Deliberately fewer than the evaluator's: this one
+// renders one game rather than scoring a batch.
+enum class Flag
+{
+    Checkpoint,
+    Board,
+    Simulations,
+    StepLimit,
+    Channels,
+    Blocks,
+    Seed,
+    Speed
+};
+
+// One spelling and the enumerator it names.
+struct FlagName
+{
+    // As written on the command line, leading dashes included.
+    std::string_view text;
+    // What applySetting will do with it.
+    Flag flag;
+};
+
+// The whole command line, in one place.
+constexpr FlagName FLAG_NAMES[] = {
+    { "--checkpoint", Flag::Checkpoint },
+    { "--board", Flag::Board },
+    { "--simulations", Flag::Simulations },
+    { "--step-limit", Flag::StepLimit },
+    { "--channels", Flag::Channels },
+    { "--blocks", Flag::Blocks },
+    { "--seed", Flag::Seed },
+    { "--speed", Flag::Speed },
+};
+
+// Which Flag `text` names, or std::invalid_argument when it names none.
+//
+//     lookupFlag("--speed")   // Flag::Speed
+//
+// The evaluator's flags reach this too, and refusing them is the point: accepting --games
+// silently would run a demo configured differently from what was typed.
+Flag lookupFlag(std::string_view text)
+{
+    for (const FlagName& candidate : FLAG_NAMES)
+    {
+        if (candidate.text == text)
+        {
+            return candidate.flag;
+        }
+    }
+    throw std::invalid_argument(std::format("unknown flag: {}", text));
+}
+
+// Applies one parsed flag, or throws naming the flag when the value is not what that flag
+// accepts. No default case, so a new enumerator without a case fails the build.
+void applySetting(Settings& settings, Flag flag, std::string_view name, std::string_view value)
+{
+    switch (flag)
+    {
+        case Flag::Checkpoint:
+        {
+            settings.checkpoint = std::string(value);
+            break;
+        }
+        case Flag::Board:
+        {
+            settings.board = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Simulations:
+        {
+            settings.simulations = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::StepLimit:
+        {
+            settings.step_limit_override = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Channels:
+        {
+            settings.channels = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Blocks:
+        {
+            settings.blocks = flags::parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Seed:
+        {
+            settings.seed = flags::parseWholeUnsigned(name, value);
+            break;
+        }
+        case Flag::Speed:
+        {
+            settings.moves_per_frame = flags::parseWholeInt(name, value);
+            break;
+        }
+    }
+}
+
+}  // namespace
+
 Settings parseArguments(std::span<const std::string> arguments)
 {
     Settings settings;
     for (const flags::FlagValue& pair : flags::readFlags(arguments))
     {
-        if (pair.flag == "--checkpoint")
-        {
-            settings.checkpoint = pair.value;
-        }
-        else if (pair.flag == "--board")
-        {
-            settings.board = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--simulations")
-        {
-            settings.simulations = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--step-limit")
-        {
-            settings.step_limit_override = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--channels")
-        {
-            settings.channels = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--blocks")
-        {
-            settings.blocks = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--seed")
-        {
-            settings.seed = flags::parseWholeUnsigned(pair.flag, pair.value);
-        }
-        else if (pair.flag == "--speed")
-        {
-            settings.moves_per_frame = flags::parseWholeInt(pair.flag, pair.value);
-        }
-        else
-        {
-            // The evaluator's flags reach this too. Refusing --games here is the
-            // point: accepting it silently would run a demo configured differently
-            // from what was typed.
-            throw std::invalid_argument(std::format("unknown flag: {}", pair.flag));
-        }
+        applySetting(settings, lookupFlag(pair.flag), pair.flag, pair.value);
     }
     requireUsable(settings);
     assert(settings.stepLimit() >= 1 && "a validated settings object still has no step limit");
