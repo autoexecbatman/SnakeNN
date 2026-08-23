@@ -5,6 +5,15 @@ death, and reports three things about them: the board occupancy reached before d
 how much of the step budget was left, and how the last apple before the death compares
 with that game's own median apple. Reads only; runs nothing.
 
+Usage - one or more logs, any board size:
+
+    python docs/analyze_deaths.py build/Release/eval_steps340_s800.log
+
+The board and the step limit come from the log's own header line. They used to be the
+constants 100 and 1200, which on a 20x20 log reported an occupancy of 1.72 and a negative
+budget - impossible values rather than merely wrong ones, and they were quoted before
+anyone noticed. A log whose header cannot be parsed is refused rather than guessed at.
+
 A game line is "  game seed N, outcome, score S, steps T" and is followed by
 "  pace N g1 g2 ..." holding the step count of each apple in order, so the pace list
 has one entry per apple eaten and the steps after the final apple are not in it.
@@ -18,29 +27,64 @@ from pathlib import Path
 GAME_LINE = re.compile(r"^  game seed (\d+), (\w+), score (\d+), steps (\d+)")
 PACE_LINE = re.compile(r"^  pace (\d+) (.+)")
 
+HEADER_LINE = re.compile(r" on (\d+)x(\d+),.*step limit (\d+)")
+
 # The snake starts at one segment, so occupancy is the score plus that first segment.
 STARTING_SEGMENTS = 1
-BOARD_CELLS = 100
-STEP_LIMIT = 1200
+
+
+class Board:
+    """The board one log was played on, read from its header line.
+
+    Example:
+
+        board = Board(20, 20, 9600)
+        board.cells          # 400
+        board.foods_to_win   # 399
+
+    Args:
+        width, height: board dimensions in cells.
+        step_limit: the move budget each game played under.
+    """
+
+    def __init__(self, width, height, step_limit):
+        self.width = width
+        self.height = height
+        self.cells = width * height
+        self.foods_to_win = self.cells - STARTING_SEGMENTS
+        self.step_limit = step_limit
+
+    def __str__(self):
+        return f"{self.width}x{self.height}, step limit {self.step_limit}"
 
 
 class Game:
     """One evaluated game: its outcome, what it scored, and its per-apple step counts."""
 
-    def __init__(self, seed, outcome, score, steps):
+    def __init__(self, seed, outcome, score, steps, board):
         self.seed = seed
         self.outcome = outcome
         self.score = score
         self.steps = steps
+        self.board = board
         self.pace = []
 
     def occupancy(self):
-        """Fraction of the board the snake filled before the game ended."""
-        return (self.score + STARTING_SEGMENTS) / BOARD_CELLS
+        """Fraction of the board the snake filled before the game ended.
+
+        Asserted to be a fraction. A value above 1 means the board was read wrongly, which
+        is the exact failure this is guarding: it is cheaper to stop than to print a
+        number nobody can tell is impossible until they think about it.
+        """
+        filled = (self.score + STARTING_SEGMENTS) / self.board.cells
+        assert 0.0 <= filled <= 1.0, (
+            f"occupancy {filled:.3f} on a {self.board} board - the board size is wrong"
+        )
+        return filled
 
     def budget_left(self):
         """Steps remaining against the cap when the game ended."""
-        return STEP_LIMIT - self.steps
+        return self.board.step_limit - self.steps
 
     def steps_after_last_apple(self):
         """Steps taken between the final apple and the end of the game."""
@@ -59,15 +103,38 @@ class Game:
         return self.pace[-1] / median_cost
 
 
+def read_board(lines):
+    """The board and step limit from a log's header line.
+
+    Example:
+
+        read_board(["az20.pt on 20x20, 4 games, 800 simulations, step limit 9600"])
+        # Board of 400 cells, 399 apples to win
+
+    Raises ValueError when no header line is present, rather than guessing a board.
+
+    Args:
+        lines: the log's lines, in order.
+    """
+    for line in lines:
+        found = HEADER_LINE.search(line)
+        if found is not None:
+            return Board(int(found.group(1)), int(found.group(2)), int(found.group(3)))
+    raise ValueError(
+        "no header line giving the board and step limit - is this an evaluation log?")
+
+
 def read_games(log_path):
-    """Parse every game and its pace line out of one evaluation log."""
+    """Parse the board, then every game and its pace line, out of one evaluation log."""
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    board = read_board(lines)
     games = []
     by_seed = {}
-    for line in log_path.read_text(encoding="utf-8").splitlines():
+    for line in lines:
         game_match = GAME_LINE.match(line)
         if game_match is not None:
             game = Game(int(game_match.group(1)), game_match.group(2),
-                        int(game_match.group(3)), int(game_match.group(4)))
+                        int(game_match.group(3)), int(game_match.group(4)), board)
             games.append(game)
             by_seed[game.seed] = game
             continue
@@ -75,7 +142,7 @@ def read_games(log_path):
         if pace_match is not None:
             seed = int(pace_match.group(1))
             by_seed[seed].pace = [int(value) for value in pace_match.group(2).split()]
-    return games
+    return games, board
 
 
 def quantiles(values):
@@ -88,12 +155,13 @@ def quantiles(values):
 
 def report(log_path):
     """Print the death profile for one evaluation log."""
-    games = read_games(log_path)
+    games, board = read_games(log_path)
     deaths = [game for game in games if game.outcome == "died"]
     wins = [game for game in games if game.outcome == "won"]
     timeouts = [game for game in games if game.outcome == "timeout"]
 
     print(f"\n=== {log_path.name} ===")
+    print(f"{board}, {board.foods_to_win} apples to win")
     print(f"{len(games)} games: {len(wins)} won, {len(deaths)} died, "
           f"{len(timeouts)} timed out")
     if not deaths:
@@ -113,13 +181,18 @@ def report(log_path):
           f"({100.0 * comfortable / len(deaths):.1f} percent)")
 
     # Deaths concentrated in one band of the fill point at a phase, not at the policy.
-    bands = [(0, 24), (25, 49), (50, 74), (75, 89), (90, 99)]
+    # Expressed as fractions of the win condition, so a band means the same thing on
+    # every board rather than being five absolute ranges that only suit 10x10.
+    edges = [0.0, 0.25, 0.50, 0.75, 0.90, 1.0]
+    bands = [(round(edges[index] * board.foods_to_win),
+              round(edges[index + 1] * board.foods_to_win) - 1)
+             for index in range(len(edges) - 1)]
     print("\ndeaths by score band, against how many games reached that band:")
     for low, high in bands:
         died_here = sum(1 for game in deaths if low <= game.score <= high)
         reached = sum(1 for game in games if game.score >= low)
         rate = 100.0 * died_here / reached if reached > 0 else 0.0
-        print(f"  score {low:2d}-{high:2d}: {died_here:3d} deaths, "
+        print(f"  score {low:3d}-{high:3d}: {died_here:3d} deaths, "
               f"{reached:4d} games reached it, {rate:.2f} percent died there")
 
     # A slow final apple means the death ended a struggle; a fast one means it was sudden.
@@ -142,7 +215,15 @@ def main(argv):
         print("usage: analyze_deaths.py <evaluation log> [more logs]")
         return 2
     for name in argv[1:]:
-        report(Path(name))
+        # A log this cannot read is named rather than crashing with a traceback, so the
+        # reason is the first thing on screen instead of the last.
+        try:
+            report(Path(name))
+        except ValueError as refusal:
+            print("")
+            print(f"=== {name} ===")
+            print(f"  refused: {refusal}")
+            return 2
     return 0
 
 
