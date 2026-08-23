@@ -1,3 +1,37 @@
+// Checks the value normalisation the search uses before comparing an action's value with
+// its prior term.
+//
+// What it is for. PUCT adds a value to an exploration term, and the two have to be on
+// comparable scales for c_puct to mean what the paper means by it. This project's value
+// head reports in reward units, where a return can reach tens, while the exploration term
+// at a typical prior is a fraction - so the value dominates and c_puct stops being a dial.
+// ValueRange records the range of values one tree has actually seen and rescales against
+// it, which is MuZero's answer to the same problem.
+//
+// What it deliberately does not do. It does not clamp. A value outside the range seen so
+// far is rescaled past the ends rather than pinned to them, because the range is an
+// observation and not a bound - pinning would make the best action so far and a better one
+// found later look identical.
+//
+// A correction worth keeping, because it was found by this file rather than by reading.
+// Normalising was asserted to make selection exactly scale-invariant, and it cannot be: an
+// action is worth its edge reward plus a discounted return, so scaling the network's output
+// scales only the second term. A +1 apple and a -10 death keep their size, and the mixture
+// being normalised differs at each scale. The case below asserts the true property, that
+// normalising reduces the dependence, with the reason the stronger claim is unavailable
+// beside it. The general lesson: when a normalisation covers a sum, check which terms it
+// actually scales before claiming invariance.
+//
+// Every expected value is derived from the contract in value_range.h by hand, with the
+// arithmetic beside it. None was read off the implementation.
+//
+// Run it:
+//
+//     cmake --build build --config Release --target ValueRangeTest
+//     build\Release\ValueRangeTest.exe
+//
+// Silent unless something fails, ending in a pass line or a count and a non-zero exit.
+
 #include <cmath>
 #include <format>
 #include <iostream>
@@ -8,6 +42,7 @@
 namespace
 {
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
 // Every expected value is derived from the contract in value_range.h by hand, with the
@@ -22,6 +57,8 @@ void expectNear(const std::string& what, float actual, float expected, float tol
     }
 }
 
+// Checks a flag, naming it when it does not hold. Used for isEstablished, where the
+// question is whether a range exists at all rather than what it spans.
 void expectTrue(const std::string& what, bool condition)
 {
     if (!condition)

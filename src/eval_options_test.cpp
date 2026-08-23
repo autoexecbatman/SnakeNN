@@ -8,20 +8,54 @@
 
 #include "eval_options.h"
 
-// Expected values come from the contract in eval_options.h, never from what the
-// parser returns.
+// Checks the command-line grammar both evaluation programs share.
+//
+// Expected values come from the contract in eval_options.h, never from what the parser
+// returns. A test written against observed output records the parser's present behaviour
+// and would confirm a wrong default forever.
+//
+// The property that matters most here is not that a flag is accepted - it is that a flag
+// writes its own field and nothing else. A parser that quietly set two fields, or the wrong
+// one, would still accept every command line in this file; expectOnlyFieldChanged is what
+// catches it, by parsing a baseline, parsing again with one flag added, and demanding that
+// exactly one field differ and that it be the named one.
+//
+// The rest of the cases cover: the defaults being the ones the header states, the step
+// limit being derived rather than stored, the exact edges of every accepted range, refusals
+// arriving before any work is done, and a seed range that would leave the reserved band.
+// Then the same set again for the visual program, because two parsers that drift apart are
+// how a picture and a win rate come to describe different agents.
+//
+// Run it:
+//
+//     cmake --build build --config Release --target EvalOptionsTest
+//     build\Release\EvalOptionsTest.exe
+//
+// Silent unless something fails, ending in [PASS] eval_options or a count and a non-zero
+// exit.
 
 namespace
 {
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
+// Reports one failure and counts it.
+//
+//     fail("board", "expected 10, got 6");
+//     // [FAIL] board: expected 10, got 6
+//
+// `detail` carries the values compared, so a failing log says what it saw rather than only
+// which check broke.
 void fail(std::string_view what, std::string_view detail)
 {
     std::cout << std::format("[FAIL] {}: {}\n", what, detail);
     failures++;
 }
 
+// Compares two ints, reporting both when they differ.
+//
+//     expectEquals("board", 10, settings.board);
 void expectEquals(std::string_view what, int expected, int actual)
 {
     if (expected != actual)
@@ -30,6 +64,11 @@ void expectEquals(std::string_view what, int expected, int actual)
     }
 }
 
+// Compares two unsigned ints. Separate from expectEquals because a seed near the top of
+// the unsigned range converts to a negative int, and the failure message would print the
+// wrong number for the value that actually differed.
+//
+//     expectUnsignedEquals("seed offset", 0u, settings.seed_offset);
 void expectUnsignedEquals(std::string_view what, unsigned int expected, unsigned int actual)
 {
     if (expected != actual)
@@ -38,6 +77,9 @@ void expectUnsignedEquals(std::string_view what, unsigned int expected, unsigned
     }
 }
 
+// Compares two strings, quoting both when they differ so a trailing space is visible.
+//
+//     expectText("checkpoint", "model.pt", settings.checkpoint);
 void expectText(std::string_view what, std::string_view expected, std::string_view actual)
 {
     if (expected != actual)
@@ -46,6 +88,11 @@ void expectText(std::string_view what, std::string_view expected, std::string_vi
     }
 }
 
+// Parses an argument list as the evaluator would.
+//
+//     parse({ "--checkpoint", "model.pt", "--board", "10" });
+//
+// Throws whatever parseArguments throws; the rejection helpers rely on that.
 evaluation::Settings parse(const std::vector<std::string>& arguments)
 {
     return evaluation::parseArguments(std::span<const std::string>(arguments));
@@ -81,6 +128,14 @@ void expectRejected(std::string_view what, const std::vector<std::string>& argum
     }
 }
 
+// Checks that an argument list is refused and that the message names the flag.
+//
+//     expectRejectedNaming("--board", { "--checkpoint", "m.pt", "--board", "1" });
+//
+// Naming the flag is the point: an operator reading a refusal needs to know which argument
+// to fix, and a parser that rejects the right thing with the wrong message is a parser
+// somebody will fight. A different exception type fails the check rather than passing as
+// "it threw something".
 void expectRejectedNaming(std::string_view flag, const std::vector<std::string>& arguments)
 {
     try
@@ -127,6 +182,15 @@ void expectRejectedSaying(std::string_view phrase, const std::vector<std::string
 
 // Every field that differs between two settings, so a parser writing the right
 // value into the wrong field is caught rather than passing on the field it meant.
+// The names of every Settings field on which two objects differ.
+//
+//     differingFields(parseWithCheckpoint({}), parseWithCheckpoint({"--board", "10"}));
+//     // { "board" }
+//
+// Written out field by field on purpose. A reflective comparison would silently ignore a
+// field added later, and this is the one place that would notice a new flag writing
+// somewhere it should not - so a field added to Settings and not added here is a gap in the
+// only check that guards against cross-talk.
 std::vector<std::string> differingFields(const evaluation::Settings& left,
                                          const evaluation::Settings& right)
 {
@@ -186,6 +250,14 @@ std::vector<std::string> differingFields(const evaluation::Settings& left,
     return names;
 }
 
+// Checks that a flag writes its own field and disturbs no other.
+//
+//     expectOnlyFieldChanged("board", { "--board", "10" });
+//
+// Parses a baseline, parses again with the flag added, and demands that exactly one field
+// differ and that it be the named one. Reports the fields that actually changed, because
+// "changed [board, games] instead of exactly [board]" says what went wrong where a bare
+// failure would not.
 void expectOnlyFieldChanged(std::string_view field, const std::vector<std::string>& arguments)
 {
     const evaluation::Settings baseline = parseWithCheckpoint({});
@@ -221,6 +293,7 @@ void defaultsAreTheOnesTheHeaderStates()
     }
 }
 
+// Every flag, one at a time, changing only its own field.
 void eachFlagWritesItsOwnField()
 {
     expectOnlyFieldChanged("board", { "--board", "10" });
@@ -239,6 +312,8 @@ void eachFlagWritesItsOwnField()
     expectOnlyFieldChanged("average_edges", { "--average-edges", "on" });
 }
 
+// The step limit is computed from the board unless overridden, rather than stored - so a
+// board change moves it and the two cannot disagree.
 void derivesTheStepLimitFromTheBoard()
 {
     // 12 steps per cell, written out rather than taken from the constant.
@@ -253,6 +328,8 @@ void derivesTheStepLimitFromTheBoard()
     expectEquals("foods to win", 99, parseWithCheckpoint({ "--board", "10" }).foodsToWin());
 }
 
+// The exact lowest and highest accepted value of every bounded flag. Off-by-one in a bound
+// is invisible to any test that stays in the middle of the range.
 void acceptsTheEdgesOfEveryRange()
 {
     expectEquals("the smallest board", 2, parseWithCheckpoint({ "--board", "2" }).board);
@@ -267,6 +344,8 @@ void acceptsTheEdgesOfEveryRange()
                          parseWithCheckpoint({ "--seed", "536870848" }).seed_offset);
 }
 
+// Every refusal, checked to name its flag. Parsing happens before a checkpoint is opened,
+// so a bad command line costs nothing rather than failing twenty minutes into a run.
 void rejectsBeforeAnyWorkIsDone()
 {
     expectRejectedNaming("--board", { "--checkpoint", "model.pt", "--board", "1" });
@@ -285,6 +364,9 @@ void rejectsBeforeAnyWorkIsDone()
     expectRejectedNaming("--checkpoint", { "--checkpoint", "" });
 }
 
+// A seed offset whose last game would fall outside the reserved evaluation band is refused
+// rather than wrapped. Wrapping lands on a training seed, which is how a held-out set
+// stopped being held out once already.
 void rejectsASeedRangeThatLeavesTheReservedBand()
 {
     // 0xE0000000 leaves 0x20000000 = 536870912 seeds. The last one this run may
@@ -300,6 +382,9 @@ void rejectsASeedRangeThatLeavesTheReservedBand()
     expectRejectedSaying("not negative", { "--checkpoint", "model.pt", "--seed", "-1" });
 }
 
+// Checks that a printed header mentions something, quoting the header when it does not.
+//
+//     expectContains("header names the board", "20x20", formatHeader(settings));
 void expectContains(std::string_view what, std::string_view needle, std::string_view text)
 {
     if (text.find(needle) == std::string_view::npos)
@@ -563,11 +648,16 @@ void eachGameGetsALineThatCanBePaired()
     }
 }
 
+// Parses an argument list as the visual program would.
+//
+//     parseVisual({ "--checkpoint", "model.pt", "--board", "10" });
 visual::Settings parseVisual(const std::vector<std::string>& arguments)
 {
     return visual::parseArguments(std::span<const std::string>(arguments));
 }
 
+// parseVisual with the required checkpoint already supplied, so a case can name only the
+// flag it is about.
 visual::Settings parseVisualWithCheckpoint(const std::vector<std::string>& arguments)
 {
     std::vector<std::string> full{ "--checkpoint", "model.pt" };
@@ -575,6 +665,7 @@ visual::Settings parseVisualWithCheckpoint(const std::vector<std::string>& argum
     return parseVisual(full);
 }
 
+// expectRejectedNaming for the visual parser.
 void expectVisualRejectedNaming(std::string_view flag, const std::vector<std::string>& arguments)
 {
     try
@@ -596,6 +687,9 @@ void expectVisualRejectedNaming(std::string_view flag, const std::vector<std::st
     }
 }
 
+// differingFields for visual::Settings. Separate rather than templated: the two structs
+// hold different fields, and the list has to be maintained against each one by hand for the
+// same reason as above.
 std::vector<std::string> differingVisualFields(const visual::Settings& left,
                                                const visual::Settings& right)
 {
@@ -635,6 +729,7 @@ std::vector<std::string> differingVisualFields(const visual::Settings& left,
     return names;
 }
 
+// expectOnlyFieldChanged for the visual parser.
 void expectOnlyVisualFieldChanged(std::string_view field, const std::vector<std::string>& arguments)
 {
     const visual::Settings baseline = parseVisualWithCheckpoint({});
@@ -651,6 +746,7 @@ void expectOnlyVisualFieldChanged(std::string_view field, const std::vector<std:
     }
 }
 
+// The visual program's defaults, from its header rather than from what it returns.
 void theVisualDefaultsAreTheOnesTheHeaderStates()
 {
     const visual::Settings settings = parseVisualWithCheckpoint({});
@@ -669,6 +765,7 @@ void theVisualDefaultsAreTheOnesTheHeaderStates()
     }
 }
 
+// Every visual flag, one at a time, changing only its own field.
 void eachVisualFlagWritesItsOwnField()
 {
     expectOnlyVisualFieldChanged("board", { "--board", "10" });
@@ -680,6 +777,8 @@ void eachVisualFlagWritesItsOwnField()
     expectOnlyVisualFieldChanged("moves_per_frame", { "--speed", "25" });
 }
 
+// The visual program derives the step limit the same way the evaluator does. If it did
+// not, the game on screen would run under a different deadline from the one scored.
 void theVisualDerivesTheSameStepLimit()
 {
     expectEquals("visual 10x10 step limit", 1200,
@@ -694,6 +793,7 @@ void theVisualDerivesTheSameStepLimit()
                  parseVisualWithCheckpoint({ "--board", "10" }).foodsToWin());
 }
 
+// The exact edges of every bounded visual flag.
 void theVisualAcceptsTheEdgesOfEveryRange()
 {
     expectEquals("visual smallest board", 2, parseVisualWithCheckpoint({ "--board", "2" }).board);
@@ -709,6 +809,7 @@ void theVisualAcceptsTheEdgesOfEveryRange()
                          parseVisualWithCheckpoint({ "--seed", "4294967295" }).seed);
 }
 
+// Every visual refusal, checked to name its flag.
 void theVisualRejectsBeforeAnyWorkIsDone()
 {
     expectVisualRejectedNaming("--board", { "--checkpoint", "model.pt", "--board", "1" });
@@ -732,6 +833,7 @@ void theVisualRejectsBeforeAnyWorkIsDone()
 
 }  // namespace
 
+// Runs every case, then reports. Returns 1 if any check failed, 0 otherwise.
 int main()
 {
     defaultsAreTheOnesTheHeaderStates();

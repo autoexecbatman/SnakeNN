@@ -17,14 +17,17 @@
 namespace
 {
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
+// Reports one failure and counts it, quoting what was compared.
 void fail(std::string_view what, std::string_view detail)
 {
     std::cout << std::format("[FAIL] {}: {}\n", what, detail);
     failures++;
 }
 
+// Compares two strings exactly, quoting both so a stray tab or space is visible.
 void expectText(std::string_view what, std::string_view expected, std::string_view actual)
 {
     if (expected != actual)
@@ -33,6 +36,7 @@ void expectText(std::string_view what, std::string_view expected, std::string_vi
     }
 }
 
+// Checks that a row contains a substring, printing the whole row when it does not.
 void expectContains(std::string_view what, std::string_view needle, std::string_view text)
 {
     if (text.find(needle) == std::string_view::npos)
@@ -41,18 +45,24 @@ void expectContains(std::string_view what, std::string_view needle, std::string_
     }
 }
 
+// A filled-in entry to format, so a case can state the expected row rather than build
+// one first.
 ledger::Entry sampleEntry()
 {
-    return ledger::Entry{"2026-08-09T12:00:00Z-4242",
-                         "2026-08-09T12:00:00Z",
-                         ledger::Kind::Evaluation,
-                         "--checkpoint az10_iter140.pt --games 64",
-                         ledger::Outcome::Finished,
-                         244.89,
-                         64,
-                         0};
+    return ledger::Entry{ "2026-08-09T12:00:00Z-4242",
+                          "2026-08-09T12:00:00Z",
+                          ledger::Kind::Evaluation,
+                          "--checkpoint az10_iter140.pt --games 64",
+                          ledger::Outcome::Finished,
+                          244.89,
+                          64,
+                          0 };
 }
 
+// Splits a formatted row into its columns.
+//
+// The format is the contract: a script reads these files by column index, so a column
+// added, removed or reordered breaks every reader silently.
 std::vector<std::string> splitOnTabs(const std::string& row)
 {
     std::vector<std::string> fields;
@@ -84,6 +94,8 @@ void theRunIdIsTheStartTimeThenTheProcess()
     }
 }
 
+// UTC and fixed width, so rows sort chronologically as plain text. A local timestamp
+// would reorder across a daylight change, and a variable width would sort 9 after 10.
 void theTimestampIsUtcAndFixedWidth()
 {
     const std::string now = ledger::utcNow();
@@ -118,11 +130,11 @@ void theTimestampIsUtcAndFixedWidth()
 // A tab or a newline in an argument would silently add a column or a row.
 void theCommandCannotBreakTheRow()
 {
-    const std::vector<std::string> plain{"--checkpoint", "az10_iter140.pt", "--games", "64"};
+    const std::vector<std::string> plain{ "--checkpoint", "az10_iter140.pt", "--games", "64" };
     expectText("command", "--checkpoint az10_iter140.pt --games 64",
                ledger::formatCommand(std::span<const std::string>(plain)));
 
-    const std::vector<std::string> hostile{"--note", "two\tcolumns", "--other", "two\nrows"};
+    const std::vector<std::string> hostile{ "--note", "two\tcolumns", "--other", "two\nrows" };
     const std::string cleaned = ledger::formatCommand(std::span<const std::string>(hostile));
     if (cleaned.find('\t') != std::string::npos)
     {
@@ -138,6 +150,8 @@ void theCommandCannotBreakTheRow()
     expectText("no arguments", "", ledger::formatCommand(std::span<const std::string>(empty)));
 }
 
+// The header and the row agree on how many columns there are. They are written by
+// different functions, so nothing but this stops them drifting apart.
 void aRowHasEveryColumnTheHeaderNames()
 {
     const std::vector<std::string> columns = splitOnTabs(ledger::header());
@@ -163,6 +177,8 @@ void aRowHasEveryColumnTheHeaderNames()
     }
 }
 
+// Seconds, games and samples reach the row. This is the whole reason the ledger exists:
+// a result whose cost was never recorded cannot be compared or budgeted.
 void aRowCarriesWhatTheRunCost()
 {
     const std::string row = ledger::formatEntry(sampleEntry());
@@ -225,6 +241,7 @@ void everyKindAndOutcomeHasItsOwnWord()
     }
 }
 
+// The whole file as one string, for checking what an append actually wrote.
 std::string readWholeFile(const std::string& path)
 {
     std::ifstream file(path, std::ios::binary);
@@ -233,6 +250,7 @@ std::string readWholeFile(const std::string& path)
     return contents.str();
 }
 
+// Lines in a string, to tell one appended row from two.
 int countLines(const std::string& text)
 {
     int lines = 0;
@@ -243,6 +261,8 @@ int countLines(const std::string& text)
     return lines;
 }
 
+// The first append writes a header and a row; the second adds a row and no second
+// header. A header per append would corrupt every column-indexed read of the file.
 void appendingCreatesTheLedgerAndThenAddsToIt()
 {
     const std::string path = "run_ledger_test_scratch.tsv";
@@ -281,6 +301,8 @@ void appendingCreatesTheLedgerAndThenAddsToIt()
     std::remove(path.c_str());
 }
 
+// A path that cannot be written throws rather than dropping the record. A run whose
+// ledger silently failed would look like a run that never happened.
 void appendingToAnUnwritablePathThrows()
 {
     try

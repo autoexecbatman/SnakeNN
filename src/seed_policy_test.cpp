@@ -19,14 +19,20 @@
 namespace
 {
 
+// The batch size the trainer actually uses, so the collision check covers the real
+// spacing between one iteration's seeds and the next.
 constexpr int GAMES_PER_ITERATION = 256;
 // Far beyond anything that will be run; at ten minutes an iteration this is
 // years of compute.
 constexpr int ITERATIONS_CHECKED = 20000;
+// How many distinct --seed values are swept. Different runs must not collide with each
+// other either, not only different iterations within one run.
 constexpr unsigned int RUN_SEEDS_CHECKED = 8;
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
+// Reports one property and counts a failure, carrying the numbers it compared.
 void check(bool condition, const std::string& name, const std::string& detail)
 {
     if (condition)

@@ -16,8 +16,10 @@ namespace
 // about the clock set their own.
 constexpr int TEST_STEP_LIMIT = 1000000;
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
+// Reports one property and counts a failure.
 void expect(bool condition, const std::string& description)
 {
     if (condition)
@@ -31,6 +33,10 @@ void expect(bool condition, const std::string& description)
     }
 }
 
+// A block of games stepped together lands exactly where the same games stepped one at a
+// time would. The batch exists only for throughput, so any difference in outcome is a
+// defect rather than a trade - and it would be invisible in training, where nobody plays
+// the games individually to compare.
 void testMatchesIndividualGames()
 {
     const int count = 16;
@@ -80,6 +86,8 @@ void testMatchesIndividualGames()
     expect(matched, "a batched game is identical to the same game stepped alone");
 }
 
+// A game that has ended stays ended while the rest of the block plays on. Stepping a
+// finished game would throw, and skipping it wrongly would let a dead snake keep scoring.
 void testFinishedGamesAreNotAdvanced()
 {
     VectorEnv batch(4, 5, 5, 77, TEST_STEP_LIMIT);
@@ -107,6 +115,9 @@ void testFinishedGamesAreNotAdvanced()
     expect(steps_after_finishing < 40, "stepping a finished game does not advance it");
 }
 
+// Resetting one game in the block leaves every other game untouched. Games are reset
+// independently as they finish, so a reset that reached its neighbours would silently
+// restart games mid-play.
 void testResetIsLocal()
 {
     VectorEnv batch(8, 6, 6, 5, TEST_STEP_LIMIT);
@@ -124,6 +135,9 @@ void testResetIsLocal()
     expect(batch.env(3).steps() == steps_elsewhere_before, "its neighbours are untouched");
 }
 
+// The batched encoding writes each game's planes where a per-game encode would put them.
+// A row written to the wrong offset feeds one game's board to another game's search, and
+// nothing downstream can tell that from a network that has not learned yet.
 void testEncodingMatchesPerGame()
 {
     const int count = 6;

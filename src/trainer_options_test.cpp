@@ -23,10 +23,15 @@ static_assert(std::is_nothrow_move_constructible<trainer::Settings>::value,
 namespace
 {
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
+// Flags exercised. Printed at the end so a flag added to the parser and not to this file
+// shows up as a count that did not move.
 int flags_checked = 0;
+// Refusals exercised, counted for the same reason.
 int rejections_checked = 0;
 
+// Reports one property and counts a failure.
 void expect(bool condition, const std::string& description)
 {
     if (condition)
@@ -40,12 +45,14 @@ void expect(bool condition, const std::string& description)
     }
 }
 
+// Parses an argument list as the trainer would.
 trainer::Settings parse(const std::vector<const char*>& arguments)
 {
     return trainer::parseArguments(
         std::span<const char* const>(arguments.data(), arguments.size()));
 }
 
+// Whether parsing an argument list throws, without saying what it threw.
 bool throwsOnParse(const std::vector<const char*>& arguments)
 {
     try
@@ -124,12 +131,15 @@ void expectFlagSetsOnly(const char* flag, const char* value, const std::string& 
     failures++;
 }
 
+// Checks that an argument list is refused, and counts the refusal.
 void expectRejected(const std::vector<const char*>& arguments, const std::string& description)
 {
     rejections_checked++;
     expect(throwsOnParse(arguments), description);
 }
 
+// The defaults are the ones the header states, written out rather than read back. A test
+// that read them from the parser would agree with a wrong default forever.
 void testDefaultsAreTheDocumentedOnes()
 {
     const trainer::Settings settings;
@@ -140,6 +150,8 @@ void testDefaultsAreTheDocumentedOnes()
     expect(settings.replay_bytes == 1024u * 1024u * 1024u, "the replay cap is one gibibyte");
 }
 
+// The step limit follows the board unless overridden, so the two cannot disagree. It is
+// part of the task rather than a detail: the cap decides whether a win is reachable.
 void testStepLimitIsDerivedFromTheBoardUnlessGiven()
 {
     trainer::Settings settings;
@@ -206,6 +218,8 @@ void testTheGradientBudgetIsPerGameAndDerivable()
     expectRejected({ "--samples-per-game", "-1" }, "a negative budget is refused");
 }
 
+// Each flag writes its own field and disturbs no other. A parser that quietly set two
+// fields would still accept every command line here.
 void testEveryFlagSetsTheFieldItNames()
 {
     expectFlagSetsOnly("--board", "12", "board=12");
@@ -252,6 +266,8 @@ void testEveryFlagSetsTheFieldItNames()
            "iterations 111 through 140 inclusive, so the last one is 140");
 }
 
+// A bad argument is refused rather than defaulted. Defaulting produces a run configured
+// differently from what was typed, and nothing in the log would contradict it.
 void testBadArgumentsAreRefusedRatherThanDefaulted()
 {
     // The old parser warned on stderr and continued with the default, so a
@@ -306,6 +322,8 @@ void testBadArgumentsAreRefusedRatherThanDefaulted()
            "and a last iteration landing exactly on the end of an int is accepted");
 }
 
+// Elapsed time formats to a fixed shape, so a progress line does not change width as the
+// run gets longer and leave fragments of the previous line on screen.
 void testDurationFormatting()
 {
     expect(trainer::formatDuration(0.0) == "00:00", "zero seconds is 00:00");
@@ -319,6 +337,9 @@ void testDurationFormatting()
     expect(trainer::formatDuration(1.0e9) == "--:--", "and neither does an absurd one");
 }
 
+// The bar reports whichever of games and moves is further along. Games finished is zero
+// for the first several minutes of a large board, and a bar pinned at zero reads as a
+// hung run.
 void testProgressBarReportsTheFurtherMeasure()
 {
     trainer::ProgressSnapshot progress{};

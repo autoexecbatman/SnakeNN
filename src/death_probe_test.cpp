@@ -1,4 +1,43 @@
-﻿#include <cmath>
+﻿// Checks the statistics that decide whether the death head learned anything.
+//
+// What is being scored. The death head predicts, per move, the chance that move leads to a
+// death no later play can avoid. Asking whether it works is not a matter of accuracy: a
+// head that answers 0.5 everywhere is right about half the time and useless. The probe
+// instead reports a spread, a rank correlation and a ranking AUC, and this file pins down
+// what each of those means so a reading of the real probe can be trusted.
+//
+// Spread comes first, and the report says so. An untrained sigmoid head emits its
+// initialisation everywhere, so its spread is near zero while its mean sits at 0.5 - that
+// is the shape of nothing, and it is the only statistic that catches it without needing a
+// second network to compare against.
+//
+// Why this is a test rather than a script. Every number here is arithmetic over pairs of
+// floats, so it can be derived by hand and checked exactly with no network, no search and
+// no GPU. Every expected value below comes from the contract in death_probe.h with the
+// derivation written beside it; none was read off the implementation, which would only
+// record what the code already does.
+//
+// Run it:
+//
+//     cmake --build build --config Release --target DeathProbeTest
+//     build\Release\DeathProbeTest.exe
+//
+// Silent unless something fails, ending in either
+//
+//     all death probe checks pass
+//
+// or a count of failing checks and a non-zero exit.
+//
+// Four properties are worth knowing before reading a probe report. A correlation of -1 is a
+// different finding from 0: a head that is exactly wrong has learned something inverted,
+// while a silent one has learned nothing, and the sign is what separates them. Tied
+// estimates take midranks, so a head with no opinion cannot score a spurious +1. An AUC
+// over targets that all sit on one side of the threshold is undefined rather than 0.5,
+// because 0.5 alone would read as a coin flip, which is a measurement nobody took. And the
+// threshold binarises the target for the AUC and for nothing else, so moving it must move
+// the doomed fraction and leave the rank correlation untouched.
+
+#include <cmath>
 #include <format>
 #include <iostream>
 #include <stdexcept>
@@ -11,10 +50,16 @@
 namespace
 {
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
-// Every expected value below is derived from the contract in death_probe.h, by hand,
-// with the derivation written beside it. None was read off an implementation.
+// Compares two doubles within a tolerance, and counts a mismatch.
+//
+//     expectNear("spread", report.spread, 0.1414214, 1e-6);
+//
+// A NaN fails rather than comparing false quietly. Every statistic here either has a value
+// or carries a flag saying it has none, so a NaN means the arithmetic went wrong rather
+// than the case being undefined - and a silent NaN would pass an inequality test.
 void expectNear(const std::string& what, double actual, double expected, double tolerance)
 {
     if (std::isnan(actual) || std::abs(actual - expected) > tolerance)
@@ -25,6 +70,12 @@ void expectNear(const std::string& what, double actual, double expected, double 
     }
 }
 
+// Checks a flag, naming it when it does not hold.
+//
+//     expectTrue("auc is undefined with one-sided targets", !report.auc_defined);
+//
+// Used for the defined-ness flags, where the question is whether a statistic exists at all
+// rather than what it equals.
 void expectTrue(const std::string& what, bool condition)
 {
     if (!condition)
@@ -34,6 +85,14 @@ void expectTrue(const std::string& what, bool condition)
     }
 }
 
+// Builds a sample set from literal (estimate, target) pairs.
+//
+//     const DeathProbeSamples samples = makeSamples({ { 0.2f, 0.0f }, { 0.4f, 1.0f } });
+//     // head said 0.2 for a move that survived, 0.4 for one that died
+//
+// The estimate is what the head predicted; the target is what actually happened. Writing
+// the pairs out as literals is what lets every expected statistic in this file be derived
+// on paper - a fixture that generated them would move the arithmetic out of reach.
 DeathProbeSamples makeSamples(const std::vector<std::pair<float, float>>& raw)
 {
     DeathProbeSamples samples;
@@ -44,6 +103,13 @@ DeathProbeSamples makeSamples(const std::vector<std::pair<float, float>>& raw)
     return samples;
 }
 
+// Checks that scoreDeathProbe rejects a sample set it cannot score.
+//
+//     expectRefused("empty samples", DeathProbeSamples{}, 0.5f);
+//
+// The catch is narrowed to std::invalid_argument and any other exception fails the check.
+// "It threw something" would pass even when the refusal came from an unrelated fault, which
+// is the way a refusal test quietly stops testing the refusal.
 void expectRefused(const std::string& what, const DeathProbeSamples& samples, float threshold)
 {
     try
@@ -230,6 +296,7 @@ void refusals()
 
 }  // namespace
 
+// Runs every case, then reports. Returns 1 if any check failed, 0 otherwise.
 int main()
 {
     constantHeadHasZeroSpread();

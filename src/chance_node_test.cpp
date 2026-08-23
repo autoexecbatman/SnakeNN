@@ -5,24 +5,57 @@
 
 #include "snake_env.h"
 
-// Does the search ever see more than one food placement for the same path?
+// Whether the search sees more than one food placement for the same line of play.
 //
-// `MonteCarloSearch::search` starts every simulation with a copy of the root
-// environment (mcts.cpp, `tree.replay.push_back(*roots[index])`). A copy takes
-// the environment's `std::mt19937` with it, and `SnakeEnv::spawnFood` is the
-// only thing that draws from it. So two simulations that walk the same actions
-// see the same apple, every time.
+// Snake is stochastic in exactly one way: when an apple is eaten, the next one appears on
+// a random empty square. A search that always imagines the same next apple is planning
+// against a future it cannot actually rely on. This test measures whether it does.
 //
-// Du, Gemp, Wu and Wu 2022 do the opposite: an action whose transition is
-// stochastic "branches into states after the random event, with each state
-// representing one possible new location of the apple", explored "with equal
-// frequency". This test pins down what we actually do, so that implementing
-// chance branching flips it rather than passing silently.
+// The mechanism it turns on. `MonteCarloSearch::search` begins every simulation with a
+// copy of the root environment (`mcts.cpp`, `tree.replay.push_back(*roots[index])`). The
+// copy carries the environment's generator with it, and `SnakeEnv::spawnFood` is the only
+// thing that draws from that generator. So without intervention two simulations walking
+// identical actions see an identical apple, every time - the search would explore one
+// sampled future and mistake it for the future. `SnakeEnv::reseed` exists to break that,
+// and the search calls it per simulation.
+//
+// What this asserts, and why both halves are needed. That a plain copy replays to the same
+// apple, which is the blindness itself and would be silently restored if `reseed` were
+// dropped from the search. That a reseeded copy walking the same actions reaches different
+// apples, which is the property the search depends on. And a control that apple placement
+// varies across seeds at all, without which the second assertion could pass on a board
+// where the apple never moves and would prove nothing.
+//
+// Run it:
+//
+//     cmake --build build --config Release --target ChanceNodeTest
+//     build\Release\ChanceNodeTest.exe
+//
+// It prints one line per property and returns non-zero if any failed:
+//
+//     [PASS] the constructed path eats an apple and survives  food cell after replay = 11
+//     [PASS] a plain copy replays one path to the same apple  run 1 cell 11, run 2 cell 11
+//     [PASS] a reseeded copy replays one path to different apples - search sees chance  12
+//            streams sampled from one position
+//     [PASS] apple placement does vary across seeds - the check is not vacuous  8 placements
+//            sampled
+//     all properties held
+//
+// Where this still differs from the paper. Du, Gemp, Wu and Wu 2022 branch an action whose
+// transition is stochastic "into states after the random event, with each state
+// representing one possible new location of the apple", explored "with equal frequency".
+// Reseeding samples one placement per path instead of enumerating every empty cell. That
+// is the one place the search is knowingly not exact, and this file is where a change to
+// it would be caught.
 
 namespace
 {
 
+// Board side. 10 because the paper's comparison is on 10x10 and a smaller board leaves
+// too few empty cells for apple placement to vary much, which would weaken the control.
 constexpr int BOARD = 10;
+// The one starting position every property is read on. Fixed rather than drawn, so a
+// failure names a board somebody can reconstruct.
 constexpr unsigned int SEED = 12345;
 // Long enough that a greedy walk to the apple always finds one.
 constexpr int MAX_PATH_STEPS = 200;
@@ -34,8 +67,20 @@ constexpr unsigned int RESEED_STREAMS = 12;
 // Seeds sampled for the control that apple placement varies at all.
 constexpr unsigned int CONTROL_SEEDS = 8;
 
+// Properties that did not hold. check increments it; main prints it and returns 1 if it
+// is non-zero, so the exit code says whether the test failed and the printed line says
+// how many ways.
 int failures = 0;
 
+// Reports one property and counts a failure.
+//
+//     check(first == second, "a plain copy replays to the same apple",
+//           std::format("run 1 cell {}, run 2 cell {}", first, second));
+//     // prints: [PASS] a plain copy replays to the same apple  run 1 cell 11, run 2 cell 11
+//
+// `detail` carries the numbers the property was judged on, so a failure in a log says what
+// it saw rather than only which line broke. Increments the file-local failure count, which
+// main returns.
 void check(bool condition, const std::string& name, const std::string& detail)
 {
     if (condition)
@@ -49,8 +94,18 @@ void check(bool condition, const std::string& name, const std::string& detail)
     }
 }
 
-// Walks the given actions, stopping early if the game ends. Returns the food
-// cell the environment holds afterwards, or -1 if the game finished.
+// The food cell reached by walking `actions` from a copy of `environment`.
+//
+//     const int cell = foodAfter(root, eating_path);   // 11
+//     const int again = foodAfter(root, eating_path);  // 11 again - a plain copy is
+//                                                      // deterministic
+//
+// Takes the environment by value on purpose: every call starts from the caller's state,
+// which is what lets the same path be walked twice and compared. The cell is
+// `y * width + x`, one number so two placements compare with ==.
+//
+// Returns -1 when the game ended during or at the end of the walk, since there is then no
+// apple to report. The caller treats -1 as a sample to discard rather than as a placement.
 int foodAfter(SnakeEnv environment, const std::vector<SnakeEnv::Action>& actions)
 {
     for (SnakeEnv::Action action : actions)
@@ -68,8 +123,19 @@ int foodAfter(SnakeEnv environment, const std::vector<SnakeEnv::Action>& actions
     return environment.food().y * environment.width() + environment.food().x;
 }
 
-// Actions that reach the food, chosen by walking towards it and turning only
-// when the straight move would kill. Enough to guarantee an apple is eaten.
+// A sequence of actions that eats one apple, found greedily.
+//
+//     const std::vector<SnakeEnv::Action> path = pathThatEats(root, MAX_PATH_STEPS);
+//     path.empty();   // false - an empty result means no apple was reached
+//
+// At each step it takes the surviving action that most reduces Manhattan distance to the
+// apple, so it closes on the food without walking into a wall or itself. Stops as soon as
+// the score rises, so the path ends on the move that eats - which is the move that spawns
+// the next apple, and therefore the only move whose outcome is random.
+//
+// This is a fixture, not a policy: it needs to reach food reliably, not to play well.
+// Returns whatever it walked if `max_steps` runs out without eating, which the caller
+// checks for rather than assuming a path was found.
 std::vector<SnakeEnv::Action> pathThatEats(SnakeEnv environment, int max_steps)
 {
     std::vector<SnakeEnv::Action> actions;

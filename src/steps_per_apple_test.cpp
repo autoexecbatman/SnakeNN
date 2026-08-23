@@ -13,14 +13,17 @@
 namespace
 {
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
+// Reports one failure and counts it.
 void fail(std::string_view what, std::string_view detail)
 {
     std::cout << std::format("[FAIL] {}: {}\n", what, detail);
     failures++;
 }
 
+// Compares two ints, reporting both when they differ.
 void expectEquals(std::string_view what, int expected, int actual)
 {
     if (expected != actual)
@@ -29,6 +32,8 @@ void expectEquals(std::string_view what, int expected, int actual)
     }
 }
 
+// A vector of intervals as a readable list, so a failure prints [3, 12, 7] rather than a
+// length and a promise.
 std::string describe(const std::vector<int>& values)
 {
     std::string text = "[";
@@ -39,6 +44,8 @@ std::string describe(const std::vector<int>& values)
     return text + "]";
 }
 
+// Compares two interval lists, printing both in full when they differ. Which interval is
+// wrong matters as much as that one is.
 void expectIntervals(std::string_view what, const std::vector<int>& expected,
                      const std::vector<int>& actual)
 {
@@ -62,6 +69,8 @@ pace::AppleIntervals play(const std::vector<int>& scores)
     return intervals;
 }
 
+// A new observer reports no intervals. The pace line is parsed by position, so a phantom
+// leading interval would shift every real one.
 void aFreshObserverHasNothing()
 {
     const pace::AppleIntervals intervals;
@@ -82,6 +91,8 @@ void anIntervalIsTheMovesBetweenApples()
     expectEquals("tail after the last apple", 1, intervals.stepsSinceLastApple());
 }
 
+// An apple eaten on the first move costs one step, not zero. The interval counts steps
+// taken to reach it, and an off-by-one here biases every pace statistic downward.
 void anAppleOnTheFirstMoveIsAnIntervalOfOne()
 {
     const pace::AppleIntervals intervals = play({ 1 });
@@ -89,6 +100,8 @@ void anAppleOnTheFirstMoveIsAnIntervalOfOne()
     expectEquals("no tail", 0, intervals.stepsSinceLastApple());
 }
 
+// A game that eats nothing has no intervals - its steps are the tail after the last
+// apple, which the pace line does not carry.
 void aGameWithNoApplesIsAllTail()
 {
     const pace::AppleIntervals intervals = play({ 0, 0, 0, 0 });
@@ -159,6 +172,7 @@ void aFullBoardIsAccountedFor()
     expectEquals("the first interval", 6, intervals.intervals().front());
 }
 
+// Splits a pace line into fields, for checking the format a log analyser reads.
 std::vector<std::string> splitOnSpaces(const std::string& text)
 {
     std::vector<std::string> fields;
@@ -171,6 +185,8 @@ std::vector<std::string> splitOnSpaces(const std::string& text)
     return fields;
 }
 
+// The line begins with the seed and then every interval in order. Analysis scripts index
+// it by position, so a missing seed shifts every interval by one column.
 void aPaceLineCarriesTheSeedAndEveryInterval()
 {
     const std::string line = pace::formatPaceLine(3758096384u, { 7, 5, 12 });
@@ -204,6 +220,8 @@ void aPaceLineCarriesTheSeedAndEveryInterval()
     }
 }
 
+// A scoreless game still emits a line with its seed. Omitting it would leave the failures
+// out of any pace analysis, which is exactly the population worth looking at.
 void aGameWithNoApplesStillGetsALine()
 {
     const std::string line = pace::formatPaceLine(42u, {});

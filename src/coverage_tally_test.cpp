@@ -1,3 +1,38 @@
+// Checks the arithmetic that decides how many death-risk labels a run of search yields.
+//
+// The thing under test. A death-risk label teaches the network which moves lead to a death
+// no later play can avoid. The current rule admits a label only where the search visited
+// every root action, on the grounds that a move nobody tried has no evidence attached. That
+// rule is expensive: a confident policy pours its simulations down one action, so coverage
+// falls exactly as the agent improves. CoverageTally counts what the search reached and
+// scoreCoverage turns it into two numbers - what the all-or-nothing rule admits, and what a
+// per-action rule that kept every visited move would admit. Their ratio is what changing
+// the rule would buy at the same search cost.
+//
+// Why it is worth a test of its own. The tally is pure arithmetic over counts, so it can be
+// checked exactly, by hand, with no network and no GPU - and it decides a design question
+// that costs hours to answer any other way. Every expected value below is derived from the
+// contract in coverage_tally.h with the arithmetic written beside it. None was read off the
+// implementation, which would only have recorded what the code already did.
+//
+// Run it:
+//
+//     cmake --build build --config Release --target CoverageTallyTest
+//     build\Release\CoverageTallyTest.exe
+//
+// It is silent unless something fails, and ends with either
+//
+//     all coverage tally checks pass
+//
+// or a count of failing checks and a non-zero exit.
+//
+// The five cases, and the distinct thing each pins down: the header's worked example, where
+// the two rules disagree two to one; full coverage, where they agree exactly and a redesign
+// buys nothing; no coverage, where the ratio is undefined rather than zero, because an
+// unbounded gain must not read as no gain; a position the search never entered, which
+// belongs in the denominator and in no numerator; and a position offering two actions rather
+// than three, because coverage means visiting what is available, not visiting three.
+
 #include <cmath>
 #include <format>
 #include <iostream>
@@ -9,10 +44,17 @@
 namespace
 {
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
-// Every expected value is derived from the contract in coverage_tally.h by hand, with
-// the arithmetic written beside it. None was read off an implementation.
+// Compares two doubles within a tolerance, and counts a mismatch.
+//
+//     expectNear("yield ratio", report.yield_ratio, 2.0, 1e-9);
+//
+// A NaN fails rather than comparing false quietly: every ratio here has a defined value or
+// a flag saying it has none, so a NaN means the arithmetic went wrong rather than that the
+// case was undefined. The tolerance is the caller's, because a count converted to a double
+// and a ratio of two counts do not deserve the same slack.
 void expectNear(const std::string& what, double actual, double expected, double tolerance)
 {
     if (std::isnan(actual) || std::abs(actual - expected) > tolerance)
@@ -23,6 +65,12 @@ void expectNear(const std::string& what, double actual, double expected, double 
     }
 }
 
+// Compares two counts exactly, and reports both when they differ.
+//
+//     expectCount("per-action labels", report.labels_per_action, 6);
+//
+// Exact rather than near: these are labels and positions, and a label count that is nearly
+// right is wrong.
 void expectCount(const std::string& what, std::size_t actual, std::size_t expected)
 {
     if (actual != expected)
@@ -32,6 +80,12 @@ void expectCount(const std::string& what, std::size_t actual, std::size_t expect
     }
 }
 
+// Checks a flag, naming it when it does not hold.
+//
+//     expectTrue("ratio is undefined with no admitted labels", !report.yield_ratio_defined);
+//
+// Used for the defined-ness flags, where the question is whether a number exists at all
+// rather than what it equals.
 void expectTrue(const std::string& what, bool condition)
 {
     if (!condition)
@@ -121,6 +175,12 @@ void coverageIsRelativeToAvailableActions()
     expectCount("per-action labels follow the action count", report.labels_per_action, 2);
 }
 
+// What scoreCoverage rejects: a tally holding no positions.
+//
+// A coverage rate over zero positions has no value, and returning one - zero, or one, or a
+// NaN - would be a number a caller could act on. It throws instead. The catch is narrowed
+// to std::invalid_argument and a different exception fails, because "it threw something"
+// would pass even if the refusal came from an unrelated fault.
 void refusals()
 {
     try
@@ -141,6 +201,7 @@ void refusals()
 
 }  // namespace
 
+// Runs every case, then reports. Returns 1 if any check failed, 0 otherwise.
 int main()
 {
     headerExample();

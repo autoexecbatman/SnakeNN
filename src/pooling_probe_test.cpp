@@ -28,17 +28,28 @@
 namespace
 {
 
+// Board side. 10 rather than 20 because the pool averages about six cells into each
+// output value here, which is the harder case for a single cell to survive.
 constexpr int BOARD = 10;
 // Dense enough to be an endgame, with room left to route through.
 constexpr int DENSE_LENGTH = 70;
 // Short enough that the head can still turn, so the preference has somewhere to
 // move to. Chosen by the geometry, not by the result.
 constexpr int OPEN_LENGTH = 12;
+// Trunk width and depth, matching the networks this project actually trains, so the answer
+// is about the architecture in use rather than a smaller stand-in.
 constexpr int TRUNK_CHANNELS = 64;
 constexpr int TRUNK_BLOCKS = 4;
 
+// Properties that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
+// Reports one property and counts a failure.
+//
+//     check(different > 0, "one cell reaches the policy", "12 of 3 outputs moved");
+//
+// `detail` carries the measurement, because "the cell was visible" is worth little without
+// how visible.
 void check(bool condition, const std::string& name, const std::string& detail)
 {
     if (condition)
@@ -114,14 +125,14 @@ int survivableActionCount(int width, int height, const SnakeEnv::Snapshot& snaps
     int head_x = snapshot.body_cells[0] % width;
     int head_y = snapshot.body_cells[0] / width;
 
-    const int deltas[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};  // UP DOWN LEFT RIGHT
+    const int deltas[4][2] = { { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } };  // UP DOWN LEFT RIGHT
     const int heading = static_cast<int>(snapshot.heading);
     // STRAIGHT, then the two turns, expressed as headings.
-    const int left_of[4] = {static_cast<int>(Direction::LEFT), static_cast<int>(Direction::RIGHT),
-                            static_cast<int>(Direction::DOWN), static_cast<int>(Direction::UP)};
-    const int right_of[4] = {static_cast<int>(Direction::RIGHT), static_cast<int>(Direction::LEFT),
-                             static_cast<int>(Direction::UP), static_cast<int>(Direction::DOWN)};
-    int candidates[3] = {heading, left_of[heading], right_of[heading]};
+    const int left_of[4] = { static_cast<int>(Direction::LEFT), static_cast<int>(Direction::RIGHT),
+                             static_cast<int>(Direction::DOWN), static_cast<int>(Direction::UP) };
+    const int right_of[4] = { static_cast<int>(Direction::RIGHT), static_cast<int>(Direction::LEFT),
+                              static_cast<int>(Direction::UP), static_cast<int>(Direction::DOWN) };
+    int candidates[3] = { heading, left_of[heading], right_of[heading] };
 
     int survivable = 0;
     for (int index = 0; index < 3; index++)
@@ -165,6 +176,13 @@ std::vector<float> encode(int width, int height, const SnakeEnv::Snapshot& snaps
     return planes;
 }
 
+// How many elements of two equally sized vectors differ at all.
+//
+//     countDifferences({ 0.1f, 0.2f }, { 0.1f, 0.9f });   // 1
+//
+// Exact inequality rather than a tolerance: the question is whether a one-cell change
+// reaches the output at all, so any movement counts and a threshold would answer a
+// different question.
 int countDifferences(const std::vector<float>& left, const std::vector<float>& right)
 {
     int different = 0;
@@ -183,7 +201,8 @@ int countDifferences(const std::vector<float>& left, const std::vector<float>& r
 // hides the fact that the tensor aliases this buffer until the clone.
 torch::Tensor toBatch(std::vector<float>& planes, int width, int height)
 {
-    return torch::from_blob(planes.data(), {1, SnakeEnv::PLANE_COUNT, height, width}, torch::kFloat)
+    return torch::from_blob(planes.data(), { 1, SnakeEnv::PLANE_COUNT, height, width },
+                            torch::kFloat)
         .clone();
 }
 

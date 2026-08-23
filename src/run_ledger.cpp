@@ -1,3 +1,23 @@
+// What every run cost and what it produced, appended to one tab-separated file.
+//
+// A result whose cost was never recorded cannot be compared, budgeted or reproduced. This
+// exists so that answering "how much did this take" is a lookup rather than an
+// archaeological reading of thirteen logs - which is what it was, after a checkpoint
+// reached iteration 140 with no recoverable wall clock and no cumulative game count.
+//
+// Two rows per run, not one. The started row is written before any work, so a process that
+// is killed still leaves evidence it ran; the finished or failed row is written at the end
+// and carries the seconds, the games and the samples. A started row with no partner is a
+// run that died, and that is a finding rather than a gap in the file.
+//
+// The format is tab-separated because it is read by eye and by script equally often. Tabs
+// and newlines are stripped from every field before writing: one of them reaching the file
+// would end a column or a row early and shift every field after it, which corrupts the rows
+// around it rather than the one at fault.
+//
+// See run_ledger.h for the entry fields and the functions; this file holds the formatting,
+// the escaping and the append.
+
 #include <process.h>
 #include <cassert>
 #include <chrono>

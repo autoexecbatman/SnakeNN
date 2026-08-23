@@ -12,11 +12,56 @@
 // orthogonally adjacent, and the last cell adjacent to the first. Anything less
 // is a Hamiltonian path, and the wrap from its end back to its start is a move
 // the snake cannot make.
+//
+// The win rests on this and on nothing else. CycleAgent has one decision - follow the
+// ordering - so it is correct by construction rather than by tuning, and the construction
+// is what this checks. Run it after any change to hamiltonian_cycle.cpp.
+//
+// It is a live guard, not a formality: it caught the original defect, a boustrophedon path
+// whose wrap edge jumped 19 cells. Every check below passed on that ordering except the
+// adjacency one, which is why the failure branch prints the offending pair and how far
+// apart they are rather than only that a step was illegal.
+//
+// Run it - seconds, and buildable without CMake or vcpkg from a shell with MSVC on PATH:
+//
+//     cmake --build build --config Release --target CycleTest
+//     build\Release\CycleTest.exe
+//
+//     cl /std:c++20 /EHsc src\cycle_test.cpp src\hamiltonian_cycle.cpp
+//
+// It prints one line per property and returns non-zero if any failed:
+//
+//     Hamiltonian cycle validity, 20x20 grid, 400 cells
+//       PASS  generateCycle() reports success
+//       PASS  every one of the 400 steps moves to an orthogonally adjacent cell
+//       PASS  no cell is entered twice during one lap
+//       PASS  the lap covers every cell on the grid
+//       PASS  the lap returns to its starting cell after exactly 400 steps
+//       PASS  every cell has a cycle index in range
+//       PASS  no two cells share a cycle index
+//
+//     All checks passed - the ordering is a Hamiltonian cycle.
+//
+// The MST progress lines above that come from hamiltonian_cycle.cpp, not from here.
+//
+// The last two checks are not decoration. Cycle indices must be a permutation of
+// 0..cell_count-1 for cycle distance to mean anything, and isShortcutSafe is built entirely
+// on cycle distance - so a duplicate index would make the shortcut layer unsound in a way
+// no adjacency check would notice.
 
 namespace {
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
+// Reports one property and counts a failure.
+//
+//     expect(revisits == 0, "no cell is entered twice during one lap");
+//     //   PASS  no cell is entered twice during one lap
+//
+// Prints on success as well as failure, because the point of this test is to say what was
+// verified. A silent pass would leave a reader unable to tell a checked property from one
+// nobody wrote.
 void expect(bool condition, const std::string& description) {
     if (condition) {
         std::cout << "  PASS  " << description << std::endl;
@@ -26,6 +71,16 @@ void expect(bool condition, const std::string& description) {
     }
 }
 
+// Whether two cells share an edge - the only move a snake can make.
+//
+//     isAdjacent(Position(3, 4), Position(3, 5));   // true
+//     isAdjacent(Position(3, 4), Position(4, 5));   // false, diagonal
+//     isAdjacent(Position(3, 4), Position(3, 4));   // false, a cell is not adjacent to
+//                                                   // itself
+//
+// Manhattan distance of exactly 1, so diagonals and standing still both fail. Computed here
+// rather than taken from hamiltonian_cycle.cpp on purpose: a test that borrowed the
+// definition it is checking would agree with a wrong one.
 bool isAdjacent(const Position& first, const Position& second) {
     int horizontal = std::abs(first.x - second.x);
     int vertical = std::abs(first.y - second.y);
@@ -34,6 +89,10 @@ bool isAdjacent(const Position& first, const Position& second) {
 
 }  // namespace
 
+// Generates the ordering, walks one full lap through the public interface, and checks the
+// four cycle properties plus the two index properties. Returns 1 on any failure, 0 on all
+// passing, and 1 without testing anything if generateCycle fails or the walk leaves the
+// grid - an ordering that was never built is not a passing one.
 int main() {
     const int width = SnakeGame::GRID_WIDTH;
     const int height = SnakeGame::GRID_HEIGHT;

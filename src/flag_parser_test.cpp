@@ -9,13 +9,52 @@
 
 #include "flag_parser.h"
 
-// Expected values come from the contract in flag_parser.h.
+// Checks the layer every program's command line passes through.
+//
+// Six functions, one job: turn text into a value, or refuse. parseWholeInt and
+// parseWholeUnsigned for counts and seeds, parseUnitFloat for a rate in [0, 1], parseOnOff
+// for a switch, requireAtLeast for a bound, and readFlags to split an argument list into
+// flag-and-value pairs.
+//
+// Why this is worth 490 lines of test. Every failure this layer can have is a quiet one.
+// A parser that consumed "10x10" as 10 runs a board nobody asked for; one that wrapped a
+// negative seed produces a huge one and a held-out set that is not held out; one that read
+// "yes" as false runs the opposite of what was typed. In each case the run completes, the
+// log looks ordinary, and the number is wrong. There is no crash to investigate, so the
+// only place the mistake can be caught is here.
+//
+// The shape of every refusal test. It is not enough that a bad value throws - the message
+// has to name the flag and the value, because an operator reading a refusal needs to know
+// which argument to fix. Several cases go further and check which of two failures was
+// reported: a malformed number and an out-of-range one both throw std::invalid_argument,
+// so only the message distinguishes "that is not a number" from "that number is too big",
+// and a parser that conflated them would send someone hunting for a typo that is not there.
+//
+// Bounds are tested in pairs either side of the edge, so an off-by-one in a comparison
+// fails rather than passing on both sides.
+//
+// Expected values come from the contract in flag_parser.h, never from what the parser
+// returns. A test written against observed output records present behaviour and would
+// confirm a wrong reading forever.
+//
+// Run it:
+//
+//     cmake --build build --config Release --target FlagParserTest
+//     build\Release\FlagParserTest.exe
+//
+// Silent unless something fails, ending in
+//
+//     [SUCCESS] flag_parser: all properties hold
 
 namespace
 {
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
+// Compares two ints, reporting both when they differ.
+//
+//     expectEquals("--board 10", 10, flags::parseWholeInt("--board", "10"));
 void expectEquals(std::string_view what, int expected, int actual)
 {
     if (expected == actual)
@@ -60,6 +99,8 @@ void expectRejected(std::string_view flag, std::string_view text)
     }
 }
 
+// The ordinary case, plus the exact edges of int. A parser that only ever sees small
+// numbers hides an overflow that arrives the first time somebody types a real seed.
 void acceptsAWholeNumber()
 {
     expectEquals("plain digits", 12, flags::parseWholeInt("--board", "12"));
@@ -109,6 +150,12 @@ void reportsAnOutOfRangeValueAsItsOwnMistake()
     }
 }
 
+// Compares two unsigned ints. Separate from expectEquals because a seed near the top of the
+// unsigned range converts to a negative int, and the failure message would print a number
+// that is not the one that differed.
+//
+//     expectUnsignedEquals("--seed 4294967295", 4294967295u,
+//                          flags::parseWholeUnsigned("--seed", "4294967295"));
 void expectUnsignedEquals(std::string_view what, unsigned int expected, unsigned int actual)
 {
     if (expected == actual)
@@ -119,6 +166,9 @@ void expectUnsignedEquals(std::string_view what, unsigned int expected, unsigned
     failures++;
 }
 
+// Checks that parseWholeUnsigned refuses a value, naming the flag and the value.
+//
+//     expectUnsignedRejected("--seed", "-1");   // must not wrap to 4294967295
 void expectUnsignedRejected(std::string_view flag, std::string_view text)
 {
     try
@@ -145,6 +195,8 @@ void expectUnsignedRejected(std::string_view flag, std::string_view text)
     }
 }
 
+// The ordinary case, plus the top of the unsigned range - which is where evaluation seeds
+// live, so this is the region the project actually uses.
 void acceptsAnUnsignedWholeNumber()
 {
     expectUnsignedEquals("zero", 0u, flags::parseWholeUnsigned("--seed", "0"));
@@ -160,6 +212,8 @@ void rejectsANegativeValueRatherThanWrappingIt()
     expectUnsignedRejected("--seed", "-900000");
 }
 
+// Text that is not a number, and a number past the unsigned ceiling. Both refused, so a
+// seed cannot arrive as something the caller never typed.
 void rejectsMalformedAndOversizedUnsigned()
 {
     expectUnsignedRejected("--seed", "");
@@ -193,6 +247,9 @@ void reportsAnOversizedUnsignedAsItsOwnMistake()
     }
 }
 
+// Checks that requireAtLeast accepts a value at or above its bound, by returning normally.
+//
+//     expectAccepted("--games", 1, 1);   // exactly at the bound is legal
 void expectAccepted(std::string_view flag, int value, int minimum)
 {
     try
@@ -208,6 +265,13 @@ void expectAccepted(std::string_view flag, int value, int minimum)
 }
 
 // The message must carry all three, or it does not say what to change.
+// Checks that requireAtLeast refuses a value below its bound and that the message carries
+// the flag, the value and the bound.
+//
+//     expectBelowBound("--games", 0, 1);
+//
+// All three, or the message does not say what to change: a refusal naming only the flag
+// leaves the operator guessing which direction the bound runs.
 void expectBelowBound(std::string_view flag, int value, int minimum)
 {
     try
@@ -254,6 +318,8 @@ void acceptsAtOrAboveTheBound()
     expectAccepted("--seed", 2147483647, 0);
 }
 
+// One below each bound, paired with the accepting cases above so an off-by-one in the
+// comparison fails on one side rather than passing on both.
 void rejectsBelowTheBound()
 {
     expectBelowBound("--board", 1, 2);
@@ -263,11 +329,22 @@ void rejectsBelowTheBound()
     expectBelowBound("--seed", -2147483648, 0);
 }
 
+// readFlags over a vector, so a case can be written as a brace list.
+//
+//     read({ "--board", "10", "--games", "8" });   // two pairs, in order
 std::vector<flags::FlagValue> read(const std::vector<std::string>& arguments)
 {
     return flags::readFlags(std::span<const std::string>(arguments));
 }
 
+// Checks that an argument list splits into exactly the expected flag-and-value pairs, in
+// order.
+//
+//     expectPairs("two flags", { "--board", "10", "--games", "8" },
+//                 { { "--board", "10" }, { "--games", "8" } });
+//
+// Order matters because a later flag overwrites an earlier one, so a parser that returned
+// the right pairs in the wrong order would silently resolve a repeated flag backwards.
 void expectPairs(std::string_view what, const std::vector<std::string>& arguments,
                  const std::vector<std::string>& expected)
 {
@@ -300,6 +377,9 @@ void expectPairs(std::string_view what, const std::vector<std::string>& argument
     }
 }
 
+// Checks that readFlags refuses an argument list, and that the message contains a phrase.
+//
+//     expectArgumentsRejected("a flag with no value", { "--board" }, "--board");
 void expectArgumentsRejected(std::string_view what, const std::vector<std::string>& arguments,
                              std::string_view named)
 {
@@ -326,6 +406,9 @@ void expectArgumentsRejected(std::string_view what, const std::vector<std::strin
     }
 }
 
+// An argument list becomes flag-and-value pairs in the order given. Order is the property:
+// a later flag overwrites an earlier one, so pairs returned out of order would resolve a
+// repeated flag backwards.
 void splitsArgumentsIntoPairsInOrder()
 {
     expectPairs("no arguments", {}, {});
@@ -339,6 +422,8 @@ void splitsArgumentsIntoPairsInOrder()
                 { "--checkpoint", "az10_iter123.pt" });
 }
 
+// A trailing flag with nothing after it. Refused rather than defaulted: a flag typed and
+// then ignored is the case where the operator is most certain they configured the run.
 void rejectsAFlagWithNoValue()
 {
     expectArgumentsRejected("trailing flag", { "--board" }, "--board");
@@ -348,6 +433,8 @@ void rejectsAFlagWithNoValue()
     expectArgumentsRejected("value dropped mid-line", { "--board", "--games", "64" }, "--board");
 }
 
+// A bare word where a flag was expected - usually a value whose flag was forgotten. It
+// cannot be attributed to anything, so it is refused rather than skipped.
 void rejectsSomethingThatIsNotAFlag()
 {
     expectArgumentsRejected("bare word first", { "board", "10" }, "board");
@@ -357,6 +444,9 @@ void rejectsSomethingThatIsNotAFlag()
 
 }  // namespace
 
+// Checks parseUnitFloat returns the expected rate.
+//
+//     expectRate("--epsilon", "0.1", 0.1f);
 void expectRate(std::string_view flag, std::string_view text, float expected)
 {
     try
@@ -376,6 +466,9 @@ void expectRate(std::string_view flag, std::string_view text, float expected)
     }
 }
 
+// Checks parseUnitFloat refuses a value, naming the flag and the value.
+//
+//     expectRateRejected("--epsilon", "1.5");   // outside [0, 1], refused not clamped
 void expectRateRejected(std::string_view flag, std::string_view text)
 {
     try
@@ -464,6 +557,7 @@ void rejectsEveryOtherSpelling()
     }
 }
 
+// Runs every case, then reports. Returns 1 if any check failed, 0 otherwise.
 int main()
 {
     testParseUnitFloat();

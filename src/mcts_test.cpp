@@ -8,8 +8,32 @@
 #include "mcts.h"
 #include "snake_env.h"
 
-// Checked against hand-written evaluators, so a failure here is one of selection,
-// backup or terminal handling. Nothing in this file links LibTorch.
+// Checks the search: selection, backup, batching and terminal handling.
+//
+// Checked against hand-written evaluators, so a failure here is one of selection, backup or
+// terminal handling rather than of a network. Nothing in this file links LibTorch, which is
+// what lets search correctness be tested without CUDA and in about a second.
+//
+// The fixtures are the method. A real network answers every question at once and none of
+// them precisely, so each class below is a deliberately degenerate network that fixes
+// everything except the one quantity a case is about: uniform priors to isolate selection
+// from any preference, a fixed prior vector to make steering observable, a constant value
+// to make backup arithmetic checkable by hand, a fixed death risk, a scaled value to test
+// invariance, and a near-one-hot prior to reproduce the saturation that makes PUCT blind.
+// A case that needed a real network would be measuring the network.
+//
+// What is checked at compile time, above the namespace, rather than at run time. The search
+// must not be copyable or movable: a copy would share a random stream, a half-finished
+// descent and one evaluator's call counter, and the resulting bug produces plausible
+// numbers rather than a crash - so there would be nothing to observe. SnakeEnv must stay
+// copyable for the opposite reason, since the search copies a root once per simulation.
+//
+// Run it:
+//
+//     cmake --build build --config Release --target SearchTest
+//     build\Release\SearchTest.exe
+//
+// Silent unless something fails; a failure names the property and the numbers it saw.
 
 // A copy would share a stream, a half-finished descent and one evaluator counter.
 // Checked at compile time; the bug produces plausible numbers rather than a crash.
@@ -38,6 +62,7 @@ namespace
 // here measures what it measured before the clock existed.
 constexpr int TEST_STEP_LIMIT = 1000000;
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
 void expect(bool condition, const std::string& description)
@@ -55,6 +80,16 @@ void expect(bool condition, const std::string& description)
 
 // Says nothing: flat priors, zero value. Any preference the search shows under
 // this evaluator comes from the simulator's own rewards and terminations.
+// A network with no opinion: uniform priors, zero value, one step, no death risk.
+//
+//     SilentEvaluator evaluator;
+//     MonteCarloSearch search(evaluator, testConfig(200));
+//     evaluator.calls;           // how many batched forward passes the search made
+//     evaluator.largest_batch;   // the widest batch it built
+//
+// Used where the property must hold whatever the network thinks - batching, buffer reuse,
+// determinism, terminal handling. With every prior equal, anything the search does is the
+// search's doing.
 class SilentEvaluator : public Evaluator
 {
 public:
@@ -75,15 +110,26 @@ public:
         }
     }
 
+    // Batched forward passes made. One per simulation across every tree, not one per tree.
     int calls = 0;
+    // The widest batch built, which is what shows the trees advanced in lockstep rather
+    // than one at a time.
     int largest_batch = 0;
 };
 
 // These priors and a silent value head, so a test can check that selection acted
 // on what the network believes.
+// A network with one fixed opinion, the same at every state.
+//
+//     PriorEvaluator evaluator({ 0.8f, 0.1f, 0.1f });   // straight, left, right
+//
+// Value is zero everywhere, so visits follow the prior and nothing else - which is what
+// makes "the prior steers the search" a statement about selection rather than about value.
 class PriorEvaluator : public Evaluator
 {
 public:
+    // `priors` is one weight per action, in action order. Not required to sum to one; the
+    // search normalises.
     explicit PriorEvaluator(const std::vector<float>& priors) : priors_(priors) {}
 
     void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
@@ -103,14 +149,23 @@ public:
     }
 
 private:
+    // Returned unchanged at every state.
     std::vector<float> priors_;
 };
 
 // Flat priors and a fixed value, so the root's return follows from the discount and
 // the path length alone - which is what makes backup's exponent checkable by hand.
+// A network that returns the same value everywhere, with uniform priors.
+//
+//     ConstantValueEvaluator evaluator(1.0f);
+//
+// Makes backup arithmetic checkable on paper: with every leaf worth the same, what reaches
+// the root is the discount and the edge rewards alone, so a discount applied per edge
+// rather than per step shows up as a number that can be derived by hand.
 class ConstantValueEvaluator : public Evaluator
 {
 public:
+    // `value` is what every leaf is worth, in reward units.
     explicit ConstantValueEvaluator(float value) : value_(value) {}
 
     void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
@@ -135,9 +190,16 @@ private:
 
 // One death risk per action and silence elsewhere, so a test can say "this action
 // is doomed" and check only what the cap did about it.
+// A network with a fixed death risk per action, uniform priors and zero value.
+//
+//     RiskEvaluator evaluator({ 0.9f, 0.0f, 0.0f });   // straight looks fatal
+//
+// Isolates the death cap and the risk backup from anything the value head might otherwise
+// be doing.
 class RiskEvaluator : public Evaluator
 {
 public:
+    // `death_risks` is one probability per action, in action order.
     explicit RiskEvaluator(const std::vector<float>& death_risks) : death_risks_(death_risks) {}
 
     void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
@@ -161,6 +223,12 @@ private:
     std::vector<float> death_risks_;
 };
 
+// A search configuration for a test: the paper's constants, noise off, seed fixed.
+//
+//     MonteCarloSearch::Config config = testConfig(200);
+//
+// Noise off and a fixed seed are what make a case reproducible - a property checked under
+// root noise would fail intermittently and be blamed on the search.
 MonteCarloSearch::Config testConfig(int simulations)
 {
     MonteCarloSearch::Config config;
@@ -173,6 +241,9 @@ MonteCarloSearch::Config testConfig(int simulations)
     return config;
 }
 
+// The index of the largest element, first one wins on a tie.
+//
+//     indexOfLargest({ 0.1f, 0.7f, 0.2f });   // 1
 int indexOfLargest(const std::vector<float>& values)
 {
     int best = 0;
@@ -193,6 +264,9 @@ SnakeEnv openBoard(unsigned int seed)
     return SnakeEnv(20, 20, seed, TEST_STEP_LIMIT);
 }
 
+// Visits follow the prior when value says nothing. With every leaf worth zero, the only
+// thing that can concentrate visits is the prior, so this is a statement about selection
+// alone.
 void testPriorsSteerTheSearch()
 {
     // Favours each action in turn from one position, which is what makes the claim
@@ -231,6 +305,9 @@ void testPriorsSteerTheSearch()
     expect(distribution_moved, "moving the prior moved the visit distribution");
 }
 
+// Every legal action is visited at least once given enough simulations. An action the
+// search never enters has no value estimate, and PUCT would then be choosing among fewer
+// moves than exist without anything reporting it.
 void testNoActionIsStarved()
 {
     // Without the (1 + visits) decay one strong prior takes every simulation, and the
@@ -258,6 +335,9 @@ void testNoActionIsStarved()
               << " / " << results[0].policy()[2] << std::endl;
 }
 
+// A position with no survivable move is still searched, and the tree stops at the death
+// rather than expanding through it. Expanding past a terminal would invent continuations
+// the game cannot have and back up values from states that do not exist.
 void testDoomedPositionIsSearchedNotExpandedPastDeath()
 {
     // Every action kills, so the descent must stop rather than expand past death.
@@ -365,6 +445,9 @@ SnakeEnv boardWithDistantFood(int minimum_distance, unsigned int first_seed)
     throw std::runtime_error("no seed produced a board with distant food");
 }
 
+// A value is discounted by the number of steps on the edge it crosses, not once per edge.
+// An edge can span several steps, so per-edge discounting would price a long detour the
+// same as a short one and make the search indifferent to time.
 void testBackupDiscountsByEdgeLength()
 {
     // With a constant value head and no rewards the root's return is determined: V
@@ -399,6 +482,12 @@ void testBackupDiscountsByEdgeLength()
               << " and " << over_one_edge << ", expected " << expected_over_one_edge << std::endl;
 }
 
+// testConfig with Dirichlet root noise turned on, for the cases that are about noise.
+//
+//     MonteCarloSearch::Config config = noisyConfig(200, 0.25f, 7u);
+//
+// The seed is an argument rather than fixed, because the noise cases need several draws to
+// distinguish "perturbed the prior" from "happened to land here once".
 MonteCarloSearch::Config noisyConfig(int simulations, float fraction, unsigned int seed)
 {
     MonteCarloSearch::Config config = testConfig(simulations);
@@ -410,9 +499,17 @@ MonteCarloSearch::Config noisyConfig(int simulations, float fraction, unsigned i
 // Values scaled by a constant, so two searches differ in nothing but the size of the
 // numbers they compare. The prior is uniform and the values vary with the position, so
 // the range has a width to normalise against.
+// A network whose values are multiplied by a scale, priors uniform.
+//
+//     ScaledValueEvaluator evaluator(40.0f);
+//
+// Exists for the value-normalisation cases. Scaling every value tests whether selection
+// depends on the units the value head reports in - it does, because an action is worth its
+// edge reward plus a discounted return and scaling moves only the second term.
 class ScaledValueEvaluator : public Evaluator
 {
 public:
+    // `scale` multiplies every value the network returns.
     explicit ScaledValueEvaluator(float scale) : scale_(scale) {}
 
     void evaluate(const std::vector<const SnakeEnv*>& states, float* priors_out, float* values_out,
@@ -437,6 +534,12 @@ private:
     float scale_;
 };
 
+// The visit-share policy a search produces on one fixed board at a given value scale.
+//
+//     policyUnderScale(1.0f, false);    // policy with values as the network gives them
+//     policyUnderScale(40.0f, false);   // the same search with every value 40x larger
+//
+// Same board and same seed each time, so any difference between two calls is the scale.
 std::vector<float> policyUnderScale(float scale, bool normalize)
 {
     SnakeEnv board = boardWithDistantFood(6, 1);
@@ -448,6 +551,12 @@ std::vector<float> policyUnderScale(float scale, bool normalize)
     return search.search(roots).front().policy();
 }
 
+// The largest per-action difference between two policies.
+//
+//     largestPolicyGap({ 0.5f, 0.3f, 0.2f }, { 0.4f, 0.3f, 0.3f });   // 0.1
+//
+// One number for "how far apart are these two searches", so a claim about scale dependence
+// can be stated as a bound rather than as a table.
 float largestPolicyGap(const std::vector<float>& left, const std::vector<float>& right)
 {
     float largest = 0.0f;
@@ -497,6 +606,13 @@ void testNormalisingMakesSelectionScaleInvariant()
 
 // A prior that puts almost everything on one action, which is what a long-trained policy
 // emits: measured on az10_death368, 46 percent of positions have a top prior above 0.999.
+// A network that has made up its mind: one action at almost all the probability.
+//
+// Reproduces the measured failure - 46 percent of positions on a trained checkpoint had a
+// top prior above 0.999, and the search visited 1.13 of 3 root actions. Every term of
+// PUCT's exploration half multiplies the prior, so at 0.0005 no value of c_puct recovers
+// the other actions. This fixture is what lets the exploration floor's effect be observed
+// without a trained network.
 class SaturatedPriorEvaluator : public Evaluator
 {
 public:
@@ -624,6 +740,9 @@ void testTheExplorationFloorCoversTheRoot()
     }
 }
 
+// Dirichlet noise perturbs the root prior and the result is still a distribution. Noise
+// that failed to normalise would leave the exploration term scaled wrongly at the root
+// only, which is the hardest place to notice it.
 void testRootNoiseIsAppliedAndKeepsADistribution()
 {
     // Every other config sets the fraction to zero, so this body ran only inside the
@@ -688,6 +807,13 @@ void testRootNoiseIsAppliedAndKeepsADistribution()
               << ", other seed " << other_noise[0] << ", pure noise " << pure_noise[0] << std::endl;
 }
 
+// Whether two search results agree on everything observable: policy, chosen action, value.
+//
+//     sameResult(first.at(0), second.at(0));   // true when a search is deterministic
+//
+// Compares the policy element by element rather than the visit counts, because the counts
+// are the authority and the policy is derived from them - two results that agree on the
+// derived quantity but not the counts would be a defect this is not looking for.
 bool sameResult(const MonteCarloSearch::Result& left, const MonteCarloSearch::Result& right)
 {
     if (left.policy().size() != right.policy().size() || left.best_action != right.best_action)
@@ -708,6 +834,9 @@ bool sameResult(const MonteCarloSearch::Result& left, const MonteCarloSearch::Re
     return true;
 }
 
+// A second search on the same object gives what a fresh object would. The search reuses
+// its buffers between calls, so a value left behind in one would carry into the next and
+// show up as a result that depends on what was searched before it.
 void testSearchReusesBuffersWithoutLeakingState()
 {
     // Trees are kept between calls, so the risk is a later call reading what an
@@ -766,6 +895,9 @@ void testSearchReusesBuffersWithoutLeakingState()
     expect(reused.search(no_roots).empty(), "no roots yields no results");
 }
 
+// The returned policy is non-negative and sums to one. It becomes a training target
+// directly, so a policy that did not sum to one would train the network against something
+// that is not a distribution.
 void testPolicyIsADistribution()
 {
     SnakeEnv env(8, 8, 1, TEST_STEP_LIMIT);
@@ -789,6 +921,9 @@ void testPolicyIsADistribution()
            "the policy covers every relative action");
 }
 
+// The search does not play a move that dies at once. The cheapest possible sanity check,
+// and the one that catches a selection or terminal-handling defect before any subtler
+// property is worth reading.
 void testAvoidsAnImmediateWall()
 {
     // Straight is fatal and the evaluator does not say so; the search must find it.
@@ -813,6 +948,10 @@ void testAvoidsAnImmediateWall()
     expect(results[0].best_action != SnakeEnv::Action::STRAIGHT, "and does not choose it");
 }
 
+// Given food one move away and nothing else to weigh, the search takes it. Stated on an
+// interior board on purpose: an earlier version of this case put the food against a wall,
+// where eating it is genuinely the worse move, and the test failed while the search was
+// right.
 void testPrefersReachableFood()
 {
     // Put the search one step from food and check it takes it. The reward is
@@ -872,6 +1011,9 @@ void testPrefersReachableFood()
     expect(found, "the test reached a state with food one move away");
 }
 
+// Every tree advances one simulation in lockstep and all their leaves reach the evaluator
+// in one call. This is the whole reason the search is batched, and the observable is the
+// evaluator's largest batch rather than its call count.
 void testBatchesEveryTreeTogether()
 {
     const int games = 12;
@@ -897,6 +1039,9 @@ void testBatchesEveryTreeTogether()
            "the number of forward passes is the simulation count, not simulations times games");
 }
 
+// Two searches with the same seed give identical results. Without this nothing else in
+// this file is reproducible, and a comparison between checkpoints would be measuring the
+// random stream.
 void testDeterminism()
 {
     SnakeEnv env(8, 8, 77, TEST_STEP_LIMIT);
@@ -917,6 +1062,9 @@ void testDeterminism()
     expect(identical, "two searches on one seed and one position agree");
 }
 
+// A search asked to start from a finished game is refused rather than answered. There is
+// no move to return, and inventing one would be a legal-looking answer to an impossible
+// question.
 void testTerminalRootsAreRejected()
 {
     SnakeEnv env(5, 5, 9, TEST_STEP_LIMIT);

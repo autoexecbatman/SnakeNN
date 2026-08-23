@@ -19,8 +19,10 @@ namespace
 // about the clock set their own.
 constexpr int TEST_STEP_LIMIT = 1000000;
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
+// Reports one property and counts a failure.
 void expect(bool condition, const std::string& description)
 {
     if (condition)
@@ -34,6 +36,7 @@ void expect(bool condition, const std::string& description)
     }
 }
 
+// Whether any body segment occupies a cell, for checking food placement and collisions.
 bool bodyCoversCell(const SnakeEnv& env, const Position& cell)
 {
     for (const auto& segment : env.body())
@@ -46,6 +49,7 @@ bool bodyCoversCell(const SnakeEnv& env, const Position& cell)
     return false;
 }
 
+// Whether a position is on the board, so a case can assert the head never leaves it.
 bool insideBoard(const SnakeEnv& env, const Position& cell)
 {
     return cell.x >= 0 && cell.x < env.width() && cell.y >= 0 && cell.y < env.height();
@@ -68,6 +72,9 @@ bool actionTowards(const SnakeEnv& env, const Position& target, SnakeEnv::Action
     return false;
 }
 
+// reset returns the environment to a starting state: one segment, a score of zero, an
+// apple on the board and the same seed replayed. A reset that kept anything would make
+// the second game of a batch differ from the first.
 void testResetInvariants()
 {
     SnakeEnv env(20, 20, 7, TEST_STEP_LIMIT);
@@ -79,6 +86,8 @@ void testResetInvariants()
     expect(env.foodsToWin() == 399, "a 20x20 board takes 399 foods to fill");
 }
 
+// The same seed replays the same game. Everything measured in this project rests on it -
+// without it, two checkpoints compared on the same seeds are not playing the same games.
 void testDeterminism()
 {
     SnakeEnv first(12, 12, 4242, TEST_STEP_LIMIT);
@@ -105,6 +114,9 @@ void testDeterminism()
     expect(identical, "two environments on one seed stay in lockstep");
 }
 
+// Left and right change the heading as the compass says, and straight leaves it. Actions
+// are relative to the heading, so a turn applied absolutely would be correct only when
+// the snake happens to face north.
 void testTurning()
 {
     SnakeEnv env(20, 20, 1, TEST_STEP_LIMIT);
@@ -118,6 +130,7 @@ void testTurning()
            "turning right from right faces down");
 }
 
+// Walking into a wall ends the game rather than wrapping or clamping.
 void testWallDeath()
 {
     SnakeEnv env(8, 8, 3, TEST_STEP_LIMIT);
@@ -132,6 +145,7 @@ void testWallDeath()
     expect(result.reward < 0.0f, "death carries a negative reward");
 }
 
+// Eating pays the apple reward, grows the snake by one and places a new apple.
 void testEatingReward()
 {
     SnakeEnv env(10, 10, 11, TEST_STEP_LIMIT);
@@ -175,6 +189,9 @@ void testEatingReward()
     expect(saw_food, "a snake steered at the food eats within the step budget");
 }
 
+// A snake that stops eating dies at the hunger limit. Without it, doing nothing beats
+// playing: death costs -10 and an apple pays +1, so a policy that circles safely forever
+// outscores one that tries. The first run of this trainer did exactly that.
 void testStarvation()
 {
     // Circle in a corner of a big board, never eating. The snake must die of
@@ -203,6 +220,9 @@ void testStarvation()
     expect(env.stepsSinceFood() >= limit, "it survives right up to the hunger limit");
 }
 
+// wouldDie predicts what stepping does, for every action from many positions. The search
+// calls it to prune, so a disagreement makes the search avoid safe moves or walk into
+// fatal ones.
 void testWouldDieAgreesWithStepping()
 {
     // The search asks wouldDie after every descent step and trusts the answer.
@@ -342,6 +362,8 @@ bool faceHeading(SnakeEnv& env, int quarter_turns)
     return true;
 }
 
+// Four lefts return the original heading, as do four rights, and a left undoes a right.
+// Cheap to state and it catches a transposed turn table that individual turn checks miss.
 void testTurnAlgebra()
 {
     // testTurning checks the three actions from a single heading - the one a
@@ -467,6 +489,9 @@ void testTurnAlgebra()
     expect(identity_holds, "a left turn followed by a right turn is the identity");
 }
 
+// The resulting heading depends on the current heading and the action, not on where the
+// snake is. A position-dependent answer would make the same move mean different things
+// in different parts of the board.
 void testHeadingAfterDependsOnlyOnTheHeading()
 {
     // headingAfter is meant to be a pure function of the heading and the action -
@@ -592,6 +617,9 @@ void testHeadingAfterDependsOnlyOnTheHeading()
               << ", highest hunger " << highest_hunger << std::endl;
 }
 
+// headAfter returns exactly where a step would put the head. The search uses it to look
+// ahead without stepping, so a mismatch means the tree is built on a board that does not
+// exist.
 void testHeadAfterPredictsWhereTheHeadLands()
 {
     // headAfter is a query the search leans on hard: it orders children by where
@@ -702,6 +730,8 @@ void testHeadAfterPredictsWhereTheHeadLands()
               << " off board, " << after_eating << " while eating" << std::endl;
 }
 
+// The step before the hunger limit survives and the step at it does not. An off-by-one
+// here changes the effective task and every score measured under it.
 void testHungerBoundaryIsExact()
 {
     // The off-by-one wouldDie is most likely to carry. It predicts one tick
@@ -754,6 +784,8 @@ void testHungerBoundaryIsExact()
     expect(outcome.reward == SnakeEnv::DEATH_REWARD, "paying what dying pays");
 }
 
+// A new apple never lands on the snake. One that did would be unreachable, and the game
+// would run to the step limit for a reason no log would explain.
 void testFoodNeverSitsOnTheBody()
 {
     // blocksHead resolves eating against collision, and the branch that would
@@ -820,6 +852,8 @@ void testFoodNeverSitsOnTheBody()
               << " violations" << std::endl;
 }
 
+// The plane encoding puts each feature where the network expects it. Nothing downstream
+// can tell a transposed plane from a network that has not learned yet.
 void testEncoding()
 {
     SnakeEnv env(10, 10, 5, TEST_STEP_LIMIT);
@@ -1185,6 +1219,8 @@ void testTailReachableSeparatesAPocketFromACrowdedBoard()
            "stepping into the cell the tail is leaving reaches the tail");
 }
 
+// An environment must be given a step limit. Without one a game can run forever, and
+// "win" stops distinguishing a good policy from one that shuffles safely.
 void testStepLimitIsRequired()
 {
     bool refused = false;
@@ -1199,6 +1235,9 @@ void testStepLimitIsRequired()
     expect(refused, "a step limit of zero is refused - every game would start spent");
 }
 
+// A Hamiltonian cycle actually fills the board in this environment. The whole task rests
+// on the win being reachable at all, and this is the only case that demonstrates it end
+// to end rather than by argument.
 void testWinnableByCycle()
 {
     const int size = 6;

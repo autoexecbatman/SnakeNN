@@ -1,4 +1,48 @@
-﻿#include <cmath>
+﻿// Checks the arithmetic of the exploration floor - how often selection ignores its own
+// scores and picks an action uniformly.
+//
+// Why a floor at all. PUCT scores an action as its value plus a term that multiplies the
+// network's prior, so a prior near zero yields an exploration term near zero and no
+// constant recovers it. Measured on one checkpoint: 46 percent of positions had a top prior
+// above 0.999 and the search visited 1.13 of 3 root actions, and sweeping c_puct over a
+// hundredfold moved that to 1.24. A multiplicative term cannot fix a vanishing prior. This
+// floor is additive, so it does not ask the network's permission.
+//
+// The two functions under test, and why there are two. explorationMixWeight is the mixture
+// itself, eps * |A| / log(N + 1), clamped to 1. descentMixWeight wraps it with a depth and
+// returns 0 below the root.
+//
+// That depth argument is not a refinement, it is the whole fix, and the block below the
+// worked example says so because the failure is not obvious from the formula. The weight is
+// sized by the visit count of the node it is asked about. At a root with 200 visits it is
+// 0.057. At a node with one visit it is 0.433, and 200 simulations leave most of the tree
+// at one visit - so a floor applied at every node sent roughly two selections in five
+// uniform, the tree evaluated near-random continuations, and every value it backed up was
+// noise. Measured: self-play score fell from 97.5 apples to 3.8 over two iterations, while
+// the label count it was built to raise did exactly what it promised. Both halves were
+// real. The parameter was sized at the root and never checked at depth.
+//
+// Every expected value below is derived from the contract in exploration_floor.h by hand,
+// with the arithmetic beside it. None was read off the implementation, which would only
+// record what the code already does.
+//
+// Run it:
+//
+//     cmake --build build --config Release --target ExplorationFloorTest
+//     build\Release\ExplorationFloorTest.exe
+//
+// Silent unless something fails, ending in
+//
+//     all exploration floor checks pass
+//
+// Two properties are worth knowing before changing anything here. Zero epsilon must be
+// exactly zero, not nearly - a floor that leaks changes how every existing checkpoint plays
+// the moment it is compiled in, and every historical number stops reproducing. And decay is
+// 1/log(N) on purpose: over a hundredfold increase in visits the weight falls by less than
+// a factor of three, where 1/N or 1/sqrt(N) would fall by a hundred or by ten and the floor
+// would be gone by the time the policy had made up its mind.
+
+#include <cmath>
 #include <format>
 #include <iostream>
 #include <stdexcept>
@@ -9,10 +53,16 @@
 namespace
 {
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
-// Every expected value is derived from the contract in exploration_floor.h by hand, with
-// the arithmetic beside it. None was read off an implementation.
+// Compares two floats within a tolerance, and counts a mismatch.
+//
+//     expectNear("the worked example", explorationMixWeight(0.1f, 3, 200), 0.056568f, 1e-5f);
+//     expectNear("zero epsilon is off", explorationMixWeight(0.0f, 3, 200), 0.0f, 0.0f);
+//
+// A tolerance of exactly 0 is used deliberately where the contract says a value is exact -
+// off must be off, not nearly off. A NaN fails rather than comparing false quietly.
 void expectNear(const std::string& what, float actual, float expected, float tolerance)
 {
     if (std::isnan(actual) || std::abs(actual - expected) > tolerance)
@@ -23,6 +73,13 @@ void expectNear(const std::string& what, float actual, float expected, float tol
     }
 }
 
+// Checks that explorationMixWeight rejects arguments it cannot answer for.
+//
+//     expectRefused("a negative epsilon", -0.1f, 3, 200);
+//
+// The catch is narrowed to std::invalid_argument; any other exception fails. "It threw
+// something" would pass even when the refusal came from an unrelated fault, which is how a
+// refusal test quietly stops testing the refusal.
 void expectRefused(const std::string& what, float epsilon, int action_count, int total_visits)
 {
     try
@@ -117,6 +174,9 @@ void theWeightIsLinearInEpsilon()
     expectNear("halving epsilon halves the weight", twentieth, 0.5f * tenth, 1e-6f);
 }
 
+// What the mixture rejects: a negative epsilon, no actions, a negative visit count. Each
+// is a value that would otherwise produce a weight outside [0, 1] and silently change how
+// often the search abandons its own judgement.
 void refusals()
 {
     expectRefused("negative epsilon", -0.1f, 3, 200);
@@ -127,6 +187,13 @@ void refusals()
 
 }  // namespace
 
+// Checks that descentMixWeight rejects what the mixture rejects, plus a negative depth.
+//
+//     expectDescentRefused("a negative depth", 0.1f, 3, 200, -1);
+//
+// Separate from expectRefused because the descent takes one more argument, and because the
+// guards must still fire at depth 0 - a depth test placed before the delegation would hand
+// a negative epsilon to the search unchecked.
 void expectDescentRefused(const std::string& what, float epsilon, int action_count, int node_visits,
                           int depth)
 {
@@ -174,6 +241,8 @@ void theFloorFiresAtTheRootAndNowhereBelow()
     expectNear("zero epsilon is off at the root", descentMixWeight(0.0f, 3, 0, 0), 0.0f, 0.0f);
 }
 
+// The descent delegates its validation rather than reimplementing it, so every refusal the
+// mixture makes it makes too.
 void theDescentRefusesWhatTheMixtureRefuses()
 {
     expectDescentRefused("a negative depth", 0.1f, 3, 200, -1);
@@ -184,6 +253,7 @@ void theDescentRefusesWhatTheMixtureRefuses()
     expectDescentRefused("a negative visit count at the root", 0.1f, 3, -1, 0);
 }
 
+// Runs every case, then reports. Returns 1 if any check failed, 0 otherwise.
 int main()
 {
     theWorkedExample();

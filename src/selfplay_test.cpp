@@ -15,8 +15,10 @@
 namespace
 {
 
+// Checks that did not hold. main prints the count and returns 1 when it is non-zero.
 int failures = 0;
 
+// Reports one property and counts a failure.
 void expect(bool condition, const std::string& description)
 {
     if (condition)
@@ -30,6 +32,9 @@ void expect(bool condition, const std::string& description)
     }
 }
 
+// A network with no opinion: uniform priors, zero value, no death risk. Self-play's
+// bookkeeping must hold whatever the network says, so a fixture with nothing to say is
+// what isolates the bookkeeping.
 class SilentEvaluator : public Evaluator
 {
 public:
@@ -49,6 +54,8 @@ public:
     }
 };
 
+// A search configuration for these cases: few simulations, noise off, seed fixed. Speed
+// matters more than strength here - nothing checked depends on playing well.
 MonteCarloSearch::Config searchConfig()
 {
     MonteCarloSearch::Config config;
@@ -61,6 +68,8 @@ MonteCarloSearch::Config searchConfig()
     return config;
 }
 
+// A self-play configuration: a small batch and a short step limit, so a case that must
+// reach the limit reaches it in a second rather than a minute.
 SelfPlay::Config playConfig(int games, int step_limit, float timeout_reward)
 {
     SelfPlay::Config config;
@@ -74,6 +83,8 @@ SelfPlay::Config playConfig(int games, int step_limit, float timeout_reward)
     return config;
 }
 
+// One training record per move played, no more and no fewer. A record dropped or
+// duplicated would reweight that position in the replay buffer with nothing reporting it.
 void testProducesOneRecordPerMove()
 {
     SilentEvaluator evaluator;
@@ -117,6 +128,9 @@ void testProducesOneRecordPerMove()
            "each record re-encodes to a full observation and carries a normalised policy");
 }
 
+// The value target at each move is the discounted return from that move onward, computed
+// backwards from the end. Computed forwards it would be the return from the start, which
+// is the same number only for the first move of the game.
 void testReturnsAreDiscountedBackwards()
 {
     // One game, no temperature, so the trajectory is deterministic. Recompute
@@ -169,6 +183,9 @@ void testReturnsAreDiscountedBackwards()
     expect(chain_holds, "every target is its reward plus the discounted next target");
 }
 
+// A game that reaches the step limit ends and is reported as having hit it. The
+// environment does not end it - the caller does - so a caller that forgot would loop
+// forever on a policy that never dies.
 void testStepLimitIsEnforcedAndReported()
 {
     SilentEvaluator evaluator;
@@ -319,6 +336,9 @@ void testATimedOutGamePaysThePenaltyAndOthersDoNot()
            "a game that won or died is untouched - it reached an outcome of its own");
 }
 
+// The progress callback never goes backwards and finishes at the batch size. It drives a
+// terminal bar during ten-hour runs, so a count that jumps around is the only symptom
+// anyone would see of a batch bookkeeping defect.
 void testProgressIsMonotonicAndCompletes()
 {
     // A progress bar that stalls or goes backwards is worse than none: it makes
