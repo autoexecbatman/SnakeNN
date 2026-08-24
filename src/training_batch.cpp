@@ -1,10 +1,19 @@
-#include <torch/torch.h>
+﻿#include <torch/torch.h>
 
 #include <cmath>
 
 #include "az_parameters.h"
 #include "snake_env.h"
+#include "replay_sampling.h"
 #include "training_batch.h"
+
+namespace
+{
+// How many draws a biased pick may take before keeping whatever it has. Four gives a
+// window that is one percent decisive a better than one-in-thirty chance of finding one,
+// and costs three extra draws at worst.
+constexpr int DECISIVE_TRIES = 4;
+}  // namespace
 
 BatchBuffers makeBatchBuffers(const trainer::Settings& settings)
 {
@@ -23,11 +32,20 @@ BatchBuffers makeBatchBuffers(const trainer::Settings& settings)
 void fillBatch(const trainer::Settings& settings, const ReplayWindow& replay, BatchBuffers& buffers)
 {
     const size_t cells = static_cast<size_t>(settings.cellCount());
+    // One draw from the window, with replacement. Randomness lives here rather than in
+    // the sampler, which keeps that unit testable without a generator.
+    const auto draw = [&replay]
+    {
+        return static_cast<size_t>(
+            torch::randint(0, static_cast<int64_t>(replay.size()), { 1 }).item<int64_t>());
+    };
+    const auto isDecisive = [&replay](size_t index) { return replay[index].decisive; };
     for (int item = 0; item < settings.batch_size; item++)
     {
-        // Uniform over the window, with replacement.
-        const size_t pick = static_cast<size_t>(
-            torch::randint(0, static_cast<int64_t>(replay.size()), { 1 }).item<int64_t>());
+        // Whether this item hunts for a decisive position. Drawn per item, so the share
+        // is met in expectation rather than by filling a block of the batch with them.
+        const bool prefer = torch::rand({ 1 }).item<float>() < settings.decisive_share;
+        const size_t pick = sampling::pickBiased(draw, isDecisive, prefer, DECISIVE_TRIES);
         const TrainingRecord& record = replay[pick];
         SnakeEnv::encodeSnapshot(
             settings.board, settings.board, record.position,

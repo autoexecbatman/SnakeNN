@@ -167,13 +167,208 @@ int Settings::stepLimit() const
     return az::deriveStepLimit(board);
 }
 
+// One flag of the trainer's command line.
+enum class Flag
+{
+    Board,
+    Iterations,
+    StartIteration,
+    Games,
+    Simulations,
+    StepLimit,
+    Channels,
+    Blocks,
+    Batch,
+    Batches,
+    SamplesPerGame,
+    ReplayMegabytes,
+    DecisiveShare,
+    Seed,
+    Checkpoint,
+    Ledger,
+    ExplorationEpsilon,
+    Resume
+};
+
+// One spelling and the enumerator it names.
+struct FlagName
+{
+    // As written on the command line, leading dashes included.
+    std::string_view text;
+    // What applySetting will do with it.
+    Flag flag;
+};
+
+// The whole command line, in one place. Adding a flag is a row here, an enumerator above
+// and a case below - and leaving out the case is a compiler diagnostic.
+constexpr FlagName FLAG_NAMES[] = {
+    { "--board", Flag::Board },
+    { "--iterations", Flag::Iterations },
+    { "--start-iteration", Flag::StartIteration },
+    { "--games", Flag::Games },
+    { "--simulations", Flag::Simulations },
+    { "--step-limit", Flag::StepLimit },
+    { "--channels", Flag::Channels },
+    { "--blocks", Flag::Blocks },
+    { "--batch", Flag::Batch },
+    { "--batches", Flag::Batches },
+    { "--samples-per-game", Flag::SamplesPerGame },
+    { "--replay-mb", Flag::ReplayMegabytes },
+    { "--decisive-share", Flag::DecisiveShare },
+    { "--seed", Flag::Seed },
+    { "--checkpoint", Flag::Checkpoint },
+    { "--ledger", Flag::Ledger },
+    { "--exploration-epsilon", Flag::ExplorationEpsilon },
+    { "--resume", Flag::Resume },
+};
+
+// Which Flag `text` names, or std::invalid_argument when it names none.
+//
+//     lookupFlag("--board")   // Flag::Board
+//
+// Refused rather than warned about. The parser this replaced printed to stderr and
+// continued with the default, so a mistyped flag produced a run that looked configured and
+// was not, and the warning had scrolled off by the time the log was read.
+Flag lookupFlag(std::string_view text)
+{
+    for (const FlagName& candidate : FLAG_NAMES)
+    {
+        if (candidate.text == text)
+        {
+            return candidate.flag;
+        }
+    }
+    throw std::invalid_argument(std::format("unknown flag: {}", text));
+}
+
+// Applies one parsed flag, or throws naming the flag when the value is not what that flag
+// accepts.
+//
+//     bool batches_given = false;
+//     applySetting(settings, batches_given, Flag::Board, "--board", "20");   // board == 20
+//
+// `batches_given` is set by --batches alone: the gradient budget can be stated as a batch
+// count or as samples per game, and a --batches equal to its own default is still a
+// --batches that was given, which no comparison against the default can see.
+//
+// No default case on purpose: the value comes from lookupFlag and can only be an
+// enumerator, so the switch is exhaustive and a new enumerator without a case is caught at
+// compile time rather than falling through in silence.
+void applySetting(Settings& settings, bool& batches_given, Flag flag, const std::string& name,
+                  const char* value)
+{
+    switch (flag)
+    {
+        case Flag::Board:
+        {
+            settings.board = parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Iterations:
+        {
+            settings.iterations = parseWholeInt(name, value);
+            break;
+        }
+        case Flag::StartIteration:
+        {
+            settings.start_iteration = parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Games:
+        {
+            settings.games_per_iteration = parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Simulations:
+        {
+            settings.simulations = parseWholeInt(name, value);
+            break;
+        }
+        case Flag::StepLimit:
+        {
+            settings.step_limit_override = parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Channels:
+        {
+            settings.channels = parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Blocks:
+        {
+            settings.blocks = parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Batch:
+        {
+            settings.batch_size = parseWholeInt(name, value);
+            break;
+        }
+        case Flag::Batches:
+        {
+            settings.batches_per_iteration = parseWholeInt(name, value);
+            batches_given = true;
+            break;
+        }
+        case Flag::SamplesPerGame:
+        {
+            settings.samples_per_game_override = parseWholeInt(name, value);
+            break;
+        }
+        case Flag::ReplayMegabytes:
+        {
+            // Mebibytes rather than bytes, because the only reason to touch this is board
+            // size and nobody types ten digits correctly. The cap is real: the first long
+            // run of this trainer stored encoded planes at 3.2KB per record and took the
+            // machine into swap.
+            const int megabytes = parseWholeInt(name, value);
+            requireAtLeast(name, megabytes, 1);
+            settings.replay_bytes = static_cast<size_t>(megabytes) * 1024u * 1024u;
+            break;
+        }
+        case Flag::DecisiveShare:
+        {
+            // A flag rather than a constant so the ledger, which records the command line,
+            // distinguishes a run that used the bias from one that did not.
+            settings.decisive_share = flags::parseUnitFloat(name, value);
+            break;
+        }
+        case Flag::Seed:
+        {
+            settings.seed = static_cast<unsigned int>(parseWholeInt(name, value));
+            break;
+        }
+        case Flag::Checkpoint:
+        {
+            settings.checkpoint = value;
+            break;
+        }
+        case Flag::Ledger:
+        {
+            settings.ledger_path = value;
+            break;
+        }
+        case Flag::ExplorationEpsilon:
+        {
+            settings.exploration_epsilon = flags::parseUnitFloat(name, value);
+            break;
+        }
+        case Flag::Resume:
+        {
+            settings.resume = value;
+            break;
+        }
+    }
+}
+
 Settings parseArguments(std::span<const char* const> arguments)
 {
     Settings settings;
-    // The budget and the batch count say the same thing two ways, so exactly one
-    // of them may be given. Tracked rather than inferred from the defaults: a
-    // --batches equal to its default is still a --batches that was given.
+    // The budget and the batch count say the same thing two ways, so exactly one of them
+    // may be given. Tracked rather than inferred from the defaults: a --batches equal to
+    // its default is still a --batches that was given.
     bool batches_given = false;
+    // Two at a time: a flag and its value.
     for (size_t index = 0; index < arguments.size(); index++)
     {
         const std::string flag = arguments[index];
@@ -184,89 +379,7 @@ Settings parseArguments(std::span<const char* const> arguments)
         const char* value = arguments[index + 1];
         index++;
 
-        if (flag == "--board")
-        {
-            settings.board = parseWholeInt(flag, value);
-        }
-        else if (flag == "--iterations")
-        {
-            settings.iterations = parseWholeInt(flag, value);
-        }
-        else if (flag == "--start-iteration")
-        {
-            settings.start_iteration = parseWholeInt(flag, value);
-        }
-        else if (flag == "--games")
-        {
-            settings.games_per_iteration = parseWholeInt(flag, value);
-        }
-        else if (flag == "--simulations")
-        {
-            settings.simulations = parseWholeInt(flag, value);
-        }
-        else if (flag == "--step-limit")
-        {
-            settings.step_limit_override = parseWholeInt(flag, value);
-        }
-        else if (flag == "--channels")
-        {
-            settings.channels = parseWholeInt(flag, value);
-        }
-        else if (flag == "--blocks")
-        {
-            settings.blocks = parseWholeInt(flag, value);
-        }
-        else if (flag == "--batch")
-        {
-            settings.batch_size = parseWholeInt(flag, value);
-        }
-        else if (flag == "--batches")
-        {
-            settings.batches_per_iteration = parseWholeInt(flag, value);
-            batches_given = true;
-        }
-        else if (flag == "--samples-per-game")
-        {
-            settings.samples_per_game_override = parseWholeInt(flag, value);
-        }
-        else if (flag == "--replay-mb")
-        {
-            // Mebibytes rather than bytes, because the only reason to touch this
-            // is board size and nobody types ten digits correctly. The cap is
-            // real: the first long run of this trainer stored encoded planes at
-            // 3.2KB per record and took the machine into swap.
-            const int megabytes = parseWholeInt(flag, value);
-            requireAtLeast(flag, megabytes, 1);
-            settings.replay_bytes = static_cast<size_t>(megabytes) * 1024u * 1024u;
-        }
-        else if (flag == "--seed")
-        {
-            settings.seed = static_cast<unsigned int>(parseWholeInt(flag, value));
-        }
-        else if (flag == "--checkpoint")
-        {
-            settings.checkpoint = value;
-        }
-        else if (flag == "--ledger")
-        {
-            settings.ledger_path = value;
-        }
-        else if (flag == "--exploration-epsilon")
-        {
-            settings.exploration_epsilon = flags::parseUnitFloat(flag, value);
-        }
-        else if (flag == "--resume")
-        {
-            settings.resume = value;
-        }
-        else
-        {
-            // Refused rather than warned about. The previous parser printed to
-            // stderr and continued with the default, so a mistyped flag produced
-            // a run that looked configured and was not, and the warning had
-            // scrolled off by the time the log was read.
-            throw std::invalid_argument(std::format("unknown flag: {}", flag));
-        }
+        applySetting(settings, batches_given, lookupFlag(flag), flag, value);
     }
     resolveGradientBudget(settings, batches_given);
     requireUsable(settings);

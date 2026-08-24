@@ -5,11 +5,15 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "seed_policy.h"
 #include "selfplay.h"
 
 SelfPlay::SelfPlay(Evaluator& evaluator, const MonteCarloSearch::Config& search_config,
                    const Config& config)
-    : evaluator_(evaluator), search_config_(search_config), config_(config), rng_(config.seed)
+    : evaluator_(evaluator),
+      search_config_(search_config),
+      config_(config),
+      rng_(seeds::streamSeed(config.seed, seeds::Stream::SelfPlaySampling))
 {
     // A batch of no games produces no summaries, and the caller divides by that
     // count to report a score.
@@ -158,6 +162,15 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
                 if (record.death_risk_usable)
                 {
                     record.death_risk_target[action] = results[position].death_risk[action].value();
+                }
+            }
+            // Asked before the move, so it describes the position the search was given.
+            for (int probe = 0; probe < SnakeEnv::ACTION_COUNT; probe++)
+            {
+                if (game.wouldDie(static_cast<SnakeEnv::Action>(probe)))
+                {
+                    record.decisive = true;
+                    break;
                 }
             }
             record.value_target = 0.0f;  // filled once the game ends

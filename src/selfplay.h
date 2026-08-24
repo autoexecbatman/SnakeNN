@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // Self-play: the agent generating its own training data.
 //
@@ -56,6 +56,10 @@ struct TrainingRecord
     float death_risk_target[SnakeEnv::ACTION_COUNT]{};
     // False unless the search visited every root action; an unvisited one reads safe.
     bool death_risk_usable{ false };
+    // Whether some move loses from this position. These are where a game is decided, and
+    // they are a small minority of an iteration's positions, so a batch drawn uniformly
+    // barely contains them.
+    bool decisive{ false };
 
     // Roughly what this record costs, for a buffer capped by memory not by count.
     size_t bytesUsed() const

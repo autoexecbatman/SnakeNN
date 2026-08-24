@@ -81,6 +81,9 @@ struct Settings
     // is build/Release and is not version controlled, so a run meant to leave a
     // durable record passes --ledger ../../docs/runs.tsv.
     std::string ledger_path{ "runs.tsv" };
+    // Share of each batch drawn preferentially from positions a move can lose from.
+    // 0 leaves sampling uniform, which is what every run before 2026-08-24 did.
+    float decisive_share{ 0.0f };
     // How often selection ignores its scores and picks uniformly, before the
     // 1/log(N) decay. A flag rather than a constant because it changes the run's
     // result and the ledger records the command line: compiled in, two runs that
