@@ -106,7 +106,7 @@ void printBanner(const trainer::Settings& settings, int step_limit, bool cuda)
 // and that difference appears in no log.
 MonteCarloSearch::Config buildSearchConfig(const trainer::Settings& settings)
 {
-    MonteCarloSearch::Config config = az::paperSearchDefaults();
+    MonteCarloSearch::Config config = az::paperSearchDefaults(settings.board);
     config.simulations = settings.simulations;
     config.trap_guard = az::TRAP_GUARD;
     config.average_edges = az::AVERAGE_EDGES;
@@ -132,7 +132,10 @@ SelfPlay::Config buildPlayConfig(const trainer::Settings& settings, int step_lim
     SelfPlay::Config config;
     config.games_in_parallel = settings.games_per_iteration;
     config.step_limit = step_limit;
-    config.discount = az::DISCOUNT;
+    // Derived from the board, and it has to be the same discount the search backs up
+    // with: these are the returns the value head is trained on, so a mismatch trains the
+    // head on one horizon while the search plans on another.
+    config.discount = az::deriveDiscount(settings.board);
     config.timeout_reward = az::TIMEOUT_REWARD;
     config.step_reward = az::STEP_REWARD;
     config.temperature = az::VISIT_TEMPERATURE;

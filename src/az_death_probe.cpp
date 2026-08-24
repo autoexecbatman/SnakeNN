@@ -274,7 +274,7 @@ ProbeSettings parseSettings(std::span<const std::string> arguments)
 // no root noise, so what is scored is the agent and not the exploration policy.
 MonteCarloSearch::Config searchConfig(const ProbeSettings& settings)
 {
-    MonteCarloSearch::Config config = az::paperSearchDefaults();
+    MonteCarloSearch::Config config = az::paperSearchDefaults(settings.board);
     config.simulations = settings.simulations;
     config.trap_guard = false;
     config.average_edges = false;

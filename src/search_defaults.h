@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "az_parameters.h"
 #include "mcts.h"
@@ -25,19 +25,24 @@ namespace az
 
 // A config carrying the paper's shared constants and nothing else.
 //
-//     MonteCarloSearch::Config config = az::paperSearchDefaults();
-//     config.discount;    // 0.98
+//     MonteCarloSearch::Config config = az::paperSearchDefaults(20);
+//     config.discount;    // 0.995 - derived from the board, 0.98 at 10x10
 //     config.simulations; // 0 - the caller must set this
+//
+// `board` is required rather than defaulted because the discount depends on it, and a
+// program that kept the 10x10 value on a 20x20 board would look exactly like one that
+// chose it. Making it an argument is what forces every call site to say which board it
+// is searching.
 //
 // Sets discount, exploration, step reward, the steps tie-break margin, trap reporting,
 // value normalisation, the death-cap threshold and the root noise alpha. Everything else
 // keeps Config's own default, which is zero or false, so a field the caller forgets is
 // inert rather than silently paper-flavoured.
-inline MonteCarloSearch::Config paperSearchDefaults()
+inline MonteCarloSearch::Config paperSearchDefaults(int board)
 {
     MonteCarloSearch::Config config;
     config.exploration = EXPLORATION;
-    config.discount = DISCOUNT;
+    config.discount = deriveDiscount(board);
     config.step_reward = STEP_REWARD;
     config.steps_tiebreak_margin = STEPS_TIEBREAK_MARGIN;
     config.trap_report = TRAP_REPORT;

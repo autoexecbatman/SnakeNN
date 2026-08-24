@@ -92,7 +92,7 @@ int main(int argc, char** argv)
     // has to be the evaluator's search. The shared constants come from one place, and the
     // rest are named here rather than left to Config's own defaults - three of them were,
     // and the agent on screen was searching with no step reward and no tie-break.
-    MonteCarloSearch::Config search_config = az::paperSearchDefaults();
+    MonteCarloSearch::Config search_config = az::paperSearchDefaults(settings.board);
     search_config.simulations = settings.simulations;
     search_config.exploration_epsilon = az::EXPLORATION_EPSILON;
     // The evaluator takes these from flags that default to these constants; this program

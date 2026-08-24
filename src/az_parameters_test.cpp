@@ -1,4 +1,4 @@
-#include <format>
+﻿#include <format>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -21,6 +21,22 @@
 // The literals are compared against Du, Gemp, Wu and Wu 2022 (arXiv:2211.09622), the
 // paper this stack reproduces.
 static_assert(az::DISCOUNT == 0.98f, "the paper's discount is 0.98");
+
+// The discount is derived from the board, so the horizon stays the same fraction of a
+// game however large the board is. At 0.98 the horizon is 50 steps, which is 5 percent of
+// a 1000-step 10x10 game and 1.3 percent of a 3900-step 20x20 one - the same constant
+// gives four times less foresight on the larger board.
+//
+// horizon = cells / 2, discount = 1 - 1/horizon. The halving is fitted to one point: it
+// reproduces the paper's 0.98 at 10x10 exactly, and the shape - horizon proportional to
+// board area, because game length is - is what carries it to other sizes.
+static_assert(az::deriveDiscount(10) == az::DISCOUNT,
+              "the rule must reproduce the paper's discount where the paper measured it");
+static_assert(az::deriveDiscount(12) > az::deriveDiscount(10),
+              "a larger board looks further ahead");
+static_assert(az::deriveDiscount(20) > az::deriveDiscount(16), "and further again");
+static_assert(az::deriveDiscount(20) < 1.0f, "a discount of one never stops summing");
+static_assert(az::deriveDiscount(2) > 0.0f, "the smallest legal board still discounts");
 static_assert(az::EXPLORATION == 0.5f, "the paper's c_puct is 0.5");
 static_assert(az::VISIT_TEMPERATURE == 0.5f, "the paper's visit temperature is 0.5");
 static_assert(az::LEARNING_RATE == 0.001f, "the paper's learning rate is 0.001");

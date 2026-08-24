@@ -145,7 +145,7 @@ AlphaZeroNet loadNetwork(const evaluation::Settings& settings, torch::Device dev
 // field only some callers set is how self-play and evaluation come to search differently.
 MonteCarloSearch::Config buildSearchConfig(const evaluation::Settings& settings)
 {
-    MonteCarloSearch::Config search_config = az::paperSearchDefaults();
+    MonteCarloSearch::Config search_config = az::paperSearchDefaults(settings.board);
     search_config.simulations = settings.simulations;
     search_config.trap_guard = settings.trap_guard;
     search_config.average_edges = settings.average_edges;

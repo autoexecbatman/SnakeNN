@@ -355,15 +355,16 @@ CoverageSettings parseSettings(std::span<const std::string> arguments)
 // Why the controls are listed here rather than left to be looked up: this is an
 // instrument, and a reader comparing arms should not need a second file to learn what was
 // held fixed. Set below - simulations, trap guard off, edge averaging off, death cap off,
-// alias reporting off, and the seed. From az::paperSearchDefaults() - discount 0.98, step
-// reward -0.02, steps tie-break margin 0.05, trap reporting on, value normalisation off,
+// alias reporting off, and the seed. From az::paperSearchDefaults(settings.board) - the
+// discount, which is derived from the board rather than fixed, plus step reward -0.02,
+// steps tie-break margin 0.05, trap reporting on, value normalisation off,
 // death-cap threshold 0.5, root noise alpha 0.3. Between them those two lists account for
 // every field of Config; when that stops being true, an arm is running a search nobody
 // described.
 MonteCarloSearch::Config armConfig(const CoverageSettings& settings, float noise_fraction,
                                    float exploration, float exploration_epsilon)
 {
-    MonteCarloSearch::Config config = az::paperSearchDefaults();
+    MonteCarloSearch::Config config = az::paperSearchDefaults(settings.board);
     config.simulations = settings.simulations;
     // Swept across arms, so it overrides the shared default rather than taking it.
     config.exploration = exploration;

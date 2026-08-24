@@ -29,6 +29,28 @@ namespace az
 // after roughly 200 steps, which is the horizon every value estimate here has.
 constexpr float DISCOUNT = 0.98f;
 
+// The discount for a board, so foresight stays the same fraction of a game however
+// large the board is.
+//
+//     az::deriveDiscount(10);   // 0.98,  the paper's value, horizon 50
+//     az::deriveDiscount(20);   // 0.995, horizon 200
+//
+// A discount has an effective horizon of 1/(1 - discount): the point past which future
+// reward stops moving the estimate. Held at one constant, that horizon is 5 percent of a
+// 10x10 game and 1.3 percent of a 20x20 one, so the same number gives four times less
+// foresight on the larger board - and a seal that kills 300 moves later is worth 0.002 at
+// 0.98 against 0.22 at 0.995.
+//
+// horizon = cells / 2. The halving is fitted to a single point rather than derived: it
+// reproduces the paper's 0.98 at 10x10 exactly, and the shape - horizon proportional to
+// area, because game length is - is what carries it elsewhere. Boards below 2x2 are
+// rejected by every parser here, so the smallest reachable horizon is 2.
+constexpr float deriveDiscount(int board)
+{
+    const float horizon = static_cast<float>(board) * static_cast<float>(board) / 2.0f;
+    return 1.0f - 1.0f / horizon;
+}
+
 // c_puct: how hard the prior pulls selection toward an action the search has not
 // tried. Multiplies the prior, so it cannot rescue an action the network scores near
 // zero - see exploration_floor.h for the term that can.

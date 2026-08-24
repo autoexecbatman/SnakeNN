@@ -69,13 +69,16 @@ def defaults():
 
     Example:
 
-        defaults()["discount"]   # 'DISCOUNT'
+        defaults()["discount"]   # 'deriveDiscount(board)'
     """
     path = Path("src/search_defaults.h")
     if not path.exists():
         return {}
     text = io.open(path, encoding="utf-8-sig").read()
-    return dict(re.findall(r"config\.(\w+)\s*=\s*(\w+);", text))
+    # A bare name, or a call - the discount is derived from the board rather than being a
+    # constant, so `config.discount = deriveDiscount(board);` has to match too. Without the
+    # call form this reported every program as disagreeing about a field they all inherit.
+    return dict(re.findall(r"config\.(\w+)\s*=\s*([\w:]+(?:\([^;]*\))?);", text))
 
 
 def assignments(program):
@@ -108,7 +111,15 @@ def resolve(value, constant_values, default_fields):
     name = value.replace("az::", "").strip()
     if name in constant_values:
         return constant_values[name]
-    return value
+    # A derived value is reported by function name alone. Its argument is whatever the
+    # program calls its own board - settings.board in one, board in another - and comparing
+    # those spellings would report a disagreement between two programs doing the same
+    # thing. The limit is that this cannot tell deriveDiscount(board) from a call passing
+    # the wrong variable; that is a job for reading, not for this.
+    call = re.match(r"(\w+)\s*\(", name)
+    if call:
+        return call.group(1) + "(board)"
+    return name
 
 
 def main():

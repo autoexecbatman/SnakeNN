@@ -294,7 +294,7 @@ struct Trace
 // az_evaluate searches with; only the four fields this tool decides are set here.
 MonteCarloSearch::Config searchConfig(const Settings& settings)
 {
-    MonteCarloSearch::Config config = az::paperSearchDefaults();
+    MonteCarloSearch::Config config = az::paperSearchDefaults(settings.board);
     config.simulations = settings.simulations;
     // Off, because a diagnostic reads the policy rather than exploring around it.
     config.root_noise_fraction = 0.0f;
