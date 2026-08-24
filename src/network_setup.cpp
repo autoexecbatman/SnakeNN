@@ -1,4 +1,4 @@
-#include <format>
+﻿#include <format>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -34,4 +34,19 @@ void loadCheckpoint(AlphaZeroNet& network, const std::string& checkpoint_path,
         throw std::runtime_error(
             std::format("could not load {}: {}", checkpoint_path, error.what()));
     }
+}
+
+AlphaZeroNet loadForEvaluation(int board, int channels, int blocks,
+                               const std::string& checkpoint_path, std::string_view report_prefix,
+                               torch::Device device)
+{
+    // Constructed at the caller's board size; the 4x4 pooling means a checkpoint saved on
+    // another board still fits.
+    AlphaZeroNet network(board, board, channels, blocks);
+    loadCheckpoint(network, checkpoint_path, report_prefix);
+    // After the load, so the restored tensors travel with it.
+    network->to(device);
+    // Batch norm uses its running statistics rather than the batch's own.
+    network->eval();
+    return network;
 }

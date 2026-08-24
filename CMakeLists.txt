@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+﻿cmake_minimum_required(VERSION 3.18)
 project(SnakeNN CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -660,6 +660,16 @@ add_test(NAME network_properties COMMAND NetworkTest)
 # Training and evaluation seed ranges are disjoint, and the guard that enforces
 # it actually fires. They overlapped by 86 percent until 2026-08-08, which
 # invalidated every held-out number measured before then. No LibTorch.
+# The biased replay draw: which stored position a training batch trains on. LibTorch-free,
+# because the randomness is supplied by the caller.
+add_executable(ReplaySamplingTest
+    src/replay_sampling_test.cpp
+    src/replay_sampling.cpp
+)
+set_property(TARGET ReplaySamplingTest PROPERTY CXX_STANDARD 20)
+enable_strict_warnings(ReplaySamplingTest)
+add_test(NAME replay_sampling COMMAND ReplaySamplingTest)
+
 add_executable(SeedPolicyTest
     src/seed_policy_test.cpp
 )
@@ -858,6 +868,7 @@ add_executable(AlphaZeroTrainer
     src/az_network.cpp
     src/iteration_report.cpp
     src/training_batch.cpp
+    src/replay_sampling.cpp
     src/network_setup.cpp
     src/snake_env.cpp
 )
@@ -931,6 +942,34 @@ target_compile_definitions(AlphaZeroDeathProbe PRIVATE TORCH_CUDA=1)
 
 if(WIN32)
     target_link_options(AlphaZeroDeathProbe PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# The board at the moment of death, for the games the measured runs actually play. Four
+# arms died between 38 and 43 percent filled however differently they played, and no
+# summary statistic says what is on the board when that happens.
+add_executable(AlphaZeroFinalPositions
+    src/az_final_positions.cpp
+    src/az_parameters.cpp
+    src/flag_parser.cpp
+    src/mcts.cpp
+    src/exploration_floor.cpp
+    src/value_range.cpp
+    src/network_evaluator.cpp
+    src/az_network.cpp
+    src/network_setup.cpp
+    src/snake_env.cpp
+)
+
+target_include_directories(AlphaZeroFinalPositions PRIVATE ${TORCH_INCLUDE_DIRS})
+target_link_libraries(AlphaZeroFinalPositions ${TORCH_LIBRARIES})
+set_property(TARGET AlphaZeroFinalPositions PROPERTY CXX_STANDARD 20)
+copy_pytorch_dlls(AlphaZeroFinalPositions)
+
+target_compile_definitions(AlphaZeroFinalPositions PRIVATE USE_CUDA=1)
+target_compile_definitions(AlphaZeroFinalPositions PRIVATE TORCH_CUDA=1)
+
+if(WIN32)
+    target_link_options(AlphaZeroFinalPositions PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
 endif()
 
 # Root coverage with and without Dirichlet noise, on one fixed set of positions. The

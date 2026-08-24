@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <torch/torch.h>
 
@@ -41,6 +41,25 @@ struct Compute
 //     const Compute compute = chooseDevice();
 //     std::cout << (compute.cuda ? "cuda" : "cpu");
 Compute chooseDevice();
+
+// A network of the given shape with `checkpoint_path` loaded into it, on `device` and in
+// evaluation mode.
+//
+//     AlphaZeroNet network = loadForEvaluation(20, 64, 4, path, "", compute.device);
+//
+// The four steps - construct, load, move, eval - were written out separately in every
+// program that scores a checkpoint, which is four copies of an ordering that has to be
+// right: loading after the move, or forgetting eval(), leaves batch norm using a batch's
+// own statistics and every number quietly wrong.
+//
+// `report_prefix` distinguishes two networks in one run; pass "" for the one under test.
+// Throws std::runtime_error naming the path when the file cannot be read.
+//
+// The trainer does not use this: it needs train() and moves its network before building an
+// optimiser over the parameters.
+AlphaZeroNet loadForEvaluation(int board, int channels, int blocks,
+                               const std::string& checkpoint_path, std::string_view report_prefix,
+                               torch::Device device);
 
 // Loads a checkpoint into an already-constructed network, widening a narrower stem.
 //
