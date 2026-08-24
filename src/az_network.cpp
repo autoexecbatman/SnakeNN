@@ -37,10 +37,9 @@ constexpr int POOLED_CELLS = POOLED_SIDE * POOLED_SIDE;
 AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channels, int blocks)
     : board_width_(board_width), board_height_(board_height), channels_(channels)
 {
-    // Checked at construction, because every one of these is a size a caller
-    // passes in from a command line and a wrong one produces a network that builds
-    // and trains and means nothing. A zero-channel trunk in particular constructs
-    // happily and emits constant policies.
+    // Rejects a board below 2x2, a trunk under one channel and a negative block count.
+    // Each arrives from a command line, and each builds a network that trains and means
+    // nothing - a zero-channel trunk constructs happily and emits constant policies.
     TORCH_CHECK(board_width >= 2 && board_height >= 2,
                 std::format("AlphaZeroNet needs a board of at least 2x2, got {}x{}", board_width,
                             board_height));
@@ -49,12 +48,16 @@ AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channe
     TORCH_CHECK(blocks >= 0,
                 std::format("AlphaZeroNet cannot have a negative block count, got {}", blocks));
 
+    // The stem: SnakeEnv::PLANE_COUNT input planes to `channels`, 3x3 with padding so
+    // the board keeps its size. No bias, because the batch norm after it has one.
     stem_conv = register_module(
         "stem_conv",
         torch::nn::Conv2d(
             torch::nn::Conv2dOptions(SnakeEnv::PLANE_COUNT, channels_, 3).padding(1).bias(false)));
     stem_norm = register_module("stem_norm", torch::nn::BatchNorm2d(channels_));
 
+    // `blocks` residual blocks, two 3x3 convolutions each, all `channels` wide. Named
+    // by block and layer, since a checkpoint is matched to modules by name.
     for (int block = 0; block < blocks; block++)
     {
         for (int layer = 0; layer < 2; layer++)
@@ -69,6 +72,8 @@ AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channe
         }
     }
 
+    // Policy head: a prior over the three relative actions. The 1x1 convolution cuts the
+    // trunk to POLICY_HEAD_CHANNELS before the pool, so the linear layer stays small.
     policy_conv = register_module(
         "policy_conv",
         torch::nn::Conv2d(
@@ -78,6 +83,8 @@ AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channe
         "policy_out",
         torch::nn::Linear(POLICY_HEAD_CHANNELS * POOLED_CELLS, SnakeEnv::ACTION_COUNT));
 
+    // Value head: one number for the position, through a VALUE_HIDDEN layer. forward
+    // scales a tanh by az::VALUE_SCALE, so the head is bounded to plus or minus that.
     value_conv = register_module(
         "value_conv",
         torch::nn::Conv2d(torch::nn::Conv2dOptions(channels_, VALUE_HEAD_CHANNELS, 1).bias(false)));
@@ -86,8 +93,9 @@ AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channe
         "value_hidden", torch::nn::Linear(VALUE_HEAD_CHANNELS * POOLED_CELLS, VALUE_HIDDEN));
     value_out = register_module("value_out", torch::nn::Linear(VALUE_HIDDEN, 1));
 
-    // Same shape as the value head and pooled the same way, so nothing it holds
-    // depends on board size either and the curriculum still transfers.
+    // Steps head: how many moves remain to fill the board, as a fraction of the step
+    // budget, through a sigmoid. Undiscounted, so it is the only estimate here that
+    // reaches the deadline. Shaped like the value head, so it too is board-size free.
     steps_conv = register_module(
         "steps_conv",
         torch::nn::Conv2d(torch::nn::Conv2dOptions(channels_, VALUE_HEAD_CHANNELS, 1).bias(false)));
@@ -96,9 +104,9 @@ AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channe
         "steps_hidden", torch::nn::Linear(VALUE_HEAD_CHANNELS * POOLED_CELLS, VALUE_HIDDEN));
     steps_out = register_module("steps_out", torch::nn::Linear(VALUE_HIDDEN, 1));
 
-    // One output per action rather than one per state, because the risk is
-    // consumed as a cap on an action. Pooled like the others, so no weight here
-    // depends on board size and a 10x10 checkpoint still loads at 20x20.
+    // Death head: per action, the probability that taking it leads to a death no later
+    // play can avoid, through a sigmoid. One output per action because the search
+    // consumes it as a cap on an action. Pooled like the others, so board-size free.
     death_conv = register_module(
         "death_conv",
         torch::nn::Conv2d(torch::nn::Conv2dOptions(channels_, VALUE_HEAD_CHANNELS, 1).bias(false)));
@@ -111,13 +119,10 @@ AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channe
 
 Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
 {
-    // The pooling that makes this architecture board-size independent also makes
-    // it silent about the wrong board: a 6x6 network fed 20x20 planes runs to
-    // completion and returns confident nonsense, because nothing downstream of the
-    // pool can tell what went in. Transfer is done by constructing a network at
-    // the new size and copying weights into it, never by feeding a different size
-    // to an existing one - so a mismatch here is a caller that encoded against the
-    // wrong board, and it is worth refusing.
+    // Refuses anything but [N, PLANE_COUNT, height, width] on this network's own board.
+    // The pooling that frees the weights from board size also hides a wrong one: a 6x6
+    // network fed 20x20 planes runs to completion and returns confident nonsense.
+    // Transfer means building a network at the new size and copying weights into it.
     TORCH_CHECK(
         planes.dim() == 4,
         std::format("forward expects [N, planes, height, width], got {} dimensions", planes.dim()));
@@ -129,8 +134,11 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
                             board_height_, planes.size(3), planes.size(2)));
     TORCH_CHECK(planes.size(0) > 0, "forward given an empty batch");
 
+    // The stem: the input planes become `channels` feature maps, at full board size.
     torch::Tensor trunk = torch::relu(stem_norm(stem_conv(planes)));
 
+    // Each residual block is two convolutions, taken two entries at a time because the
+    // modules are stored flat.
     for (size_t block = 0; block < block_convs.size(); block += 2)
     {
         torch::Tensor residual = trunk;
@@ -141,10 +149,13 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
         trunk = torch::relu(trunk + residual);
     }
 
+    // Policy head: pooled to 4x4, then one linear layer to three logits. The softmax is
+    // the caller's, so a training loss can take log_softmax instead.
     torch::Tensor policy = torch::relu(policy_norm(policy_conv(trunk)));
     policy = torch::adaptive_avg_pool2d(policy, { POOLED_SIDE, POOLED_SIDE });
     policy = policy_out(policy.flatten(1));
 
+    // Value head: pooled, one hidden layer, then a single number.
     torch::Tensor value = torch::relu(value_norm(value_conv(trunk)));
     value = torch::adaptive_avg_pool2d(value, { POOLED_SIDE, POOLED_SIDE });
     value = torch::relu(value_hidden(value.flatten(1)));
@@ -153,6 +164,7 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
     // the units a reward is quoted in, since backup adds the two together.
     value = az::VALUE_SCALE * torch::tanh(value_out(value));
 
+    // Steps head: the same pipeline, ending in one number.
     torch::Tensor steps = torch::relu(steps_norm(steps_conv(trunk)));
     steps = torch::adaptive_avg_pool2d(steps, { POOLED_SIDE, POOLED_SIDE });
     steps = torch::relu(steps_hidden(steps.flatten(1)));
@@ -160,6 +172,7 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
     // a fraction is what makes the estimate mean the same thing on every board.
     steps = torch::sigmoid(steps_out(steps));
 
+    // Death head: the same pipeline, ending in one number per action.
     torch::Tensor death_risk = torch::relu(death_norm(death_conv(trunk)));
     death_risk = torch::adaptive_avg_pool2d(death_risk, { POOLED_SIDE, POOLED_SIDE });
     death_risk = torch::relu(death_hidden(death_risk.flatten(1)));
@@ -167,10 +180,9 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
     // action leads to a death nothing after it can avoid.
     death_risk = torch::sigmoid(death_out(death_risk));
 
-    // The two shapes every consumer indexes without checking: the evaluator reads
-    // ACTION_COUNT priors per state and one value, and the trainer builds its loss
-    // against both. A wrong batch dimension here would misalign policy targets with
-    // positions and train the network on the wrong labels.
+    // Refuses a head whose shape does not match the batch it was given. Every consumer
+    // indexes these without checking, so a wrong batch dimension would misalign targets
+    // with positions and train the network on the wrong labels.
     TORCH_CHECK(policy.dim() == 2 && policy.size(0) == planes.size(0) &&
                     policy.size(1) == SnakeEnv::ACTION_COUNT,
                 std::format("the policy head produced [{}] for a batch of {}, expected [{}, {}]",
@@ -188,6 +200,7 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
         std::format("the death head produced [{}] for a batch of {}, expected [{}, {}]",
                     death_risk.dim(), planes.size(0), planes.size(0), SnakeEnv::ACTION_COUNT));
 
+    // The four heads, in the order Prediction declares them.
     return Prediction{ policy, value, steps, death_risk };
 }
 

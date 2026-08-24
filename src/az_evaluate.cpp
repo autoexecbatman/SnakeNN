@@ -1,27 +1,4 @@
-﻿#include <torch/torch.h>
-
-#include <algorithm>
-#include <chrono>
-#include <format>
-#include <iostream>
-#include <stdexcept>
-#include <string>
-#include <vector>
-
-#include "az_network.h"
-#include "az_parameters.h"
-#include "eval_options.h"
-#include "evaluation_report.h"
-#include "run_ledger.h"
-#include "steps_per_apple.h"
-#include "mcts.h"
-#include "network_evaluator.h"
-#include "network_setup.h"
-#include "search_defaults.h"
-#include "seed_policy.h"
-#include "snake_env.h"
-
-// It plays Snake and counts the wins.
+﻿// It plays Snake and counts the wins.
 //
 // A game is one round of Snake, played to the end. The board starts empty apart from a snake
 // one segment long at the centre and a single apple. Every move steers relative to the
@@ -111,6 +88,29 @@
 //
 // Exit codes: 2 for a bad flag, 1 for a checkpoint that cannot be read or for any run that
 // did not win every game, 0 only when every game was won. Zero means perfect, not finished.
+
+#include <torch/torch.h>
+
+#include <algorithm>
+#include <chrono>
+#include <format>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "az_network.h"
+#include "az_parameters.h"
+#include "eval_options.h"
+#include "evaluation_report.h"
+#include "run_ledger.h"
+#include "steps_per_apple.h"
+#include "mcts.h"
+#include "network_evaluator.h"
+#include "network_setup.h"
+#include "search_defaults.h"
+#include "seed_policy.h"
+#include "snake_env.h"
 
 namespace
 {
@@ -315,6 +315,7 @@ void printSummary(const evaluation::Settings& settings, const evaluation::Totals
 // game was won - see the note in the file block about that last one.
 int main(int argc, char** argv)
 {
+    // Parses argv into settings; a bad flag prints the usage line and exits 2.
     evaluation::Settings settings;
     try
     {
@@ -327,12 +328,18 @@ int main(int argc, char** argv)
                   << std::endl;
         return 2;
     }
+    // Longest a game may run, in moves; reaching it is a timeout rather than a death.
     const int step_limit = settings.stepLimit();
 
+    // Appends a started row to the ledger at settings.ledger_path (--ledger, default
+    // runs.tsv). A killed run leaves that row unmatched by a finished one.
     ledger::Entry run = ledger::openRun(argc, argv, ledger::Kind::Evaluation, settings.ledger_path);
 
+    // CUDA when available, else the CPU; the header prints which.
     const Compute compute = chooseDevice();
 
+    // The checkpoint being scored, loaded in eval mode. A failure here closes the
+    // ledger row as failed rather than leaving it open.
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
     try
     {
@@ -346,17 +353,23 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    // The seed range really is reserved, and the reservation is enforced rather than
-    // asserted: seed_policy.h owns both bands and throws before a training seed can reach
-    // this program.
+    // Prints the checkpoint, board, search settings and the seed band. The band is
+    // enforced rather than described: seed_policy.h throws before a training seed
+    // could reach this program.
     std::cout << evaluation::formatHeader(settings);
 
+    // One search, reused for every batch, so the evaluation and simulation counts the
+    // summary prints cover the whole run.
     NetworkEvaluator evaluator(network, compute.device);
     MonteCarloSearch search(evaluator, buildSearchConfig(settings));
 
+    // Wins, deaths and timeouts, which partition the games, plus the running clock.
     evaluation::Totals totals;
     const auto started = std::chrono::high_resolution_clock::now();
 
+    // Games in blocks of --batch, stepped together so each search reaches the network
+    // in one forward pass. mcts draws food placement across a whole batch in lockstep,
+    // so two runs at different batch sizes searched different futures.
     for (int start = 0; start < settings.games; start += settings.batch)
     {
         const int count = std::min(settings.batch, settings.games - start);
@@ -365,14 +378,19 @@ int main(int argc, char** argv)
                                  totals.wins);
     }
 
+    // What the run cost, printed with the outcome counts and the search's own tallies.
     const double seconds =
         std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - started).count();
     printSummary(settings, totals, seconds, evaluator, search);
 
+    // Completes the run's row - outcome, wall-clock, games - and appends it, matching
+    // the started row written above.
     run.outcome = ledger::Outcome::Finished;
     run.seconds = seconds;
     run.games = settings.games;
     ledger::append(settings.ledger_path, run);
 
+    // 0 only when every game was won. Any loss is a non-zero exit, so a script cannot
+    // read a partial score as success.
     return totals.wins == settings.games ? 0 : 1;
 }

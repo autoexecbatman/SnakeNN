@@ -477,6 +477,7 @@ void report(const std::string& label, const std::string& rejected_unit,
 
 int main(int argc, char** argv)
 {
+    // Parses argv into settings; a bad flag exits 1 before any game is played.
     ProbeSettings settings;
     try
     {
@@ -488,11 +489,16 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // Longest a game may run, in moves: STEPS_PER_CELL * board * board.
     const int step_limit = az::deriveStepLimit(settings.board);
+
+    // CUDA when available, else the CPU; the banner prints which.
     const Compute compute = chooseDevice();
     const torch::Device device = compute.device;
     const bool cuda = compute.cuda;
 
+    // The banner names the checkpoint, the board and the seed band, so a saved log
+    // says which run produced it.
     std::cout << std::format("death probe: {} on {}x{}, {} games, {} simulations, threshold {}\n",
                              settings.checkpoint, settings.board, settings.board, settings.games,
                              settings.simulations, settings.threshold);
@@ -500,9 +506,10 @@ int main(int argc, char** argv)
                              seeds::evaluationGameSeed(settings.seed_offset, 0),
                              cuda ? "cuda" : "cpu");
 
+    // Start of the elapsed time printed at the end.
     const auto started = std::chrono::high_resolution_clock::now();
 
-    // The trained head.
+    // The head under test, loaded from --checkpoint.
     AlphaZeroNet trained(settings.board, settings.board, settings.channels, settings.blocks);
     try
     {
@@ -513,17 +520,23 @@ int main(int argc, char** argv)
         std::cerr << error.what() << std::endl;
         return 1;
     }
+    // Onto the device and into eval mode, so batch norm uses its running statistics.
     trained->to(device);
     trained->eval();
+    // Plays the held-out games and records, per move, what the head said against what
+    // the search backed up. Those pairs are the whole measurement.
     const ProbeSamples trained_samples = collectSamples(trained, device, settings, step_limit);
 
     // The floor. Same architecture, same games, no training: whatever this scores is
     // what the measurement returns for a head that has learned nothing.
     AlphaZeroNet untrained(settings.board, settings.board, settings.channels, settings.blocks);
+    // Same treatment, so the floor differs from the head under test only in its weights.
     untrained->to(device);
     untrained->eval();
     const ProbeSamples untrained_samples = collectSamples(untrained, device, settings, step_limit);
 
+    // Four blocks: the trainer's rule and the looser one, each for the trained head and
+    // its untrained floor. Read a trained number only against the floor beneath it.
     report("TRAINED HEAD, all-or-nothing rule - what the trainer sees", "positions",
            trained_samples.all_or_nothing, settings.threshold);
     report("UNTRAINED HEAD, all-or-nothing rule - the noise floor", "positions",
@@ -533,6 +546,7 @@ int main(int argc, char** argv)
     report("UNTRAINED HEAD, per-visited-action rule - its noise floor", "actions",
            untrained_samples.per_visited_action, settings.threshold);
 
+    // What the run cost.
     const auto finished = std::chrono::high_resolution_clock::now();
     const double seconds = std::chrono::duration<double>(finished - started).count();
     std::cout << std::format("\nelapsed {:.2f}s\n", seconds);
