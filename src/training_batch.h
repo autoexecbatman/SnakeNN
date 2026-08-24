@@ -45,6 +45,11 @@ struct BatchBuffers
     // One per record: whether its risk label is worth learning from. A batch can be almost
     // entirely masked out, which is why the death loss divides by what survived.
     std::vector<float> death_mask;
+    // Ownership targets: batch x cells, one per board cell, 1 where the head reaches it.
+    std::vector<float> ownership;
+    // One per record: whether its visit counts came from a full search and may train the
+    // policy. All ones unless playout cap randomization is on.
+    std::vector<float> policy_mask;
 };
 
 // One assembled batch, on the device the network lives on.
@@ -62,6 +67,11 @@ struct BatchTensors
     torch::Tensor death_target;
     // 1 where the death label is usable, 0 where it is not.
     torch::Tensor death_weight;
+    // Per-cell ownership the ownership head is trained against, shaped like the head's
+    // output so the loss needs no reshaping at the call site.
+    torch::Tensor ownership_target;
+    // 1 where the visit counts came from a full search, 0 where they did not.
+    torch::Tensor policy_weight;
 };
 
 // The four heads' losses and the weighted sum trained on.
@@ -78,6 +88,8 @@ struct Losses
     torch::Tensor steps;
     // Cross entropy on death risk, over usable labels only.
     torch::Tensor death;
+    // Cross entropy on per-cell ownership, averaged over every cell of the batch.
+    torch::Tensor ownership;
     // How many labels survived the mask, floored at one so the division is safe.
     torch::Tensor usable;
     // The weighted sum backward() is called on.

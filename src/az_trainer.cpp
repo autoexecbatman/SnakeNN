@@ -141,6 +141,13 @@ SelfPlay::Config buildPlayConfig(const trainer::Settings& settings, int step_lim
     config.temperature = az::VISIT_TEMPERATURE;
     config.temperature_moves = settings.cellCount() / 2;
     config.seed = settings.seed;
+    // Most moves get a cheap search and supply no policy target; a minority get the full
+    // one. Off unless asked for, so a run that used it is visible on the command line the
+    // ledger records.
+    config.full_search_fraction = settings.full_search_fraction;
+    config.fast_simulations =
+        std::max(1, static_cast<int>(static_cast<float>(settings.simulations) *
+                                     settings.fast_simulation_fraction));
     return config;
 }
 

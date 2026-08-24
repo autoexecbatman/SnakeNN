@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <random>
 #include <stdexcept>
 
 #include "seed_policy.h"
@@ -141,7 +142,14 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
 
         // Every live game searched in one call, so all their leaves reach the
         // network in a single forward pass.
-        std::vector<MonteCarloSearch::Result> results = search.search(roots);
+        // One coin per pass rather than per game, so every game in a batch searches the
+        // same depth on the same pass - the batch shares one forward pass, and mixing
+        // budgets inside it would leave most of the batch idle while the deep games finish.
+        const bool full_search =
+            config_.full_search_fraction <= 0.0f ||
+            std::uniform_real_distribution<float>(0.0f, 1.0f)(rng_) < config_.full_search_fraction;
+        const int budget = full_search ? search_config_.simulations : config_.fast_simulations;
+        std::vector<MonteCarloSearch::Result> results = search.searchWith(roots, budget);
 
         for (size_t position = 0; position < live.size(); position++)
         {
@@ -154,6 +162,7 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
             record.position = game.snapshot();
             const std::vector<float> shares = results[position].policy();
             record.death_risk_usable = results[position].allActionsVisited();
+            record.policy_usable = full_search;
             for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
             {
                 record.policy[action] = shares[action];
@@ -233,11 +242,21 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
             rewards[index].back() += config_.timeout_reward;
         }
 
+        // Sized from the game itself, so a board size never has to be threaded in.
+        const int cells = games[index].cellCount();
+        // The same walk fills the ownership target. Going backwards, the set of cells
+        // the head still has ahead of it only ever grows, so `reached` accumulates and
+        // every position is labelled with its own future rather than the whole game's.
+        std::vector<unsigned char> reached(static_cast<size_t>(cells), 0);
         float carried = 0.0f;
         for (int position = static_cast<int>(trajectories[index].size()); position-- > 0;)
         {
             carried = rewards[index][position] + config_.discount * carried;
             trajectories[index][position].value_target = carried;
+            // The head's own cell at this position, added before the copy, so a position
+            // always owns where it stands.
+            reached[trajectories[index][position].position.body_cells[0]] = 1;
+            trajectories[index][position].future_cells = reached;
         }
 
         // Steps-to-go, counted forward from each position to the end of the game

@@ -40,10 +40,11 @@ std::string formatIterationSummary(int batch_size, const IterationReport& report
         // better than predicting the batch mean, whatever the loss looks like.
         const double explained = mean_variance > 0.0 ? 1.0 - mean_value / mean_variance : 0.0;
         summary += std::format(
-            "  loss p {:.6f} v {:.6f} d {:.6f}  v-var {:.6f} r2 {:.3f}"
-            "  labels {:.1f}/{}",
+            "  loss p {:.6f} v {:.6f} d {:.6f} o {:.6f}"
+            "  v-var {:.6f} r2 {:.3f}  labels {:.1f}/{}",
             totals.policy / totals.batches_run, mean_value, totals.death / totals.batches_run,
-            mean_variance, explained, totals.usable_labels / totals.batches_run, batch_size);
+            totals.ownership / totals.batches_run, mean_variance, explained,
+            totals.usable_labels / totals.batches_run, batch_size);
     }
     // The rate divides by play time alone, so it measures self-play throughput rather than
     // being dragged down by the gradient steps that follow it.

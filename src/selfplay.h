@@ -60,11 +60,24 @@ struct TrainingRecord
     // they are a small minority of an iteration's positions, so a batch drawn uniformly
     // barely contains them.
     bool decisive{ false };
+    // Whether this record's visit counts are worth training the policy on. False for a
+    // move played from a cheap search: a policy trained on a shallow search learns the
+    // shallow search.
+    bool policy_usable{ true };
+    // One byte per cell, 1 where the head occupies this cell now or reaches it later in
+    // the game. The ownership head's target.
+    //
+    // An auxiliary label: nothing at play time reads it. It exists because a per-cell
+    // target gives the trunk localised credit assignment, where every other target here
+    // is one number for a whole position - KataGo's largest measured gain, and the densest
+    // available statement of where this snake can still go.
+    std::vector<unsigned char> future_cells;
 
     // Roughly what this record costs, for a buffer capped by memory not by count.
     size_t bytesUsed() const
     {
-        return sizeof(TrainingRecord) + position.body_cells.capacity() * sizeof(unsigned short);
+        return sizeof(TrainingRecord) + position.body_cells.capacity() * sizeof(unsigned short) +
+               future_cells.capacity();
     }
 };
 
@@ -125,6 +138,16 @@ public:
         // Seeds action sampling only. The games themselves are seeded per batch, by
         // the game_seed_base handed to playBatch.
         unsigned int seed{ 0 };
+        // Share of moves that get the full search. 0 means every move does, which is what
+        // every run before 2026-08-24 did; KataGo uses about a quarter.
+        //
+        // The rest are played from `fast_simulations` and their records do not train the
+        // policy - a policy fitted to a shallow search learns the shallow search. They do
+        // still train the value, the steps and the ownership heads, which is the whole
+        // point: those want many positions, and only the policy wants deep ones.
+        float full_search_fraction{ 0.0f };
+        // The cheap budget, read only when full_search_fraction is above zero.
+        int fast_simulations{ 0 };
     };
 
     // The evaluator is borrowed and must outlive this; throws below one game.

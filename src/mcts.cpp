@@ -398,6 +398,12 @@ void MonteCarloSearch::addRootNoise(Tree& tree)
 std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
     const std::vector<const SnakeEnv*>& roots)
 {
+    return searchWith(roots, config_.simulations);
+}
+
+std::vector<MonteCarloSearch::Result> MonteCarloSearch::searchWith(
+    const std::vector<const SnakeEnv*>& roots, int simulations)
+{
     for (const SnakeEnv* root : roots)
     {
         if (root == nullptr)
@@ -410,7 +416,7 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         }
     }
 
-    assert(config_.simulations >= 1 && "the constructor rejects anything less");
+    assert(simulations >= 1 && "a search of no simulations has no visits to report");
 
     const int tree_count = static_cast<int>(roots.size());
 
@@ -447,7 +453,7 @@ std::vector<MonteCarloSearch::Result> MonteCarloSearch::search(
         tree.known_leaf_value.reset();
     }
 
-    for (int simulation = 0; simulation < config_.simulations; simulation++)
+    for (int simulation = 0; simulation < simulations; simulation++)
     {
         batch_.clear();
 

@@ -115,6 +115,12 @@ AlphaZeroNetImpl::AlphaZeroNetImpl(int board_width, int board_height, int channe
         "death_hidden", torch::nn::Linear(VALUE_HEAD_CHANNELS * POOLED_CELLS, VALUE_HIDDEN));
     death_out =
         register_module("death_out", torch::nn::Linear(VALUE_HIDDEN, SnakeEnv::ACTION_COUNT));
+
+    // Ownership head: one channel at full board resolution, straight off the trunk. No
+    // pooling and no linear layer, so it carries no board-size dependence and adds only
+    // channels_ + 1 parameters.
+    ownership_conv = register_module("ownership_conv",
+                                     torch::nn::Conv2d(torch::nn::Conv2dOptions(channels_, 1, 1)));
 }
 
 Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
@@ -180,6 +186,11 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
     // action leads to a death nothing after it can avoid.
     death_risk = torch::sigmoid(death_out(death_risk));
 
+    // Ownership head: one value per cell, at the board's own resolution. A sigmoid,
+    // because the target is a probability - will the head visit this cell before the game
+    // ends. No pooling and no flatten, so the same weights serve any board.
+    torch::Tensor ownership = torch::sigmoid(ownership_conv(trunk));
+
     // Refuses a head whose shape does not match the batch it was given. Every consumer
     // indexes these without checking, so a wrong batch dimension would misalign targets
     // with positions and train the network on the wrong labels.
@@ -200,8 +211,8 @@ Prediction AlphaZeroNetImpl::forward(torch::Tensor planes)
         std::format("the death head produced [{}] for a batch of {}, expected [{}, {}]",
                     death_risk.dim(), planes.size(0), planes.size(0), SnakeEnv::ACTION_COUNT));
 
-    // The four heads, in the order Prediction declares them.
-    return Prediction{ policy, value, steps, death_risk };
+    // The five heads, in the order Prediction declares them.
+    return Prediction{ policy, value, steps, death_risk, ownership };
 }
 
 namespace

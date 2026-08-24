@@ -39,8 +39,14 @@ public:
     // How many actions there are. Three, and no reverse.
     static constexpr int ACTION_COUNT = 3;
 
-    // body, head, food, tail timer, one plane per heading, and the clock
-    static constexpr int PLANE_COUNT = 9;
+    // body, head, food, tail timer, one plane per heading, the clock, and the cells
+    // the head can still reach.
+    //
+    // The last one is computed rather than observed: a convolution can see the body, but
+    // whether the head is sealed away from the open board is a connectivity question that
+    // four 3x3 layers answer badly, and it is the one the agent gets wrong. Adding it as a
+    // plane hands the network the quantity instead of asking it to derive one.
+    static constexpr int PLANE_COUNT = 10;
 
     // Reward scale follows Du, Gemp, Wu and Wu 2022 (arXiv:2211.09622), which
     // trained a winning Snake agent with +1 per apple, -10 for dying and +10 for

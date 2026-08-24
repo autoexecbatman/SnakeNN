@@ -81,6 +81,18 @@ struct Prediction
     // that. Fatemi et al. 2019 give the construction - an undiscounted signal
     // that is 1 exactly on the states from which every trajectory dies.
     torch::Tensor death_risk;
+    // [N, 1, height, width] in (0, 1), from a sigmoid. Per cell, the probability the head
+    // visits it before the game ends.
+    //
+    // An auxiliary target: nothing consumes it at play time. It exists to shape the trunk,
+    // which is KataGo's largest measured gain - per-cell labels give localised credit
+    // assignment where a scalar gives one number for a whole board. It is also the densest
+    // statement available of the thing this agent gets wrong, which is walking into space
+    // it cannot leave.
+    //
+    // Full board resolution, from a 1x1 convolution rather than a pooled linear layer, so
+    // no weight here depends on board size either.
+    torch::Tensor ownership;
 };
 
 // A copy of `target`'s shape holding `saved` in its leading input channels, with the
@@ -178,6 +190,7 @@ private:
     torch::nn::Linear steps_hidden{ nullptr };
     torch::nn::Linear steps_out{ nullptr };
 
+    torch::nn::Conv2d ownership_conv{ nullptr };
     torch::nn::Conv2d death_conv{ nullptr };
     torch::nn::BatchNorm2d death_norm{ nullptr };
     torch::nn::Linear death_hidden{ nullptr };

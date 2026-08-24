@@ -159,6 +159,15 @@ public:
     // Runs the configured simulations on every root at once. Roots must be live.
     std::vector<Result> search(const std::vector<const SnakeEnv*>& roots);
 
+    // As search, but with `simulations` in place of the configured count.
+    //
+    //     search.searchWith(roots, 50);   // a cheap look, for a move that supplies no
+    //                                     // policy target
+    //
+    // Exists for playout cap randomization, where the budget changes per move. Asserts the
+    // count is at least one: a search of nothing has no visit distribution to return.
+    std::vector<Result> searchWith(const std::vector<const SnakeEnv*>& roots, int simulations);
+
     // How many times the trap guard has overruled the search since construction.
     long long trapGuardFires() const { return trap_guard_fires_; }
 

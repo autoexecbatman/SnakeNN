@@ -1,4 +1,4 @@
-#include <cassert>
+﻿#include <cassert>
 #include <stdexcept>
 
 #include "snake_env.h"
@@ -518,6 +518,65 @@ void SnakeEnv::encodeSnapshot(int width, int height, const Snapshot& snapshot, f
     for (int cell = 0; cell < cells; cell++)
     {
         clock_plane[cell] = snapshot.budget_remaining;
+    }
+
+    // Every empty cell the head can still walk to, by a flood fill outward from its free
+    // neighbours. The head's own cell is body and stays unmarked, and the tail is treated
+    // as blocking: this describes the position as it stands rather than one move ahead.
+    //
+    // Computed rather than left to the network. Whether the head is sealed away from the
+    // open board is a connectivity question, and four 3x3 convolutions answer it badly -
+    // it is also the question the agent gets wrong, dying with most of the board free.
+    float* reach_plane = planes_out + 9 * cells;
+    std::vector<char> blocked(static_cast<size_t>(cells), 0);
+    for (unsigned short cell : snapshot.body_cells)
+    {
+        blocked[cell] = 1;
+    }
+    std::vector<int> frontier;
+    const int head = snapshot.body_cells[0];
+    // Seeded from the head's neighbours rather than from the head, which is occupied.
+    const int head_x = head % width;
+    const int head_y = head / width;
+    const int steps[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+    for (const int (&step)[2] : steps)
+    {
+        const int x = head_x + step[0];
+        const int y = head_y + step[1];
+        if (x < 0 || x >= width || y < 0 || y >= height)
+        {
+            continue;
+        }
+        const int index = y * width + x;
+        if (blocked[static_cast<size_t>(index)] || reach_plane[index] != 0.0f)
+        {
+            continue;
+        }
+        reach_plane[index] = 1.0f;
+        frontier.push_back(index);
+    }
+    while (!frontier.empty())
+    {
+        const int cell = frontier.back();
+        frontier.pop_back();
+        const int at_x = cell % width;
+        const int at_y = cell / width;
+        for (const int (&step)[2] : steps)
+        {
+            const int x = at_x + step[0];
+            const int y = at_y + step[1];
+            if (x < 0 || x >= width || y < 0 || y >= height)
+            {
+                continue;
+            }
+            const int index = y * width + x;
+            if (blocked[static_cast<size_t>(index)] || reach_plane[index] != 0.0f)
+            {
+                continue;
+            }
+            reach_plane[index] = 1.0f;
+            frontier.push_back(index);
+        }
     }
 }
 

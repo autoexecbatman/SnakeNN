@@ -185,6 +185,8 @@ enum class Flag
     DecisiveShare,
     WeightDecay,
     FinalLearningRateFraction,
+    FullSearchFraction,
+    FastSimulationFraction,
     Seed,
     Checkpoint,
     Ledger,
@@ -219,6 +221,8 @@ constexpr FlagName FLAG_NAMES[] = {
     { "--decisive-share", Flag::DecisiveShare },
     { "--weight-decay", Flag::WeightDecay },
     { "--final-lr-fraction", Flag::FinalLearningRateFraction },
+    { "--full-search-fraction", Flag::FullSearchFraction },
+    { "--fast-simulation-fraction", Flag::FastSimulationFraction },
     { "--seed", Flag::Seed },
     { "--checkpoint", Flag::Checkpoint },
     { "--ledger", Flag::Ledger },
@@ -347,6 +351,16 @@ void applySetting(Settings& settings, bool& batches_given, Flag flag, const std:
         case Flag::FinalLearningRateFraction:
         {
             settings.final_learning_rate_fraction = flags::parseUnitFloat(name, value);
+            break;
+        }
+        case Flag::FullSearchFraction:
+        {
+            settings.full_search_fraction = flags::parseUnitFloat(name, value);
+            break;
+        }
+        case Flag::FastSimulationFraction:
+        {
+            settings.fast_simulation_fraction = flags::parseUnitFloat(name, value);
             break;
         }
         case Flag::Seed:

@@ -95,6 +95,12 @@ struct Settings
     // over the iterations played. 1 holds it constant, which is what every run before
     // 2026-08-24 did.
     float final_learning_rate_fraction{ 1.0f };
+    // Share of self-play moves given the full search. 0 means every move gets it, which is
+    // what every run before 2026-08-24 did; KataGo uses about a quarter.
+    float full_search_fraction{ 0.0f };
+    // The cheap budget, as a share of --simulations. Read only when full_search_fraction is
+    // above zero. KataGo's fast searches are roughly a sixth of its full ones.
+    float fast_simulation_fraction{ 0.25f };
     // How often selection ignores its scores and picks uniformly, before the
     // 1/log(N) decay. A flag rather than a constant because it changes the run's
     // result and the ledger records the command line: compiled in, two runs that

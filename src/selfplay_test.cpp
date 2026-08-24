@@ -1,4 +1,4 @@
-#include <cmath>
+﻿#include <cmath>
 #include <format>
 #include <iostream>
 #include <string>
@@ -385,6 +385,79 @@ void testProgressIsMonotonicAndCompletes()
 
 }  // namespace
 
+// The ownership target: per cell, does the head stand here now or reach here later.
+void testOwnershipMarksThisPositionsFuture()
+{
+    SilentEvaluator evaluator;
+    SelfPlay play(evaluator, searchConfig(), playConfig(1, 40, az::TIMEOUT_REWARD));
+
+    std::vector<TrainingRecord> records;
+    std::vector<GameSummary> summaries;
+    play.playBatch(6, 6, 4242, records, summaries);
+
+    expect(!records.empty(), "the game produced records");
+    if (records.empty())
+    {
+        return;
+    }
+
+    const size_t cells = 36;
+    bool sized = true;
+    bool owns_its_head = true;
+    for (const TrainingRecord& record : records)
+    {
+        sized = sized && record.future_cells.size() == cells;
+        if (record.future_cells.size() == cells)
+        {
+            owns_its_head =
+                owns_its_head && record.future_cells[record.position.body_cells[0]] == 1;
+        }
+    }
+    expect(sized, "every record carries one byte per cell");
+    expect(owns_its_head, "a position owns the cell its head stands on");
+
+    // Read backwards, the future only grows: whatever position n reaches, position n-1
+    // reaches too, because it reaches position n. A mask holding the whole game at every
+    // position would also pass the two checks above, and this is what separates them.
+    bool grows_backwards = true;
+    bool strictly_grows_somewhere = false;
+    for (size_t index = 0; index + 1 < records.size(); index++)
+    {
+        const std::vector<unsigned char>& earlier = records[index].future_cells;
+        const std::vector<unsigned char>& later = records[index + 1].future_cells;
+        if (earlier.size() != cells || later.size() != cells)
+        {
+            continue;
+        }
+        size_t earlier_count = 0;
+        size_t later_count = 0;
+        for (size_t cell = 0; cell < cells; cell++)
+        {
+            earlier_count += earlier[cell];
+            later_count += later[cell];
+            if (later[cell] == 1 && earlier[cell] == 0)
+            {
+                grows_backwards = false;
+            }
+        }
+        if (earlier_count > later_count)
+        {
+            strictly_grows_somewhere = true;
+        }
+    }
+    expect(grows_backwards, "an earlier position owns everything a later one owns");
+    expect(strictly_grows_somewhere,
+           "and strictly more somewhere, so the mask is not the whole game repeated");
+
+    // Nothing comes after the last position, so it owns exactly where its head is.
+    size_t last_owned = 0;
+    for (unsigned char owned : records.back().future_cells)
+    {
+        last_owned += owned;
+    }
+    expect(last_owned == 1, "the last position owns exactly one cell");
+}
+
 int main()
 {
     std::cout << "SelfPlay properties" << std::endl;
@@ -393,6 +466,7 @@ int main()
     testStepLimitIsEnforcedAndReported();
     testATimedOutGamePaysThePenaltyAndOthersDoNot();
     testProgressIsMonotonicAndCompletes();
+    testOwnershipMarksThisPositionsFuture();
 
     std::cout << std::endl;
     if (failures == 0)

@@ -121,6 +121,17 @@ constexpr float STEPS_LOSS_WEIGHT = 0.25f;
 // report the two losses side by side before this number is defended.
 constexpr float DEATH_LOSS_WEIGHT = 0.25f;
 
+// How hard the ownership head pulls on the shared trunk. Equal to the steps and death
+// weights, for the same reason they are equal to each other: an auxiliary head is there to
+// shape the trunk, and one that outweighs the policy is a trunk learning to draw maps
+// instead of to play.
+//
+// The target is one label per cell rather than one per position, so this term sees far more
+// labels than the others at the same weight - which is the point. KataGo's ownership head
+// was its largest single ablation at 1.65x, and the gain is in the localised credit
+// assignment, not in the prediction.
+constexpr float OWNERSHIP_LOSS_WEIGHT = 0.25f;
+
 // Whether the search refuses a root move that seals the head away from its own
 // tail. Algorithmic assistance rather than a learned skill: the seal proves fatal
 // tens of moves later, past any horizon 200 simulations reach.

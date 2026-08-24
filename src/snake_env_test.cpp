@@ -1,4 +1,4 @@
-#include <format>
+﻿#include <format>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -897,6 +897,74 @@ void testEncoding()
         }
     }
     expect(heading_planes_set == 1, "exactly one heading plane is set, and it is constant");
+
+    // Plane 9 marks every empty cell the head can still reach. On an open board with a
+    // short snake that is every cell the body does not occupy: 25 cells less the three the
+    // snake stands on, and the head's own cell is body so it is not marked.
+    {
+        SnakeEnv open(5, 5, 1u, 100);
+        std::vector<float> open_planes(open.encodedSize(), -1.0f);
+        open.encode(open_planes.data());
+        const int open_cells = open.cellCount();
+        float reach_sum = 0.0f;
+        for (int cell = 0; cell < open_cells; cell++)
+        {
+            reach_sum += open_planes[9 * open_cells + cell];
+        }
+        const float expected =
+            static_cast<float>(open_cells) - static_cast<float>(open.body().size());
+        expect(reach_sum == expected,
+               "on an open board every cell off the body is reachable from the head");
+    }
+
+    // A head sealed into a two-cell pocket. The body walls off the top-left corner, so the
+    // head can reach exactly one other cell however much of the board is empty elsewhere.
+    //
+    //   H o . . .        cells 0..4    row 0
+    //   R o . . .        cells 5..9    row 1
+    //   o o . . .        cells 10..14  row 2
+    //   . . . . .
+    //   . . . . .
+    //
+    // H is the head at cell 0, R the one cell it can reach at cell 5, and o the rest of the
+    // body: 1, 6, 10, 11. Fifteen cells sit open to the right and none of them count.
+    {
+        SnakeEnv::Snapshot sealed;
+        sealed.body_cells = { 0, 1, 6, 11, 10 };
+        sealed.food_cell = 24;
+        sealed.heading = 0;
+        sealed.budget_remaining = 1.0f;
+        std::vector<float> sealed_planes(SnakeEnv::PLANE_COUNT * 25, -1.0f);
+        SnakeEnv::encodeSnapshot(5, 5, sealed, sealed_planes.data());
+        float sealed_sum = 0.0f;
+        for (int cell = 0; cell < 25; cell++)
+        {
+            sealed_sum += sealed_planes[9 * 25 + cell];
+        }
+        expect(sealed_sum == 1.0f,
+               "a head sealed into a pocket reaches only the pocket, not the open board");
+        expect(sealed_planes[9 * 25 + 5] == 1.0f, "and the cell it reaches is the pocket cell");
+    }
+
+    // A head with no free neighbour at all. Cell 0 is the head, cells 1 and 5 are body, and
+    // the two remaining neighbours are off the grid - so nothing is reachable and the plane
+    // is empty. This is the position every death is read out of, and it must not look like
+    // an open board.
+    {
+        SnakeEnv::Snapshot boxed;
+        boxed.body_cells = { 0, 1, 5 };
+        boxed.food_cell = 24;
+        boxed.heading = 0;
+        boxed.budget_remaining = 1.0f;
+        std::vector<float> boxed_planes(SnakeEnv::PLANE_COUNT * 25, -1.0f);
+        SnakeEnv::encodeSnapshot(5, 5, boxed, boxed_planes.data());
+        float boxed_sum = 0.0f;
+        for (int cell = 0; cell < 25; cell++)
+        {
+            boxed_sum += boxed_planes[9 * 25 + cell];
+        }
+        expect(boxed_sum == 0.0f, "a head with no free neighbour reaches nothing");
+    }
 
     // The clock, constant across the board because a convolution has no other way
     // to be given a scalar.

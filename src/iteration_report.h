@@ -60,6 +60,8 @@ struct LossTotals
     double value_variance{ 0.0 };
     // Summed death-risk loss.
     double death{ 0.0 };
+    // Summed per-cell ownership loss.
+    double ownership{ 0.0 };
     // Summed count of death labels that survived the usability mask.
     double usable_labels{ 0.0 };
     // Batches actually run. Zero when the replay window held less than one batch, which

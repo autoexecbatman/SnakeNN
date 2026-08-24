@@ -26,6 +26,10 @@ BatchBuffers makeBatchBuffers(const trainer::Settings& settings)
     buffers.steps.resize(batch);
     buffers.death_risks.resize(batch * SnakeEnv::ACTION_COUNT);
     buffers.death_mask.resize(batch);
+    // One label per cell, which is where the ownership head gets its density: a batch
+    // of 256 at 12x12 carries 36,864 labels against 256 for the value.
+    buffers.ownership.resize(batch * cells);
+    buffers.policy_mask.resize(batch);
     return buffers;
 }
 
@@ -60,6 +64,15 @@ void fillBatch(const trainer::Settings& settings, const ReplayWindow& replay, Ba
         buffers.values[item] = record.value_target;
         buffers.steps[item] = record.steps_target;
         buffers.death_mask[item] = record.death_risk_usable ? 1.0f : 0.0f;
+        buffers.policy_mask[item] = record.policy_usable ? 1.0f : 0.0f;
+        // A record whose game predates this target carries an empty mask; those cells read
+        // as never visited rather than as a shape mismatch.
+        for (size_t cell = 0; cell < cells; cell++)
+        {
+            buffers.ownership[static_cast<size_t>(item) * cells + cell] =
+                cell < record.future_cells.size() ? static_cast<float>(record.future_cells[cell])
+                                                  : 0.0f;
+        }
     }
 }
 
@@ -83,6 +96,14 @@ BatchTensors toTensors(const trainer::Settings& settings, BatchBuffers& buffers,
                              .to(device);
     batch.death_weight =
         torch::from_blob(buffers.death_mask.data(), { settings.batch_size, 1 }).to(device);
+    // Shaped like the head's output - one channel at board resolution - so the loss is a
+    // straight comparison rather than a reshape at the call site.
+    batch.policy_weight =
+        torch::from_blob(buffers.policy_mask.data(), { settings.batch_size, 1 }).to(device);
+    batch.ownership_target =
+        torch::from_blob(buffers.ownership.data(),
+                         { settings.batch_size, 1, settings.board, settings.board })
+            .to(device);
     return batch;
 }
 
@@ -90,7 +111,13 @@ Losses computeLosses(const Prediction& prediction, const BatchTensors& batch)
 {
     Losses losses;
     const torch::Tensor log_policy = torch::log_softmax(prediction.policy_logits, 1);
-    losses.policy = -(batch.policy_target * log_policy).sum(1).mean();
+    // Averaged over the records whose visits came from a full search. Divided by what
+    // survived rather than by the batch: with a fixed denominator a batch of mostly cheap
+    // searches reports a small loss and takes a correspondingly small step, which reads
+    // like a policy that has already converged.
+    const torch::Tensor policy_kept = batch.policy_weight.sum().clamp_min(1.0f);
+    losses.policy = (-(batch.policy_target * log_policy).sum(1, true) * batch.policy_weight).sum() /
+                    policy_kept;
     // Measured on the normalised scale, which is the loss the squashed version produced up
     // to a constant - so the balance against the policy loss, and every learning rate
     // chosen under it, carries over unchanged.
@@ -110,8 +137,11 @@ Losses computeLosses(const Prediction& prediction, const BatchTensors& batch)
     // small step, which reads like a head that has already learned its target.
     losses.usable = batch.death_weight.sum().clamp_min(1.0f);
     losses.death = (elementwise.mean(1, true) * batch.death_weight).sum() / losses.usable;
+    // Averaged over every cell of the batch, so the term does not grow with board size.
+    losses.ownership = torch::binary_cross_entropy(prediction.ownership, batch.ownership_target);
     losses.total = losses.policy + losses.value + az::STEPS_LOSS_WEIGHT * losses.steps +
-                   az::DEATH_LOSS_WEIGHT * losses.death;
+                   az::DEATH_LOSS_WEIGHT * losses.death +
+                   az::OWNERSHIP_LOSS_WEIGHT * losses.ownership;
     return losses;
 }
 
@@ -146,6 +176,7 @@ trainer::LossTotals trainOnReplay(const trainer::Settings& settings, AlphaZeroNe
         totals.policy += losses.policy.item<double>();
         totals.value += losses.value.item<double>();
         totals.value_variance += losses.value_variance.item<double>();
+        totals.ownership += losses.ownership.item<double>();
         // The death loss is read every batch rather than only on failure, because it is
         // meaningless without the label count beside it.
         totals.death += losses.death.item<double>();

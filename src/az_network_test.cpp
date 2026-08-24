@@ -1,4 +1,4 @@
-#include <torch/torch.h>
+﻿#include <torch/torch.h>
 
 #include <format>
 #include <functional>
@@ -83,7 +83,7 @@ void testOutputShapes()
 
     const int batch = 5;
     torch::Tensor input = torch::zeros({ batch, SnakeEnv::PLANE_COUNT, 8, 8 });
-    auto [policy, value, steps, death_risk] = network->forward(input);
+    auto [policy, value, steps, death_risk, ownership] = network->forward(input);
 
     expect(policy.sizes() == torch::IntArrayRef({ batch, SnakeEnv::ACTION_COUNT }),
            "the policy head emits one logit per relative action");
@@ -201,7 +201,7 @@ void testPredictionFieldsAreTheOnesNamed()
 
     // Structured bindings still work, which is what keeps the existing call sites
     // in the trainer and the evaluator unchanged.
-    auto [policy, value, steps, death_risk] =
+    auto [policy, value, steps, death_risk, ownership] =
         network->forward(torch::rand({ batch, SnakeEnv::PLANE_COUNT, 6, 6 }));
     expect(policy.sizes() == prediction.policy_logits.sizes() &&
                value.sizes() == prediction.value.sizes(),
@@ -258,12 +258,43 @@ void testWeightsTransferAcrossBoardSizes()
     }
     expect(loaded, "a 6x6 network's weights load into a 20x20 network");
 
+    // The ownership head is one value per cell at full board resolution, and it carries no
+    // board-size dependence: the same weights must produce 6x6 on a 6x6 input and 20x20 on
+    // a 20x20 one. A pooled or flattened head could not, which is why this one is a 1x1
+    // convolution rather than a linear layer like the other four.
+    {
+        AlphaZeroNet small(6, 6, 8, 1);
+        small->eval();
+        torch::NoGradGuard no_grad;
+        const torch::Tensor small_input = torch::zeros({ 2, SnakeEnv::PLANE_COUNT, 6, 6 });
+        const torch::Tensor small_own = small->forward(small_input).ownership;
+        expect(small_own.sizes() == torch::IntArrayRef({ 2, 1, 6, 6 }),
+               "the ownership head is one channel at the input's own resolution");
+
+        const torch::Tensor wide_input = torch::zeros({ 3, SnakeEnv::PLANE_COUNT, 11, 7 });
+        const torch::Tensor wide_own = AlphaZeroNet(7, 11, 8, 1)->forward(wide_input).ownership;
+        expect(wide_own.sizes() == torch::IntArrayRef({ 3, 1, 11, 7 }),
+               "and it follows a non-square board rather than assuming one");
+
+        const bool bounded =
+            (small_own >= 0.0f).all().item<bool>() && (small_own <= 1.0f).all().item<bool>();
+        expect(bounded, "every ownership value is a probability");
+
+        // The three checks above pass against a head that returns a constant, so on their
+        // own they say nothing about whether it computes anything. This is the one that
+        // discriminates: a real convolution over a varying position produces a varying map.
+        const torch::Tensor varied = torch::randn({ 1, SnakeEnv::PLANE_COUNT, 6, 6 });
+        const torch::Tensor varied_own = small->forward(varied).ownership;
+        expect(varied_own.std().item<float>() > 0.0f,
+               "the ownership map varies with the position rather than being constant");
+    }
+
     if (loaded)
     {
         large->eval();
         torch::NoGradGuard no_grad;
         torch::Tensor input = torch::rand({ 2, SnakeEnv::PLANE_COUNT, 20, 20 });
-        auto [policy, value, steps, death_risk] = large->forward(input);
+        auto [policy, value, steps, death_risk, ownership] = large->forward(input);
         bool finite = policy.isfinite().all().item<bool>() && value.isfinite().all().item<bool>();
         expect(finite, "the transferred network runs on the larger board and stays finite");
     }
