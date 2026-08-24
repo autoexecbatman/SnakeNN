@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <limits>
 
@@ -40,6 +40,37 @@ constexpr unsigned int RESERVED_BAND_WIDTH =
 // run into the next iteration's block. 100003 is prime and far above any
 // games-per-iteration this will ever use.
 constexpr unsigned int ITERATION_STRIDE = 100003u;
+
+// Which generator a stream belongs to. One run seed reaches several of them, and
+// two std::mt19937 seeded with the same integer emit the identical sequence - so
+// the search and self-play were drawing from one stream, spending it on different
+// things and staying in step only by accident.
+enum class Stream : unsigned int
+{
+    // The search's generator: root noise, tie-breaks, chance-node food placement.
+    Search = 0,
+    // Self-play's generator: which move is sampled at temperature.
+    SelfPlaySampling = 1,
+    // Torch's global generator: the starting weights, and which positions a batch draws.
+    Network = 2,
+};
+
+// Distance between two consumers' streams. 2^31 - 1, a Mersenne prime, so two
+// streams collide only for run seeds differing by exactly this.
+constexpr unsigned int STREAM_STRIDE = 2147483647u;
+
+// The seed for one consumer's generator, derived from the run seed.
+//
+//     rng_(seeds::streamSeed(config.seed, seeds::Stream::SelfPlaySampling))
+//
+// Stream::Search returns the run seed unchanged, so every number measured before
+// this existed stays reproducible.
+constexpr unsigned int streamSeed(unsigned int run_seed, Stream stream) noexcept
+{
+    // Wraps rather than saturating, which is fine: a stream is a generator seed and
+    // every unsigned value is a legal one.
+    return run_seed + static_cast<unsigned int>(stream) * STREAM_STRIDE;
+}
 
 // The seed for one self-play game.
 //

@@ -189,6 +189,7 @@ void playOneBatch(SelfPlay& play, const trainer::Settings& settings, int iterati
 
 int main(int argc, char** argv)
 {
+    // Parses argv into settings; a bad flag or an unwritable checkpoint exits here.
     trainer::Settings settings;
     try
     {
@@ -205,17 +206,26 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // Longest a game may run, in moves; hitting it is a timeout rather than a death.
     const int step_limit = settings.stepLimit();
-    torch::manual_seed(settings.seed);
+    // The neural network's starting seed. With --resume it reaches NO weight at all: the
+    // checkpoint overwrites them. Replay draws take it either way.
+    torch::manual_seed(seeds::streamSeed(settings.seed, seeds::Stream::Network));
 
+    // Appends a started row to the tab-separated ledger at settings.ledger_path (--ledger,
+    // default runs.tsv). A killed run leaves that row unmatched by a finished one.
     ledger::Entry run = ledger::openRun(argc, argv, ledger::Kind::Training, settings.ledger_path);
 
+    // CUDA when available, else the CPU; the banner prints which, above the run's settings.
     const Compute compute = chooseDevice();
     printBanner(settings, step_limit, compute.cuda);
 
+    // The network: `channels` wide, `blocks` deep. Every head pools to 4x4, so no weight
+    // depends on the board and a checkpoint moves between board sizes.
     AlphaZeroNet network(settings.board, settings.board, settings.channels, settings.blocks);
     try
     {
+        // Loads --resume if given; a failed load ends the run rather than starting fresh.
         resumeIfRequested(network, settings);
     }
     catch (const std::exception& error)
@@ -225,22 +235,33 @@ int main(int argc, char** argv)
         ledger::append(settings.ledger_path, run);
         return 1;
     }
+    // Moves every parameter to the device, after the load so the restored ones come too.
     network->to(compute.device);
 
+    // Forward passes in batches, Adam over the weights, and the self-play loop that
+    // drives the search. The loop below uses nothing else.
     NetworkEvaluator evaluator(network, compute.device);
     torch::optim::Adam optimizer(network->parameters(),
                                  torch::optim::AdamOptions(az::LEARNING_RATE));
     SelfPlay play(evaluator, buildSearchConfig(settings), buildPlayConfig(settings, step_limit));
 
+    // The inclusive iteration range. --start-iteration continues the resumed run's
+    // numbering, so a curriculum across board sizes reads as one sequence.
     const int first_iteration = settings.start_iteration;
     const int last_iteration = settings.lastIteration();
 
+    // Draws the self-play progress bar. It takes a counter callable rather than the
+    // evaluator, which is what keeps the printer free of LibTorch.
     ProgressPrinter printer([&evaluator] { return evaluator.evaluations(); }, step_limit,
                             last_iteration);
     play.setProgressCallback([&](const SelfPlay::Progress& progress) { printer.draw(progress); });
 
+    // The training window: newest records kept, oldest evicted past --replay-mb. Capped
+    // by bytes because a record is four times larger at 20x20 than at 10x10.
     ReplayWindow replay(settings.replay_bytes);
+    // Scratch for one batch, allocated once here and refilled on every gradient step.
     BatchBuffers buffers = makeBatchBuffers(settings);
+    // Apples that fill the board, one per cell but the snake's first. Score prints over it.
     const int foods_to_win = settings.foodsToWin();
 
     // Counted rather than derived from the settings: a run reports what it did, not what it
@@ -249,28 +270,39 @@ int main(int argc, char** argv)
     long long samples_trained_total = 0;
     const auto run_started = std::chrono::high_resolution_clock::now();
 
+    // One iteration: play a block of games, absorb them, take gradient steps over the
+    // whole window, print the summary, save the checkpoint.
     for (int iteration = first_iteration; iteration <= last_iteration; iteration++)
     {
+        // Start time and evaluation count, subtracted below to give this iteration's cost.
         const auto started = std::chrono::high_resolution_clock::now();
         const long long evaluations_before = evaluator.evaluations();
         printer.startIteration(iteration, evaluations_before);
 
+        // Filled by the games below: one record per move, one summary per game.
         std::vector<TrainingRecord> fresh;
         std::vector<GameSummary> summaries;
+        // Eval mode for play, so batch norm uses running statistics rather than the batch's.
         network->eval();
         playOneBatch(play, settings, iteration, fresh, summaries);
 
+        // Moves the records in and evicts the oldest. fresh is spent afterwards.
         replay.absorb(fresh);
 
+        // Time spent playing, taken before training starts so the summary can split the two.
         const double play_seconds =
             std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - started)
                 .count();
+        // Collapses the per-game outcomes to the counts the summary line prints.
         const trainer::BatchStats stats = trainer::summariseGames(summaries);
 
+        // Adam steps over batches drawn from the whole window, not the fresh games alone.
         network->train();
         const trainer::LossTotals totals =
             trainOnReplay(settings, network, optimizer, replay, buffers, compute.device, iteration);
 
+        // What the iteration came to. Its summary line is what the logs are parsed from, so
+        // the format lives in iteration_report and is tested without a GPU.
         trainer::IterationReport report;
         report.iteration = iteration;
         report.games = summaries.size();
@@ -289,9 +321,11 @@ int main(int argc, char** argv)
                                                      totals)
                   << std::endl;
 
+        // Running totals for the ledger's cost row, counted rather than assumed.
         games_played_total += static_cast<long long>(summaries.size());
         samples_trained_total += static_cast<long long>(totals.batches_run) * settings.batch_size;
 
+        // Overwritten every iteration, so a run killed at hour eight still keeps hour seven.
         if (!settings.checkpoint.empty())
         {
             torch::save(network, settings.checkpoint);
@@ -300,6 +334,8 @@ int main(int argc, char** argv)
 
     std::cout << std::endl << "Done." << std::endl;
 
+    // Completes the run's row - outcome, wall-clock, games, samples - and appends it, which
+    // is what matches the started row written at the top.
     run.outcome = ledger::Outcome::Finished;
     run.seconds =
         std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - run_started)

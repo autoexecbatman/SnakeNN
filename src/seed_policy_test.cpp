@@ -1,4 +1,4 @@
-#include <format>
+﻿#include <format>
 #include <iostream>
 #include <set>
 #include <string>
@@ -125,6 +125,32 @@ int main()
     check(old_scheme_overlapped, "the historical overlap is reproduced, so the fix is not cosmetic",
           std::format("old iteration 9 covered {}..{}, old evaluation range was 900000..900199",
                       old_iteration_nine_first, old_iteration_nine_last));
+
+    // 5. One run seed, several generators, and no two of them the same stream.
+    //    The search keeps the run seed unchanged, so every measurement taken
+    //    before streams existed is still reproducible; self-play moves off it.
+    check(seeds::streamSeed(1, seeds::Stream::Search) == 1u,
+          "the search stream is the run seed unchanged",
+          std::format("streamSeed(1, Search) = {}", seeds::streamSeed(1, seeds::Stream::Search)));
+    check(seeds::streamSeed(1, seeds::Stream::SelfPlaySampling) !=
+              seeds::streamSeed(1, seeds::Stream::Search),
+          "self-play and the search draw from different streams",
+          std::format("search {} against self-play {}", seeds::streamSeed(1, seeds::Stream::Search),
+                      seeds::streamSeed(1, seeds::Stream::SelfPlaySampling)));
+    check(seeds::streamSeed(1, seeds::Stream::SelfPlaySampling) == 1u + seeds::STREAM_STRIDE,
+          "a stream is the run seed plus its index times the stride",
+          std::format("expected {}, got {}", 1u + seeds::STREAM_STRIDE,
+                      seeds::streamSeed(1, seeds::Stream::SelfPlaySampling)));
+
+    // 6. Three consumers, three streams, no two equal. Adding a Stream entry
+    //    without a stride would show up here as a collision.
+    constexpr unsigned int search_stream = seeds::streamSeed(1, seeds::Stream::Search);
+    constexpr unsigned int play_stream = seeds::streamSeed(1, seeds::Stream::SelfPlaySampling);
+    constexpr unsigned int network_stream = seeds::streamSeed(1, seeds::Stream::Network);
+    check(search_stream != network_stream && play_stream != network_stream,
+          "the network stream differs from both others",
+          std::format("search {}, self-play {}, network {}", search_stream, play_stream,
+                      network_stream));
 
     if (failures == 0)
     {
