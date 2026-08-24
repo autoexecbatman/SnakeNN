@@ -1,4 +1,4 @@
-// Properties of the biased replay draw, derived from the contract in replay_sampling.h.
+﻿// Properties of the biased replay draw, derived from the contract in replay_sampling.h.
 //
 // What it guards. Uniform sampling spends a batch on positions where nothing is decided;
 // this unit raises the share of positions a move can lose from. The properties below pin
