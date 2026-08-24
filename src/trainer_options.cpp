@@ -183,6 +183,8 @@ enum class Flag
     SamplesPerGame,
     ReplayMegabytes,
     DecisiveShare,
+    WeightDecay,
+    FinalLearningRateFraction,
     Seed,
     Checkpoint,
     Ledger,
@@ -215,6 +217,8 @@ constexpr FlagName FLAG_NAMES[] = {
     { "--samples-per-game", Flag::SamplesPerGame },
     { "--replay-mb", Flag::ReplayMegabytes },
     { "--decisive-share", Flag::DecisiveShare },
+    { "--weight-decay", Flag::WeightDecay },
+    { "--final-lr-fraction", Flag::FinalLearningRateFraction },
     { "--seed", Flag::Seed },
     { "--checkpoint", Flag::Checkpoint },
     { "--ledger", Flag::Ledger },
@@ -331,6 +335,18 @@ void applySetting(Settings& settings, bool& batches_given, Flag flag, const std:
             // A flag rather than a constant so the ledger, which records the command line,
             // distinguishes a run that used the bias from one that did not.
             settings.decisive_share = flags::parseUnitFloat(name, value);
+            break;
+        }
+        case Flag::WeightDecay:
+        {
+            // A rate in [0, 1] rather than an arbitrary double: the useful range is around
+            // 1e-4, and anything above 1 would swamp the gradient entirely.
+            settings.weight_decay = flags::parseUnitFloat(name, value);
+            break;
+        }
+        case Flag::FinalLearningRateFraction:
+        {
+            settings.final_learning_rate_fraction = flags::parseUnitFloat(name, value);
             break;
         }
         case Flag::Seed:

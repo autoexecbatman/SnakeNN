@@ -1,4 +1,4 @@
-#include <algorithm>
+﻿#include <algorithm>
 #include <format>
 
 #include "iteration_report.h"
@@ -34,10 +34,16 @@ std::string formatIterationSummary(int batch_size, const IterationReport& report
     // converged network, and absence reads like what it is.
     if (totals.batches_run > 0)
     {
-        summary += std::format("  loss p {:.6f} v {:.6f} d {:.6f}  labels {:.1f}/{}",
-                               totals.policy / totals.batches_run,
-                               totals.value / totals.batches_run, totals.death / totals.batches_run,
-                               totals.usable_labels / totals.batches_run, batch_size);
+        const double mean_value = totals.value / totals.batches_run;
+        const double mean_variance = totals.value_variance / totals.batches_run;
+        // What the head explains of the target's own spread. Near zero means it is barely
+        // better than predicting the batch mean, whatever the loss looks like.
+        const double explained = mean_variance > 0.0 ? 1.0 - mean_value / mean_variance : 0.0;
+        summary += std::format(
+            "  loss p {:.6f} v {:.6f} d {:.6f}  v-var {:.6f} r2 {:.3f}"
+            "  labels {:.1f}/{}",
+            totals.policy / totals.batches_run, mean_value, totals.death / totals.batches_run,
+            mean_variance, explained, totals.usable_labels / totals.batches_run, batch_size);
     }
     // The rate divides by play time alone, so it measures self-play throughput rather than
     // being dragged down by the gradient steps that follow it.

@@ -94,8 +94,11 @@ Losses computeLosses(const Prediction& prediction, const BatchTensors& batch)
     // Measured on the normalised scale, which is the loss the squashed version produced up
     // to a constant - so the balance against the policy loss, and every learning rate
     // chosen under it, carries over unchanged.
-    losses.value =
-        torch::mse_loss(prediction.value / az::VALUE_SCALE, batch.value_target / az::VALUE_SCALE);
+    const torch::Tensor scaled_target = batch.value_target / az::VALUE_SCALE;
+    losses.value = torch::mse_loss(prediction.value / az::VALUE_SCALE, scaled_target);
+    // The variance of the target itself, which is what a head predicting the batch mean
+    // would score. Unbiased is not worth the argument at batch sizes in the hundreds.
+    losses.value_variance = torch::var(scaled_target, /*unbiased=*/false);
     // Undiscounted, unlike the value: the only estimate here that can see the deadline.
     losses.steps = torch::mse_loss(prediction.steps_to_go, batch.steps_target);
     // Cross entropy rather than squared error, because the head is a sigmoid and the target
@@ -142,6 +145,7 @@ trainer::LossTotals trainOnReplay(const trainer::Settings& settings, AlphaZeroNe
 
         totals.policy += losses.policy.item<double>();
         totals.value += losses.value.item<double>();
+        totals.value_variance += losses.value_variance.item<double>();
         // The death loss is read every batch rather than only on failure, because it is
         // meaningless without the label count beside it.
         totals.death += losses.death.item<double>();

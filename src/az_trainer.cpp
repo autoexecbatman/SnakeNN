@@ -27,6 +27,7 @@
 #include <torch/torch.h>
 
 #include <chrono>
+#include <cmath>
 #include <format>
 #include <fstream>
 #include <iostream>
@@ -187,6 +188,31 @@ void playOneBatch(SelfPlay& play, const trainer::Settings& settings, int iterati
 
 }  // namespace
 
+// Sets Adam's step size for one iteration, decaying geometrically across the run.
+//
+//     setLearningRate(optimizer, settings, 335, 331, 340);   // 4/9 of the way down
+//
+// The rate reaches az::LEARNING_RATE * settings.final_learning_rate_fraction on the last
+// iteration. Geometric rather than linear because a learning rate is a scale: halving it
+// twice should be two equal steps, and a linear ramp spends most of the run near the top.
+//
+// A run of one iteration, or a fraction of 1, leaves the rate at az::LEARNING_RATE.
+void setLearningRate(torch::optim::Adam& optimizer, const trainer::Settings& settings,
+                     int iteration, int first_iteration, int last_iteration)
+{
+    double rate = az::LEARNING_RATE;
+    if (last_iteration > first_iteration && settings.final_learning_rate_fraction < 1.0f)
+    {
+        const double progress = static_cast<double>(iteration - first_iteration) /
+                                static_cast<double>(last_iteration - first_iteration);
+        rate *= std::pow(static_cast<double>(settings.final_learning_rate_fraction), progress);
+    }
+    for (torch::optim::OptimizerParamGroup& group : optimizer.param_groups())
+    {
+        static_cast<torch::optim::AdamOptions&>(group.options()).lr(rate);
+    }
+}
+
 int main(int argc, char** argv)
 {
     // Parses argv into settings; a bad flag or an unwritable checkpoint exits here.
@@ -242,7 +268,8 @@ int main(int argc, char** argv)
     // drives the search. The loop below uses nothing else.
     NetworkEvaluator evaluator(network, compute.device);
     torch::optim::Adam optimizer(network->parameters(),
-                                 torch::optim::AdamOptions(az::LEARNING_RATE));
+                                 torch::optim::AdamOptions(az::LEARNING_RATE)
+                                     .weight_decay(static_cast<double>(settings.weight_decay)));
     SelfPlay play(evaluator, buildSearchConfig(settings), buildPlayConfig(settings, step_limit));
 
     // The inclusive iteration range. --start-iteration continues the resumed run's
@@ -274,6 +301,11 @@ int main(int argc, char** argv)
     // whole window, print the summary, save the checkpoint.
     for (int iteration = first_iteration; iteration <= last_iteration; iteration++)
     {
+        // Geometric decay across the run, so the last iteration trains at
+        // --final-lr-fraction of the first. A single iteration, or a fraction of 1, leaves
+        // the rate where it started.
+        setLearningRate(optimizer, settings, iteration, first_iteration, last_iteration);
+
         // Start time and evaluation count, subtracted below to give this iteration's cost.
         const auto started = std::chrono::high_resolution_clock::now();
         const long long evaluations_before = evaluator.evaluations();

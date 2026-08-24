@@ -84,6 +84,17 @@ struct Settings
     // Share of each batch drawn preferentially from positions a move can lose from.
     // 0 leaves sampling uniform, which is what every run before 2026-08-24 did.
     float decisive_share{ 0.0f };
+    // L2 penalty on every weight, applied by Adam. 0 is what every run before 2026-08-24
+    // used; AlphaZero uses 1e-4. It matters most with a large replay window, where the
+    // network is otherwise free to fit many generations of its own old play.
+    // float, not double: flags::parseUnitFloat produces a float, and widening it here
+    // manufactures digits the value never had - 0.0001 stored as a double prints as
+    // 9.999999747378752e-05.
+    float weight_decay{ 0.0f };
+    // What the learning rate is multiplied by at the end of the run, reached geometrically
+    // over the iterations played. 1 holds it constant, which is what every run before
+    // 2026-08-24 did.
+    float final_learning_rate_fraction{ 1.0f };
     // How often selection ignores its scores and picks uniformly, before the
     // 1/log(N) decay. A flag rather than a constant because it changes the run's
     // result and the ledger records the command line: compiled in, two runs that

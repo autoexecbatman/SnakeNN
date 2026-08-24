@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <torch/torch.h>
 
@@ -71,6 +71,9 @@ struct Losses
     torch::Tensor policy;
     // Squared error on the normalised value scale.
     torch::Tensor value;
+    // How far the value targets in this batch spread around their own mean, on the same
+    // normalised scale. The loss divided by this is the share the head fails to explain.
+    torch::Tensor value_variance;
     // Squared error on steps-to-go.
     torch::Tensor steps;
     // Cross entropy on death risk, over usable labels only.

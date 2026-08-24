@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <string>
 #include <vector>
@@ -54,6 +54,10 @@ struct LossTotals
     double policy{ 0.0 };
     // Summed value loss.
     double value{ 0.0 };
+    // Summed variance of the value target within a batch, on the same normalised scale as
+    // the loss. Reported beside it because a small loss over a flat target is a head that
+    // has learned nothing, and the loss on its own cannot say which it is.
+    double value_variance{ 0.0 };
     // Summed death-risk loss.
     double death{ 0.0 };
     // Summed count of death labels that survived the usability mask.
