@@ -254,6 +254,20 @@ public:
     // trainer holds snapshots long after their environment is gone.
     static void encodeSnapshot(int width, int height, const Snapshot& snapshot, float* planes_out);
 
+    // How many empty cells the head can reach from `snapshot`, by a flood fill outward
+    // from its free neighbours.
+    //
+    //     const int room = SnakeEnv::reachableFrom(12, 12, record.position, nullptr);
+    //     const bool doomed = room < static_cast<int>(record.position.body_cells.size());
+    //
+    // `plane_out`, when not null, receives one float per cell: 1 on every reachable cell
+    // and untouched elsewhere, which is how the encoder fills its reachability plane. The
+    // caller zeroes it first.
+    //
+    // Static and snapshot-based because the trainer needs this long after the environment
+    // is gone - the doom label is read off a finished trajectory, not off a live game.
+    static int reachableFrom(int width, int height, const Snapshot& snapshot, float* plane_out);
+
 private:
     // Every one of these is assigned by the constructor and again by reset(). The
     // initializers are here so the object is never momentarily undefined, not to

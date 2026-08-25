@@ -64,6 +64,18 @@ struct TrainingRecord
     // move played from a cheap search: a policy trained on a shallow search learns the
     // shallow search.
     bool policy_usable{ true };
+    // Which of the three actions was played from this position. The only one whose
+    // outcome the finished game knows anything about.
+    int played_action{ 0 };
+    // 1 when this position was already lost - the head's reachable room had fallen below
+    // the snake's own length and never recovered before the game ended in a death. 0 when
+    // the game was won, timed out, or had not yet reached that point.
+    //
+    // Read off the finished trajectory rather than backed up from a search. A position
+    // becomes unrecoverable a mean of 323 moves before the death it causes, which is an
+    // order of magnitude past what 200 simulations or a 72-step discount can see, so the
+    // search cannot supply this and the walk backwards can.
+    float doom_target{ 0.0f };
     // One byte per cell, 1 where the head occupies this cell now or reaches it later in
     // the game. The ownership head's target.
     //

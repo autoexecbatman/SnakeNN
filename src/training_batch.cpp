@@ -25,7 +25,7 @@ BatchBuffers makeBatchBuffers(const trainer::Settings& settings)
     buffers.values.resize(batch);
     buffers.steps.resize(batch);
     buffers.death_risks.resize(batch * SnakeEnv::ACTION_COUNT);
-    buffers.death_mask.resize(batch);
+    buffers.death_mask.resize(batch * SnakeEnv::ACTION_COUNT);
     // One label per cell, which is where the ownership head gets its density: a batch
     // of 256 at 12x12 carries 36,864 labels against 256 for the value.
     buffers.ownership.resize(batch * cells);
@@ -56,14 +56,24 @@ void fillBatch(const trainer::Settings& settings, const ReplayWindow& replay, Ba
             buffers.planes.data() + static_cast<size_t>(item) * SnakeEnv::PLANE_COUNT * cells);
         for (int action = 0; action < SnakeEnv::ACTION_COUNT; action++)
         {
-            buffers.policies[static_cast<size_t>(item) * SnakeEnv::ACTION_COUNT + action] =
-                record.policy[action];
-            buffers.death_risks[static_cast<size_t>(item) * SnakeEnv::ACTION_COUNT + action] =
-                record.death_risk_target[action];
+            const size_t slot = static_cast<size_t>(item) * SnakeEnv::ACTION_COUNT + action;
+            buffers.policies[slot] = record.policy[action];
+            if (settings.doom_label_from_trajectory)
+            {
+                // Only the action played has a known outcome; the other two are masked
+                // out rather than guessed at.
+                const bool played = action == record.played_action;
+                buffers.death_risks[slot] = played ? record.doom_target : 0.0f;
+                buffers.death_mask[slot] = played ? 1.0f : 0.0f;
+            }
+            else
+            {
+                buffers.death_risks[slot] = record.death_risk_target[action];
+                buffers.death_mask[slot] = record.death_risk_usable ? 1.0f : 0.0f;
+            }
         }
         buffers.values[item] = record.value_target;
         buffers.steps[item] = record.steps_target;
-        buffers.death_mask[item] = record.death_risk_usable ? 1.0f : 0.0f;
         buffers.policy_mask[item] = record.policy_usable ? 1.0f : 0.0f;
         // A record whose game predates this target carries an empty mask; those cells read
         // as never visited rather than as a shape mismatch.
@@ -95,7 +105,8 @@ BatchTensors toTensors(const trainer::Settings& settings, BatchBuffers& buffers,
                                           { settings.batch_size, SnakeEnv::ACTION_COUNT })
                              .to(device);
     batch.death_weight =
-        torch::from_blob(buffers.death_mask.data(), { settings.batch_size, 1 }).to(device);
+        torch::from_blob(buffers.death_mask.data(), { settings.batch_size, SnakeEnv::ACTION_COUNT })
+            .to(device);
     // Shaped like the head's output - one channel at board resolution - so the loss is a
     // straight comparison rather than a reshape at the call site.
     batch.policy_weight =
@@ -135,8 +146,10 @@ Losses computeLosses(const Prediction& prediction, const BatchTensors& batch)
     // Averaged over the records whose label survived the mask: with a fixed denominator a
     // batch of mostly unusable labels reports a small loss and takes a correspondingly
     // small step, which reads like a head that has already learned its target.
+    // Counted in labels rather than in records, since a trajectory label marks one
+    // action of three and a search label marks all three or none.
     losses.usable = batch.death_weight.sum().clamp_min(1.0f);
-    losses.death = (elementwise.mean(1, true) * batch.death_weight).sum() / losses.usable;
+    losses.death = (elementwise * batch.death_weight).sum() / losses.usable;
     // Averaged over every cell of the batch, so the term does not grow with board size.
     losses.ownership = torch::binary_cross_entropy(prediction.ownership, batch.ownership_target);
     losses.total = losses.policy + losses.value + az::STEPS_LOSS_WEIGHT * losses.steps +

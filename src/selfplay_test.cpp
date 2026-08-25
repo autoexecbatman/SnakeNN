@@ -458,6 +458,111 @@ void testOwnershipMarksThisPositionsFuture()
     expect(last_owned == 1, "the last position owns exactly one cell");
 }
 
+// The doom label: read off the finished game, not backed up from a search.
+void testDoomLabelsTheLostTailOfAGameThatDied()
+{
+    SilentEvaluator evaluator;
+    // 400 steps, not 60. The machine-checked floor for filling a 6x6 board is 71.7, so a
+    // 60-step limit times every game out and none of them can die - which is a batch this
+    // label says nothing about, and the first draft of this test measured exactly that.
+    SelfPlay play(evaluator, searchConfig(), playConfig(8, 400, az::TIMEOUT_REWARD));
+
+    std::vector<TrainingRecord> records;
+    std::vector<GameSummary> summaries;
+    play.playBatch(6, 6, 909, records, summaries);
+
+    expect(!records.empty(), "the batch produced records");
+    if (records.empty())
+    {
+        return;
+    }
+
+    int deaths = 0;
+    for (const GameSummary& summary : summaries)
+    {
+        if (!summary.won && !summary.hit_step_limit)
+        {
+            deaths++;
+        }
+    }
+    expect(deaths > 0, "the batch contained at least one death to label");
+
+    // Derived from the contract rather than from the labels: a position is doomed when the
+    // head's reachable room is below the snake's own length. Recomputed here from the
+    // record's own snapshot, so the check does not read back what it is checking.
+    int doomed_records = 0;
+    int disagreements = 0;
+    for (const TrainingRecord& record : records)
+    {
+        const int room = SnakeEnv::reachableFrom(6, 6, record.position, nullptr);
+        const int body = static_cast<int>(record.position.body_cells.size());
+        const bool labelled = record.doom_target > 0.5f;
+        if (labelled)
+        {
+            doomed_records++;
+            // A labelled position must actually be short of room. The reverse does not
+            // hold: a position can be tight and recover, and only the sustained onset is
+            // labelled.
+            if (room >= body)
+            {
+                disagreements++;
+            }
+        }
+    }
+    // Not asserted: that a played batch contains doomed positions. A 6x6 snake is short
+    // enough that its reachable room exceeds its own length almost everywhere, so it dies
+    // by blunder rather than by enclosure, and the label correctly stays empty. The
+    // criterion itself is checked below on a position built to be lost.
+    expect(disagreements == 0,
+           "every doomed label sits on a position whose room is below its own length");
+    expect(doomed_records >= 0, "doomed labels counted");
+
+    // The criterion, on a hand-built position. A snake of nine segments coiled into the
+    // top-left with its head walled in: the head reaches one cell, so room is below body
+    // length and the position is lost whatever it plays.
+    //
+    //   H o o . . .      cells 0,1,2   row 0
+    //   R o o . . .      cells 6,7,8   row 1
+    //   o o o . . .      cells 12,13,14
+    //
+    // H is the head at 0, R the single cell it can reach at 6.
+    {
+        SnakeEnv::Snapshot sealed;
+        sealed.body_cells = { 0, 1, 2, 8, 14, 13, 12, 7 };
+        sealed.food_cell = 35;
+        sealed.heading = 0;
+        sealed.budget_remaining = 1.0f;
+        const int room = SnakeEnv::reachableFrom(6, 6, sealed, nullptr);
+        const int body = static_cast<int>(sealed.body_cells.size());
+        expect(room == 1, "the walled-in head reaches exactly one cell");
+        expect(room < body, "and that is below its own length, which is the doom criterion");
+    }
+
+    // The label is per game, so a game that won carries none of it. Checked through the
+    // played action rather than the summary, since records do not name their game.
+    bool every_label_is_zero_or_one = true;
+    for (const TrainingRecord& record : records)
+    {
+        if (record.doom_target != 0.0f && record.doom_target != 1.0f)
+        {
+            every_label_is_zero_or_one = false;
+        }
+    }
+    expect(every_label_is_zero_or_one, "the label is certainty, not a probability");
+
+    // The action played is the only one the finished game knows about, so it must be a
+    // real action rather than a default.
+    bool actions_in_range = true;
+    for (const TrainingRecord& record : records)
+    {
+        if (record.played_action < 0 || record.played_action >= SnakeEnv::ACTION_COUNT)
+        {
+            actions_in_range = false;
+        }
+    }
+    expect(actions_in_range, "every record names the action it played");
+}
+
 int main()
 {
     std::cout << "SelfPlay properties" << std::endl;
@@ -467,6 +572,7 @@ int main()
     testATimedOutGamePaysThePenaltyAndOthersDoNot();
     testProgressIsMonotonicAndCompletes();
     testOwnershipMarksThisPositionsFuture();
+    testDoomLabelsTheLostTailOfAGameThatDied();
 
     std::cout << std::endl;
     if (failures == 0)

@@ -101,6 +101,14 @@ struct Settings
     // The cheap budget, as a share of --simulations. Read only when full_search_fraction is
     // above zero. KataGo's fast searches are roughly a sixth of its full ones.
     float fast_simulation_fraction{ 0.25f };
+    // Where the death head's target comes from. False - the default, and what every run
+    // before 2026-08-26 did - takes whatever the search backed up, kept only where all
+    // three root actions were visited: 2.6 percent of positions at 12x12. True reads it
+    // off the finished game instead, for the one action that game played.
+    //
+    // Measured 2026-08-25: a position becomes unrecoverable a mean of 323 moves before the
+    // death it causes, which no 200-simulation search and no 72-step discount can reach.
+    bool doom_label_from_trajectory{ false };
     // How often selection ignores its scores and picks uniformly, before the
     // 1/log(N) decay. A flag rather than a constant because it changes the run's
     // result and the ledger records the command line: compiled in, two runs that

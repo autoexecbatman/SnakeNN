@@ -187,6 +187,9 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
             // Sampled early and greedy later, so a batch explores without throwing
             // away its endgames.
             int action = sampleAction(shares, moves_played[index]);
+            // Recorded before the move: the only action whose outcome the finished game
+            // will know anything about.
+            record.played_action = action;
             SnakeEnv::StepResult outcome = game.step(static_cast<SnakeEnv::Action>(action));
 
             trajectories[index].push_back(std::move(record));
@@ -257,6 +260,47 @@ void SelfPlay::playBatch(int board_width, int board_height, unsigned int game_se
             // always owns where it stands.
             reached[trajectories[index][position].position.body_cells[0]] = 1;
             trajectories[index][position].future_cells = reached;
+        }
+
+        // The doom label, for a game that ended in a death. Walked forward: a position is
+        // short of room when the head can reach fewer cells than the snake is long, and
+        // the onset that matters is the last one that never recovered. Everything from
+        // there to the death is labelled lost.
+        //
+        // Only a death produces labels. A win was never lost, and a timeout did not
+        // finish, so neither says anything about whether its positions were recoverable.
+        if (!games[index].won() && !hit_limit[index])
+        {
+            int onset = -1;
+            for (int position = 0; position < static_cast<int>(trajectories[index].size());
+                 position++)
+            {
+                const TrainingRecord& record = trajectories[index][position];
+                const int room = SnakeEnv::reachableFrom(
+                    games[index].width(), games[index].height(), record.position, nullptr);
+                const int body = static_cast<int>(record.position.body_cells.size());
+                if (room < body)
+                {
+                    // Kept rather than overwritten, so what is reported is the onset that
+                    // stuck and not the first scare.
+                    if (onset < 0)
+                    {
+                        onset = position;
+                    }
+                }
+                else
+                {
+                    onset = -1;
+                }
+            }
+            if (onset >= 0)
+            {
+                for (int position = onset; position < static_cast<int>(trajectories[index].size());
+                     position++)
+                {
+                    trajectories[index][position].doom_target = 1.0f;
+                }
+            }
         }
 
         // Steps-to-go, counted forward from each position to the end of the game

@@ -520,25 +520,29 @@ void SnakeEnv::encodeSnapshot(int width, int height, const Snapshot& snapshot, f
         clock_plane[cell] = snapshot.budget_remaining;
     }
 
-    // Every empty cell the head can still walk to, by a flood fill outward from its free
-    // neighbours. The head's own cell is body and stays unmarked, and the tail is treated
-    // as blocking: this describes the position as it stands rather than one move ahead.
-    //
-    // Computed rather than left to the network. Whether the head is sealed away from the
-    // open board is a connectivity question, and four 3x3 convolutions answer it badly -
-    // it is also the question the agent gets wrong, dying with most of the board free.
+    // Every empty cell the head can still walk to. Delegated so the doom label and this
+    // plane cannot drift apart - they are the same question asked at different times.
     float* reach_plane = planes_out + 9 * cells;
+    reachableFrom(width, height, snapshot, reach_plane);
+}
+
+int SnakeEnv::reachableFrom(int width, int height, const Snapshot& snapshot, float* plane_out)
+{
+    const int cells = width * height;
     std::vector<char> blocked(static_cast<size_t>(cells), 0);
     for (unsigned short cell : snapshot.body_cells)
     {
         blocked[cell] = 1;
     }
+    // Marked here rather than on the caller's plane, so a null plane costs nothing and the
+    // count is the same either way.
+    std::vector<char> seen(static_cast<size_t>(cells), 0);
     std::vector<int> frontier;
     const int head = snapshot.body_cells[0];
-    // Seeded from the head's neighbours rather than from the head, which is occupied.
     const int head_x = head % width;
     const int head_y = head / width;
     const int steps[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+    // Seeded from the head's neighbours rather than from the head, which is occupied.
     for (const int (&step)[2] : steps)
     {
         const int x = head_x + step[0];
@@ -548,17 +552,23 @@ void SnakeEnv::encodeSnapshot(int width, int height, const Snapshot& snapshot, f
             continue;
         }
         const int index = y * width + x;
-        if (blocked[static_cast<size_t>(index)] || reach_plane[index] != 0.0f)
+        if (blocked[static_cast<size_t>(index)] || seen[static_cast<size_t>(index)])
         {
             continue;
         }
-        reach_plane[index] = 1.0f;
+        seen[static_cast<size_t>(index)] = 1;
         frontier.push_back(index);
     }
+    int reached = 0;
     while (!frontier.empty())
     {
         const int cell = frontier.back();
         frontier.pop_back();
+        reached++;
+        if (plane_out != nullptr)
+        {
+            plane_out[cell] = 1.0f;
+        }
         const int at_x = cell % width;
         const int at_y = cell / width;
         for (const int (&step)[2] : steps)
@@ -570,14 +580,15 @@ void SnakeEnv::encodeSnapshot(int width, int height, const Snapshot& snapshot, f
                 continue;
             }
             const int index = y * width + x;
-            if (blocked[static_cast<size_t>(index)] || reach_plane[index] != 0.0f)
+            if (blocked[static_cast<size_t>(index)] || seen[static_cast<size_t>(index)])
             {
                 continue;
             }
-            reach_plane[index] = 1.0f;
+            seen[static_cast<size_t>(index)] = 1;
             frontier.push_back(index);
         }
     }
+    return reached;
 }
 
 void SnakeEnv::encode(float* planes_out) const

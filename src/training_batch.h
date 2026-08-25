@@ -42,8 +42,11 @@ struct BatchBuffers
     std::vector<float> steps;
     // Death-risk targets: batch x actions.
     std::vector<float> death_risks;
-    // One per record: whether its risk label is worth learning from. A batch can be almost
-    // entirely masked out, which is why the death loss divides by what survived.
+    // Per action rather than per record: batch x actions, 1 where that action carries a
+    // label worth learning from. The search label sets all three or none; the trajectory
+    // label sets only the action the game played, which is the only outcome it knows.
+    // A batch can be almost entirely masked out, which is why the death loss divides by
+    // what survived rather than by the batch.
     std::vector<float> death_mask;
     // Ownership targets: batch x cells, one per board cell, 1 where the head reaches it.
     std::vector<float> ownership;

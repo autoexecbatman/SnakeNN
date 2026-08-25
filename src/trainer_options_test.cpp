@@ -78,7 +78,7 @@ std::string describe(const trainer::Settings& settings)
         "replay_bytes={}\nseed={}\ncheckpoint={}\nresume={}\nledger_path={}\n"
         "exploration_epsilon={}\ndecisive_share={}\nweight_decay={}\n"
         "final_learning_rate_fraction={}\nfull_search_fraction={}\n"
-        "fast_simulation_fraction={}\n",
+        "fast_simulation_fraction={}\ndoom_label_from_trajectory={}\n",
         settings.board, settings.iterations, settings.start_iteration, settings.games_per_iteration,
         settings.simulations,
         settings.step_limit_override ? std::format("{}", *settings.step_limit_override) : "none",
@@ -86,7 +86,7 @@ std::string describe(const trainer::Settings& settings)
         settings.replay_bytes, settings.seed, settings.checkpoint, settings.resume,
         settings.ledger_path, settings.exploration_epsilon, settings.decisive_share,
         settings.weight_decay, settings.final_learning_rate_fraction, settings.full_search_fraction,
-        settings.fast_simulation_fraction);
+        settings.fast_simulation_fraction, settings.doom_label_from_trajectory);
 }
 
 // Splits a description into its lines so exactly one may be required to differ.
@@ -253,6 +253,7 @@ void testEveryFlagSetsTheFieldItNames()
     expectFlagSetsOnly("--final-lr-fraction", "0.1", "final_learning_rate_fraction=0.1");
     expectFlagSetsOnly("--full-search-fraction", "0.25", "full_search_fraction=0.25");
     expectFlagSetsOnly("--fast-simulation-fraction", "0.5", "fast_simulation_fraction=0.5");
+    expectFlagSetsOnly("--doom-label", "on", "doom_label_from_trajectory=true");
 
     // The whole command line the current run was launched with, parsed at once.
     // Every flag above is checked alone; this is the one check that a realistic
@@ -314,6 +315,8 @@ void testBadArgumentsAreRefusedRatherThanDefaulted()
     // percentage typed without the decimal point.
     expectRejected({ "--decisive-share", "1.5" }, "a share above one is refused");
     expectRejected({ "--weight-decay", "-0.1" }, "a negative weight decay is refused");
+    expectRejected({ "--doom-label", "maybe" },
+                   "an on/off flag refuses anything that is not on or off");
     expectRejected({ "--full-search-fraction", "1.01" },
                    "a share above one is refused for the search fraction too");
     expectRejected({ "--final-lr-fraction", "2" },

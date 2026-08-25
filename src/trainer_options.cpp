@@ -187,6 +187,7 @@ enum class Flag
     FinalLearningRateFraction,
     FullSearchFraction,
     FastSimulationFraction,
+    DoomLabelFromTrajectory,
     Seed,
     Checkpoint,
     Ledger,
@@ -223,6 +224,7 @@ constexpr FlagName FLAG_NAMES[] = {
     { "--final-lr-fraction", Flag::FinalLearningRateFraction },
     { "--full-search-fraction", Flag::FullSearchFraction },
     { "--fast-simulation-fraction", Flag::FastSimulationFraction },
+    { "--doom-label", Flag::DoomLabelFromTrajectory },
     { "--seed", Flag::Seed },
     { "--checkpoint", Flag::Checkpoint },
     { "--ledger", Flag::Ledger },
@@ -361,6 +363,11 @@ void applySetting(Settings& settings, bool& batches_given, Flag flag, const std:
         case Flag::FastSimulationFraction:
         {
             settings.fast_simulation_fraction = flags::parseUnitFloat(name, value);
+            break;
+        }
+        case Flag::DoomLabelFromTrajectory:
+        {
+            settings.doom_label_from_trajectory = flags::parseOnOff(name, value);
             break;
         }
         case Flag::Seed:
