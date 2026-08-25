@@ -69,9 +69,12 @@ int main()
     // 1. Without the bias the first candidate is taken, and nothing else is drawn.
     //    Cost matters: this is the common path, run once per item of every batch.
     {
+        // Nothing is decisive, so an implementation that hunts regardless would spend all
+        // four draws and return the last. With `true` here the two paths are
+        // indistinguishable, and a mutant removing the unbiased branch survived.
         Draws draws({ 4, 7, 2 });
-        const std::size_t picked = sampling::pickBiased([&] { return draws.next(); },
-                                                        [](std::size_t) { return true; }, false, 4);
+        const std::size_t picked = sampling::pickBiased(
+            [&] { return draws.next(); }, [](std::size_t) { return false; }, false, 4);
         check(picked == 4 && draws.used == 1, "an unbiased pick is the first draw, and costs one",
               std::format("picked {} after {} draws", picked, draws.used));
     }
