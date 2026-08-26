@@ -114,7 +114,7 @@ MonteCarloSearch::Config buildSearchConfig(const trainer::Settings& settings)
     // so a run that set this is distinguishable from one that did not - which a
     // compiled-in constant is not.
     config.exploration_epsilon = settings.exploration_epsilon;
-    config.death_cap = az::DEATH_CAP;
+    config.death_cap = settings.death_cap;
     config.root_noise_fraction = az::ROOT_NOISE_FRACTION;
     config.seed = settings.seed;
     return config;

@@ -188,6 +188,7 @@ enum class Flag
     FullSearchFraction,
     FastSimulationFraction,
     DoomLabelFromTrajectory,
+    DeathCap,
     Seed,
     Checkpoint,
     Ledger,
@@ -225,6 +226,7 @@ constexpr FlagName FLAG_NAMES[] = {
     { "--full-search-fraction", Flag::FullSearchFraction },
     { "--fast-simulation-fraction", Flag::FastSimulationFraction },
     { "--doom-label", Flag::DoomLabelFromTrajectory },
+    { "--death-cap", Flag::DeathCap },
     { "--seed", Flag::Seed },
     { "--checkpoint", Flag::Checkpoint },
     { "--ledger", Flag::Ledger },
@@ -368,6 +370,11 @@ void applySetting(Settings& settings, bool& batches_given, Flag flag, const std:
         case Flag::DoomLabelFromTrajectory:
         {
             settings.doom_label_from_trajectory = flags::parseOnOff(name, value);
+            break;
+        }
+        case Flag::DeathCap:
+        {
+            settings.death_cap = flags::parseOnOff(name, value);
             break;
         }
         case Flag::Seed:

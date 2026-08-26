@@ -109,6 +109,14 @@ struct Settings
     // Measured 2026-08-25: a position becomes unrecoverable a mean of 323 moves before the
     // death it causes, which no 200-simulation search and no 72-step discount can reach.
     bool doom_label_from_trajectory{ false };
+    // Whether the search refuses an action whose backed-up death risk is above
+    // az::DEATH_CAP_THRESHOLD while some other action is below it. Off by default, which
+    // is what the constant says and what every run before 2026-08-27 did.
+    //
+    // It was left off because the death head was poor - 4 percent label coverage, backed
+    // up from a 200-simulation search. With the trajectory label the head sees ground
+    // truth on every position, so whether a good head can steer play is now worth asking.
+    bool death_cap{ false };
     // How often selection ignores its scores and picks uniformly, before the
     // 1/log(N) decay. A flag rather than a constant because it changes the run's
     // result and the ledger records the command line: compiled in, two runs that
